@@ -1,0 +1,37 @@
+/// The canonical capability surfaces MLXEngine exposes.
+///
+/// Capability is the *contract*: each case is a tool surface with one canonical input
+/// schema and one canonical output artifact type. The enum is core-owned and **additive
+/// only** — new cases arrive at minor contract versions and never invalidate existing
+/// packages, *provided consumers switch with `@unknown default`* (C12). Contributors do
+/// not add cases unilaterally; an addition is a versioned core change.
+public enum Capability: String, Codable, Sendable, CaseIterable, Hashable {
+    case tts
+    case textToImage
+    case textToVideo
+    case llm
+    case imageAnalysis
+    case videoAnalysis
+}
+
+/// The fixed output artifact kind for a capability. Not negotiable per package (C2).
+public enum CanonicalOutput: String, Codable, Sendable {
+    case audio
+    case image
+    case video
+    case text
+    case structuredText
+}
+
+extension Capability {
+    /// The canonical output for this capability (TTS -> .wav audio, T2I -> image, ...).
+    public var canonicalOutput: CanonicalOutput {
+        switch self {
+        case .tts: return .audio
+        case .textToImage: return .image
+        case .textToVideo: return .video
+        case .llm: return .text
+        case .imageAnalysis, .videoAnalysis: return .structuredText
+        }
+    }
+}
