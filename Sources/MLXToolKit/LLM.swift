@@ -82,8 +82,9 @@ public struct LLMResponse: CapabilityResponse {
 }
 
 /// Canonical descriptor shape for an LLM tool (C11). Tool-use / fill-in-middle / grounding are
-/// **contracted named extensions** a specialty may add (architecture §2.3), not part of this
-/// base surface — a consumer that ignores them still gets canonical text.
+/// **deferred to Apple's FoundationModels** (`Tool` / `@Generable` / `GenerationSchema`), held
+/// behind the `LanguageModelExecutor` boundary — not hand-rolled here, and FoundationModels types
+/// never leak into this base surface, so a consumer that ignores them still gets canonical text.
 public enum LLMContract {
     public static func descriptor(name: String, summary: String, modes: [Mode] = []) -> ToolDescriptor {
         ToolDescriptor(
