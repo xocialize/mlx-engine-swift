@@ -1,5 +1,15 @@
 # MLXEngine (`mlx-engine-swift`)
 
+> ## 🚧 Work in progress — not ready for use
+>
+> MLXEngine is in **early, active development**. The contract is still moving, the runtime
+> coordinator is not yet built, and **nothing here is stable**. **Do not depend on it yet.**
+>
+> We're developing **in the open** for visibility, not yet for collaboration: **pull requests are
+> not being accepted at this stage and will be closed.** This notice will be lifted — and
+> contributions opened — once the contract is validated against the first real port and the
+> runtime lands. Watch the repo to follow along.
+
 A community-released, on-device Apple Silicon **runtime coordinator** for inference.
 
 **MLXEngine does not do inference — packages do.** The engine instantiates each package,

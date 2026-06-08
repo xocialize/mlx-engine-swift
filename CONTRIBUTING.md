@@ -1,6 +1,14 @@
 # Contributing to MLXEngine
 
-> **Stub. TODO: expand each section before opening the repo to contributors.**
+> ## 🚧 Not accepting contributions yet
+>
+> MLXEngine is **work in progress** and developing in the open. **Pull requests are not being
+> accepted at this stage and will be closed.** The conformance gate below is the intended
+> contributor agreement, documented now so it's visible — but the contract is still moving and
+> the runtime is unbuilt. This notice will be lifted once the contract stabilizes against the
+> first real port.
+>
+> *(Stub. TODO: expand each section before opening the repo to contributors.)*
 
 MLXEngine is community-released and built to be extended. A contribution is a
 **package** — a `ModelPackage` declaring a `PackageManifest` — that registers one or
