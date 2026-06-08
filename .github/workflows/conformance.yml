@@ -1,0 +1,28 @@
+name: conformance
+
+# Runs the MLXServeConformance harness against the changed package — the executable C0–C13 gate.
+#
+# SCAFFOLDING: the harness is a placeholder this phase, so this workflow only confirms the
+# conformance target compiles. Once the harness is executable it will evaluate each C-level and
+# fail the check on any unmet gate.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  conformance:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select latest stable Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+      - name: Build conformance harness
+        run: swift build --target MLXServeConformance
+      - name: C0–C13 checks (placeholder)
+        run: |
+          echo "MLXServeConformance is scaffolding — no executable C0–C13 checks yet."
+          echo "TODO: run the harness against the changed package and fail on any unmet gate."

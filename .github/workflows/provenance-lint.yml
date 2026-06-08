@@ -1,0 +1,26 @@
+name: provenance-lint
+
+# Process gate (NOT a runtime gate): verifies a package PR recorded its weight provenance —
+# source repo + pinned revision — and that Tier 1/2 origins point at HF mlx-community
+# (setup guide §8.2). Lives in CI, not the binary; nothing breaks at runtime if weights came
+# from elsewhere, so this is review hygiene, not an admission check.
+#
+# SCAFFOLDING: placeholder until the PR template fields are finalized. No Apple toolchain needed.
+
+on:
+  pull_request:
+
+jobs:
+  provenance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check weight provenance (placeholder)
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          echo "provenance-lint is scaffolding — not yet enforcing."
+          echo "TODO: parse the PR body for 'Source repo' + 'Pinned revision / commit' and"
+          echo "      verify Tier 1/2 weights originate from HF mlx-community."
+          echo "--- PR body (for future parsing) ---"
+          printf '%s\n' "${PR_BODY:-<none>}"

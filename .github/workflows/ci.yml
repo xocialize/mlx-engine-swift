@@ -1,0 +1,30 @@
+name: ci
+
+# Build + test the package in a clean VM. Because this repo is package-only (no workspace, no
+# path dependencies), a vanilla checkout + build IS the "standalone clone builds green" guarantee
+# the setup guide (§4) calls the single most important guard against workspace leakage.
+#
+# Intended floor: macOS 26.2+ / Apple silicon. If the GitHub-hosted image lacks the macOS 26 SDK
+# or the Metal/ANE paths once real MLX code lands, switch `runs-on` to a self-hosted runner:
+#   runs-on: [self-hosted, macOS, ARM64]
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select latest stable Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+      - name: Toolchain
+        run: swift --version
+      - name: Build (all three targets)
+        run: swift build -v
+      - name: Test
+        run: swift test
