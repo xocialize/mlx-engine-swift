@@ -1,11 +1,16 @@
 import MLXToolKit
 
-// MLXServeCore — the runtime coordinator. SCAFFOLDING PLACEHOLDER for this phase.
+// MLXServeCore — the runtime coordinator.
 //
-// MLXToolKit now defines the package-facing contract: `ModelPackage` (the engine-owned model
-// unit), its `PackageManifest` blueprint, `PackageRegistration` (manifest + license-gated
-// factory), and the `InferenceActor` serialization domain its lifecycle methods are isolated
-// to. This target drives them. It will own:
+// FIRST SLICE LANDED: `MLXServeEngine` (see MLXServeEngine.swift) — a registry + admission path
+// that runs the two-layer license gate at registration and lazily constructs + loads + routes a
+// `ModelPackage` by capability (inversion of control, C13). Proven driving the real Qwen3.5 `llm`
+// package from the test app.
+//
+// MLXToolKit defines the package-facing contract: `ModelPackage` (the engine-owned model unit),
+// its `PackageManifest` blueprint, `PackageRegistration` (manifest + license-gated factory), and
+// the `InferenceActor` serialization domain its lifecycle methods are isolated to. This target
+// drives them. Still TODO here:
 //   - ToolRegistry (actor): indexes each surface in a manifest independently (one model, N
 //     surfaces) and resolves a capability call to the single constructed ModelPackage.
 //   - Admission: run the license gate on the manifest, SHA256-verify weights (HubAssetSource),

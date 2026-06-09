@@ -16,6 +16,10 @@ let package = Package(
         .library(name: "MLXToolKit", targets: ["MLXToolKit"]),
         .library(name: "MLXServeCore", targets: ["MLXServeCore"]),
         .library(name: "MLXServeConformance", targets: ["MLXServeConformance"]),
+        .library(name: "MLXEngineUI", targets: ["MLXEngineUI"]),
+        // Web retrieval / grounding (current-knowledge access). MLX-free.
+        .library(name: "MLXRetrievalKitContracts", targets: ["MLXRetrievalKitContracts"]),
+        .library(name: "MLXRetrievalKit", targets: ["MLXRetrievalKit"]),
     ],
     targets: [
         // Contracts only. The dependency floor every package conforms to. Minimal deps.
@@ -27,8 +31,19 @@ let package = Package(
         // C0–C13 self-check harness (placeholder this phase).
         .target(name: "MLXServeConformance", dependencies: ["MLXToolKit"]),
 
+        // Shared SwiftUI surface delivered to consuming apps. Carries the Marquee
+        // design tokens and reusable settings panels (model storage, etc.).
+        .target(name: "MLXEngineUI", dependencies: ["MLXToolKit", "MLXRetrievalKitContracts"]),
+
+        // Web-retrieval contracts (Foundation-only seams + DTOs + profile). No MLX, no network.
+        .target(name: "MLXRetrievalKitContracts"),
+        // Web-retrieval implementation: BraveSearchProvider + RetrievalService. MLX-free,
+        // network-only — packages/apps call it to ground answers in current knowledge.
+        .target(name: "MLXRetrievalKit", dependencies: ["MLXRetrievalKitContracts"]),
+
         .testTarget(name: "MLXToolKitTests", dependencies: ["MLXToolKit"]),
         .testTarget(name: "MLXServeCoreTests", dependencies: ["MLXServeCore", "MLXToolKit"]),
         .testTarget(name: "MLXServeConformanceTests", dependencies: ["MLXServeConformance", "MLXToolKit"]),
+        .testTarget(name: "MLXRetrievalKitTests", dependencies: ["MLXRetrievalKit", "MLXRetrievalKitContracts"]),
     ]
 )
