@@ -61,6 +61,9 @@ public actor MLXServeEngine {
     public nonisolated let deviceProfile: DeviceProfile
     /// Memory budgeting + watermark policy.
     private var governor: MemoryGovernor
+    /// Where packages materialize weights + the marker the storage UI counts. Empty by default
+    /// (packages use their own cache); a consuming app sets it once via `useModelStore`.
+    private var modelStore: ModelStore = ModelStore()
 
     public init(policy: LicensePolicy = .permissiveOnly,
                 device: DeviceProfile = .current(),
@@ -68,6 +71,14 @@ public actor MLXServeEngine {
         self.policy = policy
         self.deviceProfile = device
         self.governor = governor ?? .forDevice(device)
+    }
+
+    /// Point the engine's model store at a download root (the app's chosen, security-scoped models
+    /// folder). Applies to packages registered *after* this call — set it before `register`. Every
+    /// `ModelStorable` configuration is then stamped to download here, and the engine writes the
+    /// storage marker after each successful `load()`.
+    public func useModelStore(_ store: ModelStore) {
+        modelStore = store
     }
 
     /// Register a package + its configuration. Runs the two-layer **license gate** and the **C10
@@ -82,6 +93,15 @@ public actor MLXServeEngine {
 
         let eligibility = deviceProfile.eligibility(for: registration.manifest.requirements)
         guard eligibility.isEligible else { throw EngineError.ineligible(eligibility) }
+
+        // Stamp the download root onto the configuration so the package materializes weights in the
+        // engine's model store rather than its default cache. Configs that don't opt in (don't
+        // conform to `ModelStorable`) are left untouched.
+        var configuration = configuration
+        if var storable = configuration as? ModelStorable {
+            storable.modelsRootDirectory = modelStore.root
+            if let restamped = storable as? any PackageConfiguration { configuration = restamped }
+        }
 
         let footprint = governor.footprint(for: registration.manifest.requirements)
         for capability in registration.manifest.capabilities {
@@ -163,6 +183,12 @@ public actor MLXServeEngine {
 
         let instance = try entry.registration.makePackage(entry.configuration)
         try await instance.load()
+        // Weights are now materialized under the store root — stamp the marker the storage UI
+        // counts (one per package). No-op when no store root is set.
+        let manifest = entry.registration.manifest
+        modelStore.writeMarker(repo: manifest.provenance.sourceRepo,
+                               revision: manifest.provenance.revision,
+                               capabilities: manifest.capabilities)
         residents[capability] = instance
         residentFootprint[capability] = footprint
         governor.charge(footprint)
