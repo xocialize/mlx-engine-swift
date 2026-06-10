@@ -15,6 +15,31 @@ final class MLXToolKitTests: XCTestCase {
         XCTAssertEqual(Capability.imageAnalysis.canonicalOutput, .structuredText)
         XCTAssertEqual(Capability.videoAnalysis.canonicalOutput, .structuredText)
         XCTAssertEqual(Capability.audioSeparation.canonicalOutput, .audio)
+        XCTAssertEqual(Capability.speechEmotion.canonicalOutput, .structuredText)
+    }
+
+    func testFunasrModelLicenseIsPermissive() {
+        // emotion2vec+ ships under FunASR's non-SPDX MODEL_LICENSE, deliberately allowlisted.
+        XCTAssertTrue(SPDXLicense.funasrModel.isPermissive)
+        let decl = LicenseDeclaration(weightLicense: .funasrModel, portCodeLicense: .mit)
+        XCTAssertEqual(LicensePolicy.permissiveOnly.evaluate(decl), .admitted)
+    }
+
+    func testSpeechEmotionContractAndIO() {
+        let audio = Audio(data: Data([0x52, 0x49, 0x46, 0x46]), sampleRate: 16_000, channels: 1)
+        let req = SpeechEmotionRequest(audio: audio)
+        XCTAssertEqual(SpeechEmotionRequest.capability, .speechEmotion)
+        XCTAssertEqual(req.audio.sampleRate, 16_000)
+
+        let resp = SpeechEmotionResponse(label: "happy", confidence: 0.8,
+                                         scores: [EmotionScore(label: "happy", score: 0.8),
+                                                  EmotionScore(label: "neutral", score: 0.2)])
+        XCTAssertEqual(resp.label, "happy")
+        XCTAssertEqual(resp.scores.count, 2)
+
+        let d = SpeechEmotionContract.descriptor(name: "classifyEmotion", summary: "SER")
+        XCTAssertEqual(d.capability, .speechEmotion)
+        XCTAssertEqual(d.parameters.first?.kind, .audio)
     }
 
     func testLicenseGateAdmitsPermissive() {
