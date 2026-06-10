@@ -18,6 +18,22 @@ final class MLXToolKitTests: XCTestCase {
         XCTAssertEqual(Capability.speechEmotion.canonicalOutput, .structuredText)
         XCTAssertEqual(Capability.audioCodec.canonicalOutput, .codes)
         XCTAssertEqual(Capability.audioPolish.canonicalOutput, .audio)
+        XCTAssertEqual(Capability.imageQualityScore.canonicalOutput, .structuredText)
+    }
+
+    func testImageQualityContractAndIO() {
+        let image = Image(format: .png, data: Data([0x89, 0x50, 0x4E, 0x47]), width: 16, height: 16)
+        let req = ImageQualityScoreRequest(image: image)
+        XCTAssertEqual(ImageQualityScoreRequest.capability, .imageQualityScore)
+        XCTAssertEqual(req.image.width, 16)
+
+        let resp = ImageQualityScoreResponse(score: 0.78, subscores: ["patchMin": 0.6])
+        XCTAssertEqual(resp.score, 0.78)
+        XCTAssertEqual(resp.subscores["patchMin"], 0.6)
+
+        let d = ImageQualityContract.descriptor(name: "scoreQuality", summary: "NR-IQA")
+        XCTAssertEqual(d.capability, .imageQualityScore)
+        XCTAssertEqual(d.parameters.first?.kind, .image)
     }
 
     func testAudioPolishContractAndIO() {
