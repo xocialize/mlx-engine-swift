@@ -20,6 +20,22 @@ final class MLXToolKitTests: XCTestCase {
         XCTAssertEqual(Capability.audioPolish.canonicalOutput, .audio)
         XCTAssertEqual(Capability.imageQualityScore.canonicalOutput, .structuredText)
         XCTAssertEqual(Capability.imageRestore.canonicalOutput, .image)
+        XCTAssertEqual(Capability.imageUpscale.canonicalOutput, .image)
+    }
+
+    func testImageUpscaleContractAndIO() {
+        let image = Image(format: .png, data: Data([0x89, 0x50, 0x4E, 0x47]), width: 64, height: 64)
+        let req = ImageUpscaleRequest(image: image, scale: 4)
+        XCTAssertEqual(ImageUpscaleRequest.capability, .imageUpscale)
+        XCTAssertEqual(req.scale, 4)
+
+        let resp = ImageUpscaleResponse(image: image, appliedScale: 4)
+        XCTAssertEqual(resp.appliedScale, 4)
+
+        let d = ImageUpscaleContract.descriptor(name: "upscale", summary: "SR")
+        XCTAssertEqual(d.capability, .imageUpscale)
+        XCTAssertEqual(d.parameters.first?.kind, .image)
+        XCTAssertTrue(d.parameters.contains { $0.name == "scale" && !$0.required })
     }
 
     func testImageRestoreContractAndIO() {
