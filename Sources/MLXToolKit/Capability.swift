@@ -19,6 +19,7 @@ public enum Capability: String, Codable, Sendable, CaseIterable, Hashable {
     case imageQualityScore
     case imageRestore
     case imageUpscale
+    case videoUpscale
 }
 
 /// The fixed output artifact kind for a capability. Not negotiable per package (C2).
@@ -47,6 +48,7 @@ extension Capability {
         case .imageQualityScore: return .structuredText
         case .imageRestore: return .image
         case .imageUpscale: return .image
+        case .videoUpscale: return .video
         }
     }
 }
