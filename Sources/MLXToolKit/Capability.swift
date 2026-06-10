@@ -12,6 +12,7 @@ public enum Capability: String, Codable, Sendable, CaseIterable, Hashable {
     case llm
     case imageAnalysis
     case videoAnalysis
+    case audioSeparation
 }
 
 /// The fixed output artifact kind for a capability. Not negotiable per package (C2).
@@ -32,6 +33,7 @@ extension Capability {
         case .textToVideo: return .video
         case .llm: return .text
         case .imageAnalysis, .videoAnalysis: return .structuredText
+        case .audioSeparation: return .audio
         }
     }
 }

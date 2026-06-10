@@ -14,6 +14,7 @@ final class MLXToolKitTests: XCTestCase {
         XCTAssertEqual(Capability.llm.canonicalOutput, .text)
         XCTAssertEqual(Capability.imageAnalysis.canonicalOutput, .structuredText)
         XCTAssertEqual(Capability.videoAnalysis.canonicalOutput, .structuredText)
+        XCTAssertEqual(Capability.audioSeparation.canonicalOutput, .audio)
     }
 
     func testLicenseGateAdmitsPermissive() {
@@ -37,6 +38,31 @@ final class MLXToolKitTests: XCTestCase {
         XCTAssertEqual(TTSRequest.capability, .tts)
         XCTAssertEqual(req.mode, .expressive)
         XCTAssertEqual(req.text, "hello")
+    }
+
+    func testAudioSeparationRequestCarriesCanonicalSurface() {
+        let mixture = Audio(data: Data([0x52, 0x49, 0x46, 0x46]), sampleRate: 44_100, channels: 2)
+        let req = AudioSeparationRequest(audio: mixture, stems: [.vocals, .instrumental])
+        XCTAssertEqual(AudioSeparationRequest.capability, .audioSeparation)
+        XCTAssertEqual(req.stems, [.vocals, .instrumental])
+        XCTAssertEqual(req.audio.sampleRate, 44_100)
+    }
+
+    func testAudioSeparationResponseKeysStemsByName() {
+        let vocals = Audio(data: Data([0x01]), sampleRate: 44_100, channels: 1)
+        let inst = Audio(data: Data([0x02]), sampleRate: 44_100, channels: 1)
+        let resp = AudioSeparationResponse(stems: [.vocals: vocals, .instrumental: inst])
+        XCTAssertEqual(resp[.vocals], vocals)
+        XCTAssertEqual(resp[.instrumental], inst)
+        XCTAssertNil(resp[.drums])
+    }
+
+    func testAudioSeparationDescriptorIsCanonical() {
+        let d = AudioSeparationContract.descriptor(name: "separateVocals", summary: "Split vocals")
+        XCTAssertEqual(d.capability, .audioSeparation)
+        XCTAssertEqual(d.parameters.first?.name, "audio")
+        XCTAssertEqual(d.parameters.first?.kind, .audio)
+        XCTAssertTrue(d.parameters.contains { $0.name == "stems" && !$0.required })
     }
 
     func testArtifactRoundTripsThroughCodable() throws {
