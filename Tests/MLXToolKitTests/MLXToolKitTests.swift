@@ -22,6 +22,22 @@ final class MLXToolKitTests: XCTestCase {
         XCTAssertEqual(Capability.imageRestore.canonicalOutput, .image)
         XCTAssertEqual(Capability.imageUpscale.canonicalOutput, .image)
         XCTAssertEqual(Capability.videoUpscale.canonicalOutput, .video)
+        XCTAssertEqual(Capability.frameInterpolate.canonicalOutput, .video)
+    }
+
+    func testFrameInterpolateContractAndIO() {
+        let video = Video(format: .mp4, data: Data([0x00]), durationSeconds: 2, frameRate: 12)
+        let req = FrameInterpolateRequest(video: video, factor: 2)
+        XCTAssertEqual(FrameInterpolateRequest.capability, .frameInterpolate)
+        XCTAssertEqual(req.factor, 2)
+
+        let resp = FrameInterpolateResponse(video: video, appliedFactor: 2)
+        XCTAssertEqual(resp.appliedFactor, 2)
+
+        let d = FrameInterpolateContract.descriptor(name: "interp", summary: "FPS up-conversion")
+        XCTAssertEqual(d.capability, .frameInterpolate)
+        XCTAssertEqual(d.parameters.first?.kind, .video)
+        XCTAssertTrue(d.parameters.contains { $0.name == "factor" && !$0.required })
     }
 
     func testVideoUpscaleContractAndIO() {
