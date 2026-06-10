@@ -16,6 +16,33 @@ final class MLXToolKitTests: XCTestCase {
         XCTAssertEqual(Capability.videoAnalysis.canonicalOutput, .structuredText)
         XCTAssertEqual(Capability.audioSeparation.canonicalOutput, .audio)
         XCTAssertEqual(Capability.speechEmotion.canonicalOutput, .structuredText)
+        XCTAssertEqual(Capability.audioCodec.canonicalOutput, .codes)
+    }
+
+    func testCcBy4LicenseIsPermissive() {
+        // Kyutai's Mimi codec ships under CC-BY-4.0 (permissive: commercial + redistribution OK).
+        XCTAssertTrue(SPDXLicense.ccBy4.isPermissive)
+        let decl = LicenseDeclaration(weightLicense: .ccBy4, portCodeLicense: .mit)
+        XCTAssertEqual(LicensePolicy.permissiveOnly.evaluate(decl), .admitted)
+    }
+
+    func testFp32QuantExists() {
+        XCTAssertTrue(Quant.allCases.contains(.fp32))
+    }
+
+    func testAudioCodecContractAndIO() {
+        let audio = Audio(data: Data([0x52, 0x49, 0x46, 0x46]), sampleRate: 24_000, channels: 1)
+        let req = AudioCodecRequest(audio: audio)
+        XCTAssertEqual(AudioCodecRequest.capability, .audioCodec)
+
+        let resp = AudioCodecResponse(codes: [[0, 1, 2], [3, 4, 5]], numCodebooks: 2, frameRate: 12.5)
+        XCTAssertEqual(resp.codes.count, 2)
+        XCTAssertEqual(resp.numCodebooks, 2)
+        XCTAssertEqual(resp.frameRate, 12.5)
+
+        let d = AudioCodecContract.descriptor(name: "encodeAudio", summary: "Mimi encode")
+        XCTAssertEqual(d.capability, .audioCodec)
+        XCTAssertEqual(d.parameters.first?.kind, .audio)
     }
 
     func testFunasrModelLicenseIsPermissive() {
