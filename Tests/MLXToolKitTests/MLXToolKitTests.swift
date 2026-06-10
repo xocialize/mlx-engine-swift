@@ -17,6 +17,32 @@ final class MLXToolKitTests: XCTestCase {
         XCTAssertEqual(Capability.audioSeparation.canonicalOutput, .audio)
         XCTAssertEqual(Capability.speechEmotion.canonicalOutput, .structuredText)
         XCTAssertEqual(Capability.audioCodec.canonicalOutput, .codes)
+        XCTAssertEqual(Capability.audioPolish.canonicalOutput, .audio)
+    }
+
+    func testAudioPolishContractAndIO() {
+        let audio = Audio(data: Data([0x52, 0x49, 0x46, 0x46]), sampleRate: 48_000, channels: 1)
+        let req = AudioPolishRequest(audio: audio, mode: .broadcast)
+        XCTAssertEqual(AudioPolishRequest.capability, .audioPolish)
+        XCTAssertEqual(req.mode, .broadcast)
+
+        let resp = AudioPolishResponse(audio: audio, inputLUFS: -30, outputLUFS: -23)
+        XCTAssertEqual(resp.outputLUFS, -23)
+
+        let d = AudioPolishContract.descriptor(name: "polish", summary: "Master audio", modes: [.broadcast, .streaming])
+        XCTAssertEqual(d.capability, .audioPolish)
+        XCTAssertEqual(d.parameters.first?.kind, .audio)
+        XCTAssertEqual(d.supportedModes, [.broadcast, .streaming])
+    }
+
+    func testClassicalCapabilityAdmitsWithEmptyRequirements() {
+        // The non-MLX seam: a weightless/backendless capability must be admissible.
+        let reqs = RequirementsManifest(footprints: [], requiredBackends: [])
+        XCTAssertTrue(reqs.footprints.isEmpty)
+        XCTAssertTrue(reqs.requiredBackends.isEmpty)
+        // license = port-code on both layers (no separate weights) still clears the gate.
+        let decl = LicenseDeclaration(weightLicense: .mit, portCodeLicense: .mit)
+        XCTAssertEqual(LicensePolicy.permissiveOnly.evaluate(decl), .admitted)
     }
 
     func testCcBy4LicenseIsPermissive() {
