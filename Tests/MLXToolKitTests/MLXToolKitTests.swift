@@ -23,6 +23,23 @@ final class MLXToolKitTests: XCTestCase {
         XCTAssertEqual(Capability.imageUpscale.canonicalOutput, .image)
         XCTAssertEqual(Capability.videoUpscale.canonicalOutput, .video)
         XCTAssertEqual(Capability.frameInterpolate.canonicalOutput, .video)
+        XCTAssertEqual(Capability.contentClassify.canonicalOutput, .structuredText)
+    }
+
+    func testContentClassifyContractAndIO() {
+        let video = Video(format: .mp4, data: Data([0x00]), durationSeconds: 2, frameRate: 30)
+        let req = ContentClassifyRequest(video: video)
+        XCTAssertEqual(ContentClassifyRequest.capability, .contentClassify)
+
+        let resp = ContentClassifyResponse(
+            labels: [ContentScore(label: "photographic", score: 0.9)],
+            embedding: [0.1, 0.2, 0.3])
+        XCTAssertEqual(resp.labels.first?.label, "photographic")
+        XCTAssertEqual(resp.embedding.count, 3)
+
+        let d = ContentClassifyContract.descriptor(name: "classify", summary: "Content routing")
+        XCTAssertEqual(d.capability, .contentClassify)
+        XCTAssertEqual(d.parameters.first?.kind, .video)
     }
 
     func testFrameInterpolateContractAndIO() {
