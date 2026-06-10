@@ -19,6 +19,21 @@ final class MLXToolKitTests: XCTestCase {
         XCTAssertEqual(Capability.audioCodec.canonicalOutput, .codes)
         XCTAssertEqual(Capability.audioPolish.canonicalOutput, .audio)
         XCTAssertEqual(Capability.imageQualityScore.canonicalOutput, .structuredText)
+        XCTAssertEqual(Capability.imageRestore.canonicalOutput, .image)
+    }
+
+    func testImageRestoreContractAndIO() {
+        let image = Image(format: .png, data: Data([0x89, 0x50, 0x4E, 0x47]), width: 64, height: 64)
+        let req = ImageRestoreRequest(image: image)
+        XCTAssertEqual(ImageRestoreRequest.capability, .imageRestore)
+        XCTAssertEqual(req.image.height, 64)
+
+        let resp = ImageRestoreResponse(image: image)
+        XCTAssertEqual(resp.image.width, 64)
+
+        let d = ImageRestoreContract.descriptor(name: "restore", summary: "Denoise/deblock")
+        XCTAssertEqual(d.capability, .imageRestore)
+        XCTAssertEqual(d.parameters.first?.kind, .image)
     }
 
     func testImageQualityContractAndIO() {

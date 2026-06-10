@@ -17,6 +17,7 @@ public enum Capability: String, Codable, Sendable, CaseIterable, Hashable {
     case audioCodec
     case audioPolish
     case imageQualityScore
+    case imageRestore
 }
 
 /// The fixed output artifact kind for a capability. Not negotiable per package (C2).
@@ -43,6 +44,7 @@ extension Capability {
         case .audioCodec: return .codes
         case .audioPolish: return .audio
         case .imageQualityScore: return .structuredText
+        case .imageRestore: return .image
         }
     }
 }
