@@ -14,9 +14,15 @@ extension SPDXLicense {
     public static let isc: SPDXLicense = "ISC"
     public static let unlicense: SPDXLicense = "Unlicense"
 
+    /// FunASR's custom model license (used by the emotion2vec / emotion2vec+ checkpoints).
+    /// Non-SPDX, so referenced via the SPDX `LicenseRef-` convention. It permits use, copy,
+    /// modification, and redistribution with attribution and model-name retention (plus a
+    /// no-denigration clause and no warranty) — functionally permissive, hence allowlisted.
+    public static let funasrModel: SPDXLicense = "LicenseRef-FunASR-Model"
+
     /// The permissive allowlist used by `.permissiveOnly`. Curated; extend deliberately.
     public static let permissiveAllowlist: Set<SPDXLicense> = [
-        .mit, .apache2, .bsd2, .bsd3, .isc, .unlicense,
+        .mit, .apache2, .bsd2, .bsd3, .isc, .unlicense, .funasrModel,
     ]
 
     public var isPermissive: Bool { SPDXLicense.permissiveAllowlist.contains(self) }
