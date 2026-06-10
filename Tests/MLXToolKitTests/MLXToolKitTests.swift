@@ -24,6 +24,30 @@ final class MLXToolKitTests: XCTestCase {
         XCTAssertEqual(Capability.videoUpscale.canonicalOutput, .video)
         XCTAssertEqual(Capability.frameInterpolate.canonicalOutput, .video)
         XCTAssertEqual(Capability.contentClassify.canonicalOutput, .structuredText)
+        XCTAssertEqual(Capability.opticalFlow.canonicalOutput, .flow)
+    }
+
+    func testOpticalFlowContractAndIO() {
+        let img = Image(format: .png, data: Data([0x89]), width: 4, height: 2)
+        let req = OpticalFlowRequest(image0: img, image1: img)
+        XCTAssertEqual(OpticalFlowRequest.capability, .opticalFlow)
+
+        // 4x2 field; pixel (1, 0) moves by (+2, -1)
+        var uv = [Float](repeating: 0, count: 4 * 2 * 2)
+        uv[(0 * 4 + 1) * 2] = 2
+        uv[(0 * 4 + 1) * 2 + 1] = -1
+        let field = FlowField(width: 4, height: 2, uv: uv)
+        XCTAssertEqual(field[1, 0].u, 2)
+        XCTAssertEqual(field[1, 0].v, -1)
+        XCTAssertEqual(field[0, 0].u, 0)
+
+        let resp = OpticalFlowResponse(flow: field)
+        XCTAssertEqual(resp.flow.uv.count, 16)
+
+        let d = OpticalFlowContract.descriptor(name: "flow", summary: "Dense motion")
+        XCTAssertEqual(d.capability, .opticalFlow)
+        XCTAssertEqual(d.parameters.count, 2)
+        XCTAssertTrue(d.parameters.allSatisfy { $0.kind == .image && $0.required })
     }
 
     func testContentClassifyContractAndIO() {
