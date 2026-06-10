@@ -21,6 +21,22 @@ final class MLXToolKitTests: XCTestCase {
         XCTAssertEqual(Capability.imageQualityScore.canonicalOutput, .structuredText)
         XCTAssertEqual(Capability.imageRestore.canonicalOutput, .image)
         XCTAssertEqual(Capability.imageUpscale.canonicalOutput, .image)
+        XCTAssertEqual(Capability.videoUpscale.canonicalOutput, .video)
+    }
+
+    func testVideoUpscaleContractAndIO() {
+        let video = Video(format: .mp4, data: Data([0x00, 0x00, 0x00, 0x18]), durationSeconds: 2, frameRate: 30)
+        let req = VideoUpscaleRequest(video: video, scale: 2)
+        XCTAssertEqual(VideoUpscaleRequest.capability, .videoUpscale)
+        XCTAssertEqual(req.scale, 2)
+
+        let resp = VideoUpscaleResponse(video: video, appliedScale: 2)
+        XCTAssertEqual(resp.appliedScale, 2)
+
+        let d = VideoUpscaleContract.descriptor(name: "videoUpscale", summary: "Video SR")
+        XCTAssertEqual(d.capability, .videoUpscale)
+        XCTAssertEqual(d.parameters.first?.kind, .video)
+        XCTAssertTrue(d.parameters.contains { $0.name == "scale" && !$0.required })
     }
 
     func testImageUpscaleContractAndIO() {
