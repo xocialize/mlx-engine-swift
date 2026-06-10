@@ -8,6 +8,7 @@ public enum Backend: String, Sendable, Codable, Hashable, CaseIterable {
 
 /// Quantization levels a model may ship.
 public enum Quant: String, Sendable, Codable, Hashable, CaseIterable {
+    case fp32
     case fp16
     case bf16
     case int8

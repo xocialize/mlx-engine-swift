@@ -20,9 +20,14 @@ extension SPDXLicense {
     /// no-denigration clause and no warranty) — functionally permissive, hence allowlisted.
     public static let funasrModel: SPDXLicense = "LicenseRef-FunASR-Model"
 
+    /// Creative Commons Attribution 4.0 — permissive (commercial use + redistribution allowed,
+    /// attribution required; no share-alike, no non-commercial clause). Used by model weights such
+    /// as Kyutai's Mimi codec. A recognized SPDX id.
+    public static let ccBy4: SPDXLicense = "CC-BY-4.0"
+
     /// The permissive allowlist used by `.permissiveOnly`. Curated; extend deliberately.
     public static let permissiveAllowlist: Set<SPDXLicense> = [
-        .mit, .apache2, .bsd2, .bsd3, .isc, .unlicense, .funasrModel,
+        .mit, .apache2, .bsd2, .bsd3, .isc, .unlicense, .funasrModel, .ccBy4,
     ]
 
     public var isPermissive: Bool { SPDXLicense.permissiveAllowlist.contains(self) }
