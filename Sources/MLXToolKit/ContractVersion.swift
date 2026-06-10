@@ -29,5 +29,8 @@ public struct SemanticVersion: Sendable, Codable, Equatable, Comparable, CustomS
 /// Every conformant package declares the contract version it targets (C0). The contract is
 /// additive at minor versions; breaking changes bump the major and carry a deprecation window.
 public enum ContractVersion {
-    public static let current = SemanticVersion(major: 1, minor: 0, patch: 0)
+    // 1.1.0 (2026-06-10, additive): TTSRequest.referenceTranscript (ICL cloning transcript,
+    // promoted from metaData when the second package needed it) + Quant.int5/.int6
+    // (mlx-community ships 5/6-bit conversions broadly).
+    public static let current = SemanticVersion(major: 1, minor: 1, patch: 0)
 }

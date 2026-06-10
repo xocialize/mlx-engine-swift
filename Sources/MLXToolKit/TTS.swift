@@ -28,15 +28,23 @@ public struct TTSRequest: CapabilityRequest {
 
     public let text: String
     public let voice: VoiceSelector
+    /// Transcript of the `.referenceAudio` clip, for ICL-grade cloning. Canonical because
+    /// every ICL-style cloning TTS (Qwen3-TTS, VoxCPM2, CosyVoice, VibeVoice) conditions on
+    /// (reference audio, reference text) as a pair — promoted from `metaData` when the second
+    /// package needed it (contract 1.1.0). Ignored unless `voice` is `.referenceAudio`;
+    /// packages without an ICL path may ignore it (their cloning quality tier is theirs).
+    public let referenceTranscript: String?
     public let mode: Mode?
     public let metaData: MetaData
 
     public init(text: String,
                 voice: VoiceSelector = VoiceSelector(),
+                referenceTranscript: String? = nil,
                 mode: Mode? = nil,
                 metaData: MetaData = [:]) {
         self.text = text
         self.voice = voice
+        self.referenceTranscript = referenceTranscript
         self.mode = mode
         self.metaData = metaData
     }
@@ -61,6 +69,8 @@ public enum TTSContract {
                                 summary: "The text to speak."),
                 ParameterSchema(name: "voice", kind: .object, required: false,
                                 summary: "Canonical voice selection (named / referenceAudio / auto)."),
+                ParameterSchema(name: "referenceTranscript", kind: .string, required: false,
+                                summary: "Transcript of the referenceAudio clip (ICL-grade cloning)."),
             ],
             supportedModes: modes
         )

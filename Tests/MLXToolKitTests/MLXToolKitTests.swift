@@ -3,8 +3,32 @@ import XCTest
 
 final class MLXToolKitTests: XCTestCase {
 
-    func testContractVersionIsV1() {
-        XCTAssertEqual(ContractVersion.current, SemanticVersion(major: 1, minor: 0, patch: 0))
+    func testContractVersionIsV1_1() {
+        XCTAssertEqual(ContractVersion.current, SemanticVersion(major: 1, minor: 1, patch: 0))
+    }
+
+    // 1.1.0 additive: the ICL-cloning transcript is canonical (promoted from metaData when the
+    // second TTS package needed it) and defaults to nil so 1.0.0-era call sites are unaffected.
+    func testTTSReferenceTranscriptIsAdditive() {
+        let legacy = TTSRequest(text: "hello")
+        XCTAssertNil(legacy.referenceTranscript)
+
+        let icl = TTSRequest(text: "hello",
+                             voice: VoiceSelector(.referenceAudio(Audio(data: Data()))),
+                             referenceTranscript: "reference transcript")
+        XCTAssertEqual(icl.referenceTranscript, "reference transcript")
+
+        // The descriptor exposes it for MCPBridge introspection (C11).
+        let descriptor = TTSContract.descriptor(name: "t", summary: "s")
+        XCTAssertTrue(descriptor.parameters.contains { $0.name == "referenceTranscript" })
+    }
+
+    // 1.1.0 additive: 5/6-bit quants (mlx-community ships them broadly).
+    func testInt5Int6QuantsExist() {
+        XCTAssertEqual(Quant.int5.rawValue, "int5")
+        XCTAssertEqual(Quant.int6.rawValue, "int6")
+        XCTAssertTrue(Quant.allCases.contains(.int5))
+        XCTAssertTrue(Quant.allCases.contains(.int6))
     }
 
     func testCanonicalOutputsAreFixed() {

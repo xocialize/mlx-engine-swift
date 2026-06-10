@@ -12,6 +12,8 @@ public enum Quant: String, Sendable, Codable, Hashable, CaseIterable {
     case fp16
     case bf16
     case int8
+    case int6
+    case int5
     case int4
     case mxfp4
 }
