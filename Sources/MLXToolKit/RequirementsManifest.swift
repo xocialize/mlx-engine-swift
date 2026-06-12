@@ -36,6 +36,11 @@ public struct OSRequirement: Sendable, Codable, Equatable {
 }
 
 /// Resident memory footprint for one quantization.
+///
+/// `residentBytes` is a **declared floor**, not a measured cap: the true working set (activations +
+/// compute scratch) can exceed it at run time. Admission/eviction (R-MEM-1, see docs/architecture.md)
+/// must therefore treat it as a lower bound and additionally honor a runtime pressure signal — two
+/// heavy models whose declared footprints sum under budget can still overrun real memory.
 public struct QuantFootprint: Sendable, Codable, Equatable {
     public let quant: Quant
     public let residentBytes: UInt64

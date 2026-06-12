@@ -22,6 +22,10 @@ not an opinion. Most declarative items are made once on the `PackageManifest`.
 
 C13's "runs only in the serialization domain / no private queue" is **compiler-enforced** by
 `ModelPackage`'s `@InferenceActor` isolation; its eviction/cancellation behavior needs runtime
-testing.
+testing. "Cooperatively evictable" is refined by **R-MEM-1** (architecture.md): a package is
+evictable iff `unload()` releases its full working set *and* the engine's admission-time,
+pressure-aware eviction can reclaim it before the next heavy load — so heavy models swap (queue-shaped)
+rather than stack. R-MEM-1's open gap is the eviction *trigger* (declared bytes vs. real pressure),
+not the package's `unload()` obligation.
 
 *The authoritative checklist (pass/fail criteria, failure modes) lives in the `mlx-engine` skill.*
