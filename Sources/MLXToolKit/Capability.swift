@@ -8,6 +8,7 @@
 public enum Capability: String, Codable, Sendable, CaseIterable, Hashable {
     case tts
     case textToImage
+    case imageEdit
     case textToVideo
     case llm
     case imageAnalysis
@@ -42,6 +43,7 @@ extension Capability {
         switch self {
         case .tts: return .audio
         case .textToImage: return .image
+        case .imageEdit: return .image
         case .textToVideo: return .video
         case .llm: return .text
         case .imageAnalysis, .videoAnalysis: return .structuredText
