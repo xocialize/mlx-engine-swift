@@ -122,3 +122,47 @@ private func engine(budget: UInt64, backends: Set<Backend> = [.metalGPU], chip: 
     #expect(snap.residents[.llm] == 60)
     #expect(snap.residents[.textToImage] == 60)
 }
+
+// MARK: - Multi-package per capability (modularity)
+
+@InferenceActor private final class MockImageAlt: MockBase {
+    nonisolated static var manifest: PackageManifest {
+        var m = mockManifest(capability: .textToImage, footprint: 30, backends: [.metalGPU], chipFloor: nil)
+        return PackageManifest(
+            license: m.license, provenance: m.provenance, requirements: m.requirements,
+            specialties: m.specialties,
+            surfaces: [ToolDescriptor(name: "mock-t2i-alt", capability: .textToImage, summary: "alt")])
+    }
+    nonisolated init(configuration: StandardConfiguration) {}
+}
+
+@Test func multiPackageSelectionAndDefaults() async throws {
+    let e = engine(budget: 200)
+    let primary = try await e.register(PackageRegistration.of(MockImage60.self), configuration: cfg())
+    let alt = try await e.register(PackageRegistration.of(MockImageAlt.self), configuration: cfg())
+
+    // Both back the capability; LAST registration is the default (swap-flow compatible).
+    #expect(await e.packages(for: .textToImage).count == 2)
+    #expect(await e.defaultPackage(for: .textToImage) == alt)
+
+    // Re-point routing without re-registering.
+    try await e.setDefault(primary, for: .textToImage)
+    #expect(await e.defaultPackage(for: .textToImage) == primary)
+
+    // Per-request selection: both can be resident simultaneously (60 + 30 ≤ 200).
+    try await e.prepare(.textToImage)                 // default → primary (60)
+    try await e.prepare(.textToImage, package: alt)   // explicit → alt (30)
+    let residentBytes = await e.memory.residentBytes
+    #expect(residentBytes == 90)
+
+    // Selecting an id that doesn't back the capability is an error.
+    await #expect(throws: EngineError.unknownPackage(.llm, alt)) {
+        try await e.prepare(.llm, package: alt)
+    }
+
+    // Evict the specific module; the default stays resident.
+    await e.evict(.textToImage, package: alt)
+    let after = await e.residentPackages
+    #expect(after[alt] == nil)
+    #expect(after[primary] == 60)
+}
