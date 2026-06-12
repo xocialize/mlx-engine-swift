@@ -32,5 +32,5 @@ public enum ContractVersion {
     // 1.1.0 (2026-06-10, additive): TTSRequest.referenceTranscript (ICL cloning transcript,
     // promoted from metaData when the second package needed it) + Quant.int5/.int6
     // (mlx-community ships 5/6-bit conversions broadly).
-    public static let current = SemanticVersion(major: 1, minor: 1, patch: 0)
+    public static let current = SemanticVersion(major: 1, minor: 2, patch: 0)
 }

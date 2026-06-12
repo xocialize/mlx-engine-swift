@@ -3,8 +3,28 @@ import XCTest
 
 final class MLXToolKitTests: XCTestCase {
 
-    func testContractVersionIsV1_1() {
-        XCTAssertEqual(ContractVersion.current, SemanticVersion(major: 1, minor: 1, patch: 0))
+    func testContractVersionIsV1_2() {
+        XCTAssertEqual(ContractVersion.current, SemanticVersion(major: 1, minor: 2, patch: 0))
+    }
+
+    // 1.2.0 additive: the soundEffect capability (text -> SFX audio; first package:
+    // mlx-moss-soundeffect-swift over MOSS-SoundEffect-v2.0).
+    func testSoundEffectContractAndIO() {
+        let req = SoundEffectRequest(
+            prompt: "a heavy wooden door creaks open slowly",
+            durationSeconds: 5, steps: 100, guidanceScale: 4.0, seed: 42)
+        XCTAssertEqual(SoundEffectRequest.capability, .soundEffect)
+        XCTAssertEqual(Capability.soundEffect.canonicalOutput, .audio)
+        XCTAssertEqual(req.durationSeconds, 5)
+
+        let audio = Audio(data: Data([0x52, 0x49, 0x46, 0x46]), sampleRate: 48_000, channels: 1)
+        let resp = SoundEffectResponse(audio: audio)
+        XCTAssertEqual(resp.audio.sampleRate, 48_000)
+
+        let d = SoundEffectContract.descriptor(name: "moss-sfx", summary: "Text to sound effect")
+        XCTAssertEqual(d.capability, .soundEffect)
+        XCTAssertEqual(d.parameters.first?.name, "prompt")
+        XCTAssertTrue(d.parameters.contains { $0.name == "durationSeconds" })
     }
 
     // 1.1.0 additive: the ICL-cloning transcript is canonical (promoted from metaData when the
