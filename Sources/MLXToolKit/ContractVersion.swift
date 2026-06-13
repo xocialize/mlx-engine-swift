@@ -36,5 +36,10 @@ public enum ContractVersion {
     //   • `imageEdit` (+ IEditRequest/IEditResponse/IEditContract) — instruction-driven editing,
     //     multi-image-first (introduced by Qwen-Image-Edit-2511; planned since the Lance scoping).
     //   • `soundEffect` (+ SoundEffectRequest/Response/Contract) — text → SFX audio (MOSS-SoundEffect).
-    public static let current = SemanticVersion(major: 1, minor: 2, patch: 0)
+    // 1.3.0 (2026-06-13, additive): video editing + reference-conditioned generation —
+    //   • `videoEdit` (+ VEditRequest/VEditResponse/VEditContract) — source video (+ optional
+    //     reference images) + prompt → edited video (introduced by Bernini-R's v2v/rv2v).
+    //   • `T2VRequest.referenceImages` — subject-consistent reference-to-video generation (r2v),
+    //     promoted to a canonical field (mirrors `initImage` for i2v).
+    public static let current = SemanticVersion(major: 1, minor: 3, patch: 0)
 }

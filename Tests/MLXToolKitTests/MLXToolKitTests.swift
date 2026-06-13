@@ -3,8 +3,21 @@ import XCTest
 
 final class MLXToolKitTests: XCTestCase {
 
-    func testContractVersionIsV1_2() {
-        XCTAssertEqual(ContractVersion.current, SemanticVersion(major: 1, minor: 2, patch: 0))
+    func testContractVersionIsV1_3() {
+        XCTAssertEqual(ContractVersion.current, SemanticVersion(major: 1, minor: 3, patch: 0))
+    }
+
+    // 1.3.0 additive: videoEdit (source video + optional refs + prompt -> edited video) +
+    // T2VRequest.referenceImages (reference-to-video generation). Introduced by Bernini-R.
+    func testVideoEditCapability() {
+        XCTAssertEqual(VEditRequest.capability, .videoEdit)
+        XCTAssertEqual(Capability.videoEdit.canonicalOutput, .video)
+        let d = VEditContract.descriptor(name: "x", summary: "y")
+        XCTAssertEqual(d.capability, .videoEdit)
+        XCTAssertTrue(d.parameters.contains { $0.name == "video" && $0.required })
+        // referenceImages is a canonical T2V field now (r2v).
+        let t2v = T2VRequest(prompt: "p", referenceImages: [])
+        XCTAssertNotNil(t2v.referenceImages)
     }
 
     // 1.2.0 additive: the soundEffect capability (text -> SFX audio; first package:

@@ -25,6 +25,11 @@ public enum Capability: String, Codable, Sendable, CaseIterable, Hashable {
     case contentClassify
     case opticalFlow
     case soundEffect
+    /// Instruction-driven **video** editing — source video (+ optional reference
+    /// images) + prompt → edited video. Contract 1.3.0; introduced by Bernini-R's
+    /// v2v/rv2v. (Image editing is `imageEdit`; reference-conditioned *generation*
+    /// rides `textToVideo.referenceImages`.)
+    case videoEdit
 }
 
 /// The fixed output artifact kind for a capability. Not negotiable per package (C2).
@@ -60,6 +65,7 @@ extension Capability {
         case .contentClassify: return .structuredText
         case .opticalFlow: return .flow
         case .soundEffect: return .audio
+        case .videoEdit: return .video
         }
     }
 }

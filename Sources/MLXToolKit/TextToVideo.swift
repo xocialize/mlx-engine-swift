@@ -13,6 +13,11 @@ public struct T2VRequest: CapabilityRequest {
     public let negativePrompt: String?
     /// Optional first-frame / conditioning image (image-to-video). Canonical `Image` artifact.
     public let initImage: Image?
+    /// Optional reference image(s) for **subject-consistent generation** (reference-to-video,
+    /// r2v): generate a new video of these subject(s) following `prompt`. Distinct from
+    /// `initImage` (a first frame) — references condition *identity*, not the opening frame.
+    /// Contract 1.3.0; introduced by Bernini-R. Packages that don't support it ignore it.
+    public let referenceImages: [Image]?
     public let numFrames: Int?
     public let fps: Double?
     public let width: Int?
@@ -26,6 +31,7 @@ public struct T2VRequest: CapabilityRequest {
     public init(prompt: String,
                 negativePrompt: String? = nil,
                 initImage: Image? = nil,
+                referenceImages: [Image]? = nil,
                 numFrames: Int? = nil,
                 fps: Double? = nil,
                 width: Int? = nil,
@@ -38,6 +44,7 @@ public struct T2VRequest: CapabilityRequest {
         self.prompt = prompt
         self.negativePrompt = negativePrompt
         self.initImage = initImage
+        self.referenceImages = referenceImages
         self.numFrames = numFrames
         self.fps = fps
         self.width = width
@@ -70,6 +77,8 @@ public enum T2VContract {
                                 summary: "What to steer away from."),
                 ParameterSchema(name: "initImage", kind: .image, required: false,
                                 summary: "Optional conditioning image (image-to-video)."),
+                ParameterSchema(name: "referenceImages", kind: .image, required: false,
+                                summary: "Optional reference image(s) for subject-consistent generation (r2v)."),
                 ParameterSchema(name: "numFrames", kind: .integer, required: false, summary: "Frame count."),
                 ParameterSchema(name: "fps", kind: .number, required: false, summary: "Frames per second."),
                 ParameterSchema(name: "width", kind: .integer, required: false, summary: "Output width."),
