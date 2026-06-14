@@ -3,8 +3,19 @@ import XCTest
 
 final class MLXToolKitTests: XCTestCase {
 
-    func testContractVersionIsV1_3() {
-        XCTAssertEqual(ContractVersion.current, SemanticVersion(major: 1, minor: 3, patch: 0))
+    func testContractVersionIsV1_4() {
+        XCTAssertEqual(ContractVersion.current, SemanticVersion(major: 1, minor: 4, patch: 0))
+    }
+
+    // 1.4.0 additive: talkingHead (source face video + driving audio -> re-lip-synced video).
+    // Introduced by MuseTalk.
+    func testTalkingHeadCapability() {
+        XCTAssertEqual(TalkingHeadRequest.capability, .talkingHead)
+        XCTAssertEqual(Capability.talkingHead.canonicalOutput, .video)
+        let d = TalkingHeadContract.descriptor(name: "x", summary: "y")
+        XCTAssertEqual(d.capability, .talkingHead)
+        XCTAssertTrue(d.parameters.contains { $0.name == "source" && $0.kind == .video && $0.required })
+        XCTAssertTrue(d.parameters.contains { $0.name == "audio" && $0.kind == .audio && $0.required })
     }
 
     // 1.3.0 additive: videoEdit (source video + optional refs + prompt -> edited video) +

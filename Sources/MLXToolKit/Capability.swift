@@ -30,6 +30,11 @@ public enum Capability: String, Codable, Sendable, CaseIterable, Hashable {
     /// v2v/rv2v. (Image editing is `imageEdit`; reference-conditioned *generation*
     /// rides `textToVideo.referenceImages`.)
     case videoEdit
+    /// Audio-driven **lip-sync / face reenactment** — a source face video + driving audio →
+    /// a video whose mouth/lower-face is regenerated to match the speech. Contract 1.4.0;
+    /// introduced by MuseTalk. (Distinct from `textToVideo`: conditioned on a source face and
+    /// an audio track, not a text prompt.)
+    case talkingHead
 }
 
 /// The fixed output artifact kind for a capability. Not negotiable per package (C2).
@@ -66,6 +71,7 @@ extension Capability {
         case .opticalFlow: return .flow
         case .soundEffect: return .audio
         case .videoEdit: return .video
+        case .talkingHead: return .video
         }
     }
 }

@@ -41,5 +41,8 @@ public enum ContractVersion {
     //     reference images) + prompt → edited video (introduced by Bernini-R's v2v/rv2v).
     //   • `T2VRequest.referenceImages` — subject-consistent reference-to-video generation (r2v),
     //     promoted to a canonical field (mirrors `initImage` for i2v).
-    public static let current = SemanticVersion(major: 1, minor: 3, patch: 0)
+    // 1.4.0 (2026-06-14, additive): audio-driven lip-sync —
+    //   • `talkingHead` (+ TalkingHeadRequest/Response/Contract) — source face video + driving
+    //     audio → re-lip-synced video (introduced by MuseTalk).
+    public static let current = SemanticVersion(major: 1, minor: 4, patch: 0)
 }
