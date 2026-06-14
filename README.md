@@ -1,14 +1,13 @@
 # MLXEngine (`mlx-engine-swift`)
 
-> ## 🚧 Work in progress — not ready for use
+> ## Status — usable, evolving
 >
-> MLXEngine is in **early, active development**. The contract is still moving, the runtime
-> coordinator is not yet built, and **nothing here is stable**. **Do not depend on it yet.**
->
-> We're developing **in the open** for visibility, not yet for collaboration: **pull requests are
-> not being accepted at this stage and will be closed.** This notice will be lifted — and
-> contributions opened — once the contract is validated against the first real port and the
-> runtime lands. Watch the repo to follow along.
+> MLXEngine is **published and consumable**: tagged **v0.4.0** (capability contract **1.3.0**),
+> and already serving a roster of ~two-dozen conformant model packages — LLM, TTS, text→image /
+> text→video (+ editing), audio separation, speech emotion, audio codec/polish, image quality /
+> restore / upscale, video upscale, frame interpolation, content classification, and optical flow.
+> The contract is **additive**: capabilities and conformance levels grow at minor versions, and a
+> breaking change is a major bump with a deprecation window — so **pin a tag** for production use.
 
 A community-released, on-device Apple Silicon **runtime coordinator** for inference.
 
@@ -26,8 +25,17 @@ cross-model work is uniform from a programming standpoint.
   schemas, artifacts, license types, `PackageConfiguration`, the `ModelPackage` protocol +
   `PackageManifest`, and the `InferenceActor` isolation domain). Depend on this to build a
   conformant package; it does not pull in the runtime.
-- **MLXServeCore** — the runtime coordinator (placeholder; in progress).
-- **MLXServeConformance** — the C0–C13 self-check harness (placeholder; in progress).
+- **MLXServeCore** — the runtime coordinator. `MLXServeEngine` registers packages, runs the
+  two-layer license gate + device-eligibility (C10) admission, and lazily constructs / loads /
+  routes / evicts each `ModelPackage` by capability, backed by a `MemoryGovernor` (budget +
+  LRU eviction of idle residents) and multi-package-per-capability routing (select by PackageID).
+  Some advanced facilities (mid-run eviction-under-pressure + requeue, `MCPBridge`, Hub SHA256
+  verification) are still in progress.
+- **MLXServeConformance** — the C0–C13 self-check harness (in progress).
+- **MLXEngineUI** — reusable SwiftUI for engine management (model-storage + web-search settings)
+  plus the Marquee design tokens, so consuming apps share one look. (Product UI stays in the app.)
+- **MLXRetrievalKit** (+ **MLXRetrievalKitContracts**) — reusable, MLX-free web retrieval / RAG
+  grounding (Brave-backed) any package or app can use to ground answers with current sources.
 
 ## Build
 Build with Xcode / `xcodebuild` (macOS 26.2+). `Package.swift` is the authoritative manifest;
