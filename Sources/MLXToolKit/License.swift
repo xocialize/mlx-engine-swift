@@ -25,22 +25,49 @@ extension SPDXLicense {
     /// as Kyutai's Mimi codec. A recognized SPDX id.
     public static let ccBy4: SPDXLicense = "CC-BY-4.0"
 
+    /// Lightricks LTX-2 Community License. Non-SPDX, referenced via the `LicenseRef-` convention.
+    /// **Not permissive**: §3 copyleft (derivatives, including port code, inherit the license) plus
+    /// the §A.20 non-compete clause. Below the <$10M revenue threshold it is royalty-free for
+    /// evaluation. Deliberately kept OUT of `permissiveAllowlist` — it is admitted only under the
+    /// eval/research policy via `evalAcknowledgedAllowlist`, never under the default `.permissiveOnly`.
+    public static let ltx2Community: SPDXLicense = "LicenseRef-LTX-2-Community"
+
     /// The permissive allowlist used by `.permissiveOnly`. Curated; extend deliberately.
     public static let permissiveAllowlist: Set<SPDXLicense> = [
         .mit, .apache2, .bsd2, .bsd3, .isc, .unlicense, .funasrModel, .ccBy4,
     ]
 
+    /// Non-permissive licenses explicitly acknowledged for **eval/research** use only. These are
+    /// NOT permissive (copyleft, non-compete, or otherwise non-shippable) and are admitted solely
+    /// under `.permissiveOrAcknowledged`, never under the default `.permissiveOnly`. Each entry is a
+    /// deliberate, auditable opt-in — extend only when a port is gated to evaluation, never for
+    /// shippable capabilities.
+    public static let evalAcknowledgedAllowlist: Set<SPDXLicense> = [
+        .ltx2Community,
+    ]
+
     public var isPermissive: Bool { SPDXLicense.permissiveAllowlist.contains(self) }
+
+    /// Whether this license is on the eval/research acknowledged list. Distinct from `isPermissive`:
+    /// an acknowledged license is explicitly NOT permissive — it passes only the looser eval policy.
+    public var isEvalAcknowledged: Bool { SPDXLicense.evalAcknowledgedAllowlist.contains(self) }
 }
 
 /// Policy the engine enforces when admitting weights and port code.
 public enum LicensePolicy: Sendable, Equatable {
+    /// Default product policy: only the curated permissive allowlist.
     case permissiveOnly
+    /// Eval/research policy: permissive licenses plus the explicitly acknowledged eval-only set
+    /// (`evalAcknowledgedAllowlist`). Use for engines that host gated, non-shippable specialty
+    /// ports (e.g. LTX-2). Still rejects anything not on either list.
+    case permissiveOrAcknowledged
+    /// No gate — admits any license.
     case any
 
     public func admits(_ license: SPDXLicense) -> Bool {
         switch self {
         case .permissiveOnly: return license.isPermissive
+        case .permissiveOrAcknowledged: return license.isPermissive || license.isEvalAcknowledged
         case .any: return true
         }
     }
