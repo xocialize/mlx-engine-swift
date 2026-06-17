@@ -26,25 +26,25 @@ extension SPDXLicense {
     public static let ccBy4: SPDXLicense = "CC-BY-4.0"
 
     /// Lightricks LTX-2 Community License. Non-SPDX, referenced via the `LicenseRef-` convention.
-    /// **Not permissive**: §3 copyleft (derivatives, including port code, inherit the license) plus
-    /// the §A.20 non-compete clause. Below the <$10M revenue threshold it is royalty-free for
-    /// evaluation. Deliberately kept OUT of `permissiveAllowlist` — it is admitted only under the
-    /// eval/research policy via `evalAcknowledgedAllowlist`, never under the default `.permissiveOnly`.
+    /// Source-available with a §2 revenue gate (≥$10M entities need a paid license), §3 derivative
+    /// terms, and a §A.20 non-compete. Reviewed against the actual license text and Lightricks' own
+    /// open-source LTX-Desktop, which licenses its *inference code* (`ltx-core`, `ltx-pipelines`)
+    /// as Apache-2.0 — only the weights carry the Community License. On that basis this project
+    /// **permits** the license: it lives on `permissiveAllowlist` and is admitted by the default
+    /// `.permissiveOnly` policy.
     public static let ltx2Community: SPDXLicense = "LicenseRef-LTX-2-Community"
 
     /// The permissive allowlist used by `.permissiveOnly`. Curated; extend deliberately.
     public static let permissiveAllowlist: Set<SPDXLicense> = [
-        .mit, .apache2, .bsd2, .bsd3, .isc, .unlicense, .funasrModel, .ccBy4,
+        .mit, .apache2, .bsd2, .bsd3, .isc, .unlicense, .funasrModel, .ccBy4, .ltx2Community,
     ]
 
     /// Non-permissive licenses explicitly acknowledged for **eval/research** use only. These are
     /// NOT permissive (copyleft, non-compete, or otherwise non-shippable) and are admitted solely
     /// under `.permissiveOrAcknowledged`, never under the default `.permissiveOnly`. Each entry is a
     /// deliberate, auditable opt-in — extend only when a port is gated to evaluation, never for
-    /// shippable capabilities.
-    public static let evalAcknowledgedAllowlist: Set<SPDXLicense> = [
-        .ltx2Community,
-    ]
+    /// shippable capabilities. Currently empty: generic infrastructure for a future eval-gated port.
+    public static let evalAcknowledgedAllowlist: Set<SPDXLicense> = []
 
     public var isPermissive: Bool { SPDXLicense.permissiveAllowlist.contains(self) }
 
