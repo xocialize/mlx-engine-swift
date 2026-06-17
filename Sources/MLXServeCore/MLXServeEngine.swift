@@ -290,6 +290,12 @@ public actor MLXServeEngine {
         await makeHeadroom(for: footprint, keeping: id)
 
         let instance = try entry.registration.makePackage(entry.configuration)
+        // Cold-start watchdog mitigation: page the package's declared weight files into the OS cache
+        // before load() issues GPU evals, so file-I/O latency never stalls a live Metal command
+        // buffer. Opt-in (config conforms to WeightPrewarming) + best-effort (never fails prepare()).
+        if let prewarming = entry.configuration as? WeightPrewarming {
+            await WeightPrewarmer.prewarm(prewarming.prewarmPaths, label: id.description)
+        }
         try await instance.load()
         // Weights are now materialized under the store root — stamp the marker the storage UI
         // counts (one per package). No-op when no store root is set.
