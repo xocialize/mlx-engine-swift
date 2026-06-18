@@ -1,4 +1,5 @@
 import Foundation
+import MLXToolKit
 #if canImport(Darwin)
 import Darwin
 #endif
@@ -21,22 +22,32 @@ enum WeightPrewarmer {
         ProcessInfo.processInfo.environment["MLXENGINE_DISABLE_PREWARM"] == "1"
     }
 
-    /// Page `paths` (files and/or directories) into the file cache, returning when resident. Runs
-    /// the blocking reads on a detached task so the `InferenceActor`'s executor isn't stalled.
-    static func prewarm(_ paths: [URL], label: String) async {
+    /// Page `paths` (files and/or directories) into the file cache, returning when resident. Runs the
+    /// blocking reads on a detached task so the `InferenceActor`'s executor isn't stalled. `onProgress`
+    /// (if given) is called with the fraction read `[0, 1]`, throttled to ~1% steps.
+    static func prewarm(_ paths: [URL],
+                        label: String,
+                        onProgress: (@Sendable (Double) -> Void)? = nil) async {
         guard !isDisabled, !paths.isEmpty else { return }
         await Task.detached(priority: .userInitiated) {
             let files = expand(paths)
             guard !files.isEmpty else { return }
+            let total = files.reduce(UInt64(0)) { $0 &+ (fileSize($1) ?? 0) }
             let start = Date()
-            var warmedFiles = 0
-            var warmedBytes: UInt64 = 0
+            var done: UInt64 = 0
+            var lastReported = -1.0
             for url in files {
-                if let n = warmFile(url) { warmedFiles += 1; warmedBytes &+= n }
+                warmFile(url) { chunk in
+                    done &+= chunk
+                    guard let onProgress, total > 0 else { return }
+                    let f = min(Double(done) / Double(total), 1.0)
+                    if f - lastReported >= 0.01 { lastReported = f; onProgress(f) }
+                }
             }
+            onProgress?(1.0)
             let secs = Date().timeIntervalSince(start)
             print(String(format: "[Prewarm] %@: paged %d file(s) / %.1f GB into cache in %.1fs",
-                         label, warmedFiles, Double(warmedBytes) / 1_000_000_000, secs))
+                         label, files.count, Double(done) / 1_000_000_000, secs))
         }.value
     }
 
@@ -63,21 +74,24 @@ enum WeightPrewarmer {
         return out
     }
 
-    /// Page one file into cache: kick async kernel readahead over the whole file (`F_RDADVISE`,
-    /// no userspace copy), then a blocking sequential read to *guarantee* residency before
-    /// returning — the in-process equivalent of `cat`-warming. Returns bytes read, or nil on error.
-    @discardableResult
-    private static func warmFile(_ url: URL) -> UInt64? {
+    private static func fileSize(_ url: URL) -> UInt64? {
+        var st = stat()
+        guard stat(url.path, &st) == 0, st.st_size > 0 else { return nil }
+        return UInt64(st.st_size)
+    }
+
+    /// Page one file into cache: kick async kernel readahead (`F_RDADVISE`, no userspace copy), then a
+    /// blocking sequential read to *guarantee* residency — the in-process equivalent of `cat`-warming.
+    /// `onChunk` is called with each chunk's byte count (for progress).
+    private static func warmFile(_ url: URL, onChunk: (UInt64) -> Void) {
         let fd = open(url.path, O_RDONLY)
-        guard fd >= 0 else { return nil }
+        guard fd >= 0 else { return }
         defer { close(fd) }
 
         var st = stat()
-        guard fstat(fd, &st) == 0, st.st_size > 0 else { return nil }
+        guard fstat(fd, &st) == 0, st.st_size > 0 else { return }
 
         #if canImport(Darwin)
-        // Async kernel readahead across the file (capped at the Int32 ra_count field). Best-effort
-        // accelerator; the sequential read below is what actually guarantees the pages are resident.
         var ra = radvisory(ra_offset: 0,
                            ra_count: Int32(truncatingIfNeeded: min(st.st_size, Int64(Int32.max))))
         _ = fcntl(fd, F_RDADVISE, &ra)
@@ -85,19 +99,17 @@ enum WeightPrewarmer {
 
         let chunk = 8 * 1024 * 1024
         var buf = [UInt8](repeating: 0, count: chunk)
-        var total: UInt64 = 0
         buf.withUnsafeMutableBytes { raw in
             guard let base = raw.baseAddress else { return }
             while true {
                 let n = read(fd, base, chunk)
                 if n < 0 {
-                    if errno == EINTR { continue }   // interrupted syscall — retry
+                    if errno == EINTR { continue }
                     break
                 }
-                if n == 0 { break }                  // EOF
-                total &+= UInt64(n)
+                if n == 0 { break }
+                onChunk(UInt64(n))
             }
         }
-        return total
     }
 }

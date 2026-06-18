@@ -32,10 +32,25 @@ cross-model work is uniform from a programming standpoint.
   Some advanced facilities (mid-run eviction-under-pressure + requeue, `MCPBridge`, Hub SHA256
   verification) are still in progress.
 - **MLXServeConformance** — the C0–C13 self-check harness (in progress).
-- **MLXEngineUI** — reusable SwiftUI for engine management (model-storage + web-search settings)
-  plus the Marquee design tokens, so consuming apps share one look. (Product UI stays in the app.)
+- **MLXEngineUI** — reusable SwiftUI for engine management (model-storage + web-search settings,
+  and `ModelStateView` — the live "downloading weights / first load is heavy / ready" strip bound to
+  `MLXServeEngine.preparation`) plus the Marquee design tokens, so consuming apps share one look.
+  (Product UI stays in the app.) **Using this UI requires consumer-app entitlements — see below.**
 - **MLXRetrievalKit** (+ **MLXRetrievalKitContracts**) — reusable, MLX-free web retrieval / RAG
   grounding (Brave-backed) any package or app can use to ground answers with current sources.
+
+## Consuming MLXEngineUI — required entitlements
+The model-storage + download UI (`ModelStorageSettingsView`, `ModelStateView`) reads/writes model
+weights in a **user-chosen folder outside the app sandbox**, so a sandboxed consumer app must grant:
+
+- `com.apple.security.files.user-selected.read-write` — the user picks the model-store folder.
+- `com.apple.security.files.bookmarks.app-scope` — persist security-scoped access to it across launches.
+
+The user must pick a model-store folder before any non-bundled weights download
+(`ModelStorageModel.resolvedModelsDirectory` is `nil` until then, and `ModelStore(root: nil)` falls
+back to `~/Documents/huggingface`, which the sandbox blocks). Route the user to the storage UI first;
+`MLXServeEngine.needsDownload(_:package:)` tells you when a capability still needs to materialize weights.
+(A non-sandboxed app needs no entitlements and may read weights directly.)
 
 ## Build
 Build with Xcode / `xcodebuild` (macOS 26.2+). `Package.swift` is the authoritative manifest;

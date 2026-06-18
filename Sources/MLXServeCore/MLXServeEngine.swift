@@ -1,3 +1,4 @@
+import Foundation
 import MLXToolKit
 
 /// Errors the coordinator raises around admission and routing.
@@ -94,6 +95,11 @@ public actor MLXServeEngine {
     /// Where packages materialize weights + the marker the storage UI counts. Empty by default
     /// (packages use their own cache); a consuming app sets it once via `useModelStore`.
     private var modelStore: ModelStore = ModelStore()
+
+    /// Observable preparation progress per capability/package (registering → prewarming → downloading
+    /// → loading → ready/failed). A consuming app binds `MLXEngineUI.ModelStateView` to this to show a
+    /// consistent download/first-load affordance. Updated as `prepare()`/`resident()` runs.
+    public nonisolated let preparation = PreparationMonitor()
 
     public init(policy: LicensePolicy = .permissiveOnly,
                 device: DeviceProfile = .current(),
@@ -276,38 +282,100 @@ public actor MLXServeEngine {
         guard let entry = packages[id] else {
             throw EngineError.noPackage(.llm) // unreachable: resolve() validated the id
         }
-
-        // Defensive re-gate — the engine constructs, never the package (C13).
-        let gate = policy.evaluate(entry.registration.manifest.license)
-        guard gate.isAdmitted else { throw EngineError.licenseRejected(gate) }
-
-        // Memory admission: the working set must fit the budget; evict idle residents (LRU) to
-        // make headroom. A footprint larger than the whole budget can never fit.
-        let footprint = entry.footprint
-        guard governor.fitsBudget(footprint) else {
-            throw EngineError.exceedsMemoryBudget(required: footprint, budget: governor.budgetBytes)
-        }
-        await makeHeadroom(for: footprint, keeping: id)
-
-        let instance = try entry.registration.makePackage(entry.configuration)
-        // Cold-start watchdog mitigation: page the package's declared weight files into the OS cache
-        // before load() issues GPU evals, so file-I/O latency never stalls a live Metal command
-        // buffer. Opt-in (config conforms to WeightPrewarming) + best-effort (never fails prepare()).
-        if let prewarming = entry.configuration as? WeightPrewarming {
-            await WeightPrewarmer.prewarm(prewarming.prewarmPaths, label: id.description)
-        }
-        try await instance.load()
-        // Weights are now materialized under the store root — stamp the marker the storage UI
-        // counts (one per package). No-op when no store root is set.
         let manifest = entry.registration.manifest
-        modelStore.writeMarker(repo: manifest.provenance.sourceRepo,
-                               revision: manifest.provenance.revision,
-                               capabilities: manifest.capabilities)
-        residents[id] = instance
-        residentFootprint[id] = footprint
-        governor.charge(footprint)
-        touch(id)
-        return instance
+        let caps = manifest.capabilities
+        let pkg = id.description
+
+        do {
+            await updatePhase(.registering, caps: caps, package: pkg)
+
+            // Defensive re-gate — the engine constructs, never the package (C13).
+            let gate = policy.evaluate(manifest.license)
+            guard gate.isAdmitted else { throw EngineError.licenseRejected(gate) }
+
+            // Memory admission: the working set must fit the budget; evict idle residents (LRU) to
+            // make headroom. A footprint larger than the whole budget can never fit.
+            let footprint = entry.footprint
+            guard governor.fitsBudget(footprint) else {
+                throw EngineError.exceedsMemoryBudget(required: footprint, budget: governor.budgetBytes)
+            }
+            await makeHeadroom(for: footprint, keeping: id)
+
+            let instance = try entry.registration.makePackage(entry.configuration)
+            // Cold-start watchdog mitigation: page the package's declared weight files into the OS cache
+            // before load() issues GPU evals, so file-I/O latency never stalls a live Metal command
+            // buffer. Opt-in (config conforms to WeightPrewarming) + best-effort (never fails prepare()).
+            if let prewarming = entry.configuration as? WeightPrewarming {
+                let onPrewarm: @Sendable (Double) -> Void = { [preparation] fraction in
+                    Task { @MainActor in
+                        for cap in caps {
+                            preparation.update(cap, package: pkg, to: .prewarming(fraction: fraction))
+                        }
+                    }
+                }
+                await WeightPrewarmer.prewarm(prewarming.prewarmPaths, label: pkg, onProgress: onPrewarm)
+            }
+
+            // Bind the ambient download-progress sink around load() so a package that forwards its
+            // downloader's progress (WeightDownloadProgress.report) surfaces a real download fraction.
+            await updatePhase(.loading, caps: caps, package: pkg)
+            let sink: WeightDownloadProgress.Sink = { [preparation] fraction, bps in
+                Task { @MainActor in
+                    for cap in caps {
+                        preparation.update(cap, package: pkg,
+                                           to: .downloading(fraction: fraction, bytesPerSecond: bps))
+                    }
+                }
+            }
+            try await WeightDownloadProgress.$sink.withValue(sink) {
+                try await instance.load()
+            }
+
+            // Weights are now materialized under the store root — stamp the marker the storage UI
+            // counts (one per package). No-op when no store root is set.
+            modelStore.writeMarker(repo: manifest.provenance.sourceRepo,
+                                   revision: manifest.provenance.revision,
+                                   capabilities: manifest.capabilities)
+            residents[id] = instance
+            residentFootprint[id] = footprint
+            governor.charge(footprint)
+            touch(id)
+            await updatePhase(.ready, caps: caps, package: pkg)
+            return instance
+        } catch {
+            await updatePhase(.failed("\(error)"), caps: caps, package: pkg)
+            throw error
+        }
+    }
+
+    /// Record a preparation phase across every capability the package backs (so a consumer can observe
+    /// by capability alone or by exact package id). Hops to the main actor where the monitor lives.
+    private func updatePhase(_ phase: PreparePhase, caps: [Capability], package: String) async {
+        await MainActor.run {
+            for cap in caps { preparation.update(cap, package: package, to: phase) }
+        }
+    }
+
+    /// Best-effort pre-`prepare` check: will this capability's package still need to materialize weights
+    /// from the network? A consumer uses it to route the user into the download UI first.
+    ///
+    /// Heuristic: if the configuration declares local weight paths (`WeightPrewarming`) and they all
+    /// exist → no download. Otherwise → needs download when the per-package install marker is absent
+    /// under the current store root (the same signal the storage UI counts). NB this reads as `true`
+    /// the first time for *bundled* packages too (they have no marker yet but won't actually hit the
+    /// network); their phase will simply skip `.downloading`.
+    public func needsDownload(_ capability: Capability, package: PackageID? = nil) -> Bool {
+        guard let id = try? resolve(capability, package), let entry = packages[id] else { return false }
+        if let prewarming = entry.configuration as? WeightPrewarming {
+            let paths = prewarming.prewarmPaths
+            if !paths.isEmpty,
+               paths.allSatisfy({ FileManager.default.fileExists(atPath: $0.path) }) {
+                return false
+            }
+        }
+        let repo = entry.registration.manifest.provenance.sourceRepo
+        guard let dir = modelStore.directory(for: repo) else { return true }
+        return !FileManager.default.fileExists(atPath: dir.appending(path: ModelStore.markerName).path)
     }
 
     /// Evict least-recently-used idle residents until `bytes` fits the headroom. Terminates because
