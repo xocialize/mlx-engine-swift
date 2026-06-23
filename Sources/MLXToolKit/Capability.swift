@@ -43,6 +43,18 @@ public enum Capability: String, Codable, Sendable, CaseIterable, Hashable {
     /// only one. Contract 1.5.0; introduced by BiRefNet. (Distinct from `imageEdit`, which returns a
     /// full edited `Image`; matting returns the alpha, not a composited cutout.)
     case matting
+    /// **Character animation / motion transfer** — a reference character `Image` + a driving
+    /// `Video` → a video of that character performing the driving performance. Two semantics ride
+    /// the `mode` tag: `.animation` (the reference identity performs the driving motion) and
+    /// `.replacement` (the reference identity is swapped into the driving clip). An optional
+    /// `drivingMask` video supplies spatial control and an optional `prompt` adds text steering.
+    /// Contract 1.6.0; introduced by SCAIL-2, and the lane shared by Wan2.2-Animate (model-specific
+    /// driver encodings — color-coded masks, pose/face extraction — stay package-internal
+    /// preprocessing, not request fields). (Distinct from `textToVideo` — conditioned on a
+    /// reference identity + a driving video, not a text prompt; distinct from `videoEdit` — the
+    /// driving clip is a performance source, not the artifact being edited; distinct from
+    /// `talkingHead` — full-body video-driven, not audio-driven facial.)
+    case characterAnimation
 }
 
 /// The fixed output artifact kind for a capability. Not negotiable per package (C2).
@@ -83,6 +95,7 @@ extension Capability {
         case .videoEdit: return .video
         case .talkingHead: return .video
         case .matting: return .matte
+        case .characterAnimation: return .video
         }
     }
 }

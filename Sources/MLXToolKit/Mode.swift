@@ -14,4 +14,11 @@ extension Mode {
     public static let thinking: Mode = "thinking"
     public static let direct: Mode = "direct"
     public static let companion: Mode = "companion"
+
+    // characterAnimation semantics (contract 1.6.0). Same input artifacts either way — the tag
+    // selects what the output preserves, so it's a Mode, not a separate surface (C4).
+    /// Drive the reference identity with the driving performance (reference performs the motion).
+    public static let animation: Mode = "animation"
+    /// Swap the reference identity into the driving clip (the clip's actor is replaced).
+    public static let replacement: Mode = "replacement"
 }

@@ -3,8 +3,24 @@ import XCTest
 
 final class MLXToolKitTests: XCTestCase {
 
-    func testContractVersionIsV1_5() {
-        XCTAssertEqual(ContractVersion.current, SemanticVersion(major: 1, minor: 5, patch: 0))
+    func testContractVersionIsV1_6() {
+        XCTAssertEqual(ContractVersion.current, SemanticVersion(major: 1, minor: 6, patch: 0))
+    }
+
+    // 1.6.0 additive: characterAnimation (reference character image + driving video ->
+    // video of that character performing the driving motion). Introduced by SCAIL-2;
+    // the lane shared by Wan2.2-Animate. animation/replacement are Modes (C4).
+    func testCharacterAnimationCapability() {
+        XCTAssertEqual(CharacterAnimationRequest.capability, .characterAnimation)
+        XCTAssertEqual(Capability.characterAnimation.canonicalOutput, .video)
+        let d = CharacterAnimationContract.descriptor(
+            name: "x", summary: "y", modes: [.animation, .replacement])
+        XCTAssertEqual(d.capability, .characterAnimation)
+        XCTAssertTrue(d.parameters.contains { $0.name == "referenceImage" && $0.kind == .image && $0.required })
+        XCTAssertTrue(d.parameters.contains { $0.name == "drivingVideo" && $0.kind == .video && $0.required })
+        // drivingMask is optional (lane-ready: Wan2.2-Animate plugs in with no contract bump).
+        XCTAssertTrue(d.parameters.contains { $0.name == "drivingMask" && $0.kind == .video && !$0.required })
+        XCTAssertEqual(d.supportedModes, [.animation, .replacement])
     }
 
     // 1.4.0 additive: talkingHead (source face video + driving audio -> re-lip-synced video).

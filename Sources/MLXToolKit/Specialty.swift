@@ -13,6 +13,12 @@ extension Specialty {
     public static let coder: Specialty = "coder"
     public static let researcher: Specialty = "researcher"
     public static let companion: Specialty = "companion"
+
+    // characterAnimation lane ranking (contract 1.6.0): how a model is driven.
+    /// No skeleton/pose dependency (e.g. SCAIL-2) — simpler to deploy.
+    public static let poseless: Specialty = "poseless"
+    /// Explicit pose / face-expression conditioning (e.g. Wan2.2-Animate).
+    public static let poseDriven: Specialty = "poseDriven"
 }
 
 /// A specialty paired with a strength in 0...1. A model declares an array of these.

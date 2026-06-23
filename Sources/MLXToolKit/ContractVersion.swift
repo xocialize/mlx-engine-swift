@@ -49,5 +49,15 @@ public enum ContractVersion {
     //     (binary segmentation or soft alpha, per `preferredKind`); introduced by BiRefNet.
     //   • `CanonicalOutput.matte` + the `Matte` artifact — a first-class, reusable matte signal
     //     (consumed as a weight map by region-aware restore/upscale + flow-guided propagation).
-    public static let current = SemanticVersion(major: 1, minor: 5, patch: 0)
+    // 1.6.0 (2026-06-22, additive): character animation / motion transfer —
+    //   • `characterAnimation` (+ CharacterAnimationRequest/Response/Contract) — reference character
+    //     `Image` + driving `Video` → video of that character performing the driving performance
+    //     (introduced by SCAIL-2; the lane shared by Wan2.2-Animate). Canonical output `Video`.
+    //   • `Mode.animation`/`.replacement` — animate-the-reference vs swap-into-the-driving-clip,
+    //     a per-request tag (same input artifacts, different output semantics; SCAIL's `replaceFlag`).
+    //   • `Specialty.poseless`/`.poseDriven` — distinguishes SCAIL (no skeleton dependency) from
+    //     Wan2.2-Animate (explicit pose/face conditioning) for Model-Manager ranking.
+    //     The request is LANE-READY: `drivingMask`/`prompt` are optional now so Wan2.2-Animate
+    //     plugs into the same capability with no further contract bump.
+    public static let current = SemanticVersion(major: 1, minor: 6, patch: 0)
 }
