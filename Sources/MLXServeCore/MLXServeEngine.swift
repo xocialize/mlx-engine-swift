@@ -158,7 +158,11 @@ public actor MLXServeEngine {
             }
         }
 
-        let footprint = governor.footprint(for: registration.manifest.requirements)
+        // Charge the *registered* variant's footprint (ISSUES W1): if the config opts into
+        // `QuantConfigured`, the governor matches that quant's declared `QuantFootprint` instead of
+        // guessing the largest-that-fits (which under-reserves bf16 when bf16 > budget).
+        let footprint = governor.footprint(for: registration.manifest.requirements,
+                                           quant: (configuration as? QuantConfigured)?.quant)
         packages[packageID] = Entry(registration: registration,
                                     configuration: configuration,
                                     footprint: footprint)

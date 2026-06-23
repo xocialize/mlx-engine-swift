@@ -33,11 +33,26 @@ public struct MemoryGovernor: Sendable {
     public func fitsBudget(_ bytes: UInt64) -> Bool { bytes <= budgetBytes }
 
     /// The resident footprint to charge for a package: the largest declared footprint that still
-    /// fits the budget, else the smallest. Single-footprint manifests resolve exactly.
+    /// fits the budget, else the smallest. Single-footprint manifests resolve exactly. Use this for
+    /// variant-agnostic surveys (admissibility / "what can this machine run"); for a *registered*
+    /// package prefer `footprint(for:quant:)` so the charge matches the chosen variant.
     public func footprint(for requirements: RequirementsManifest) -> UInt64 {
         let sizes = requirements.footprints.map(\.residentBytes).sorted()
         guard let smallest = sizes.first else { return 0 }
         return sizes.last(where: { $0 <= budgetBytes }) ?? smallest
+    }
+
+    /// Config-aware footprint: when `quant` is the registered config's variant AND the manifest
+    /// declares a matching `QuantFootprint`, charge exactly that variant's bytes (ISSUES W1 — fixes
+    /// the variant-unaware over/under-reserve: largest-that-fits silently charged the smaller int4
+    /// figure for a bf16 registration whenever bf16 exceeded budget). Falls back to the
+    /// largest-that-fits heuristic when `quant` is nil (config didn't opt into `QuantConfigured`) or
+    /// no declared footprint matches it (author mismatch) — both safe.
+    public func footprint(for requirements: RequirementsManifest, quant: Quant?) -> UInt64 {
+        if let quant, let match = requirements.footprints.first(where: { $0.quant == quant }) {
+            return match.residentBytes
+        }
+        return footprint(for: requirements)
     }
 
     public mutating func charge(_ bytes: UInt64) {

@@ -5,6 +5,17 @@
 /// initializer input. Conformers should be defaultable where sensible.
 public protocol PackageConfiguration: Codable, Sendable {}
 
+/// Opt-in capability for quantization-tiered configs: exposes the selected `quant` so the memory
+/// governor charges the matching declared `QuantFootprint` (ISSUES W1) instead of guessing the
+/// largest-that-fits — which under-reserves a bf16 registration whenever the bf16 footprint exceeds
+/// budget (the governor then silently charges the smaller int4 figure) and over-reserves otherwise.
+/// Detected by `as?` at registration, mirroring the `ModelStorable` opt-in pattern. Configs that
+/// already store `var quant: Quant` conform with an empty extension; non-conformers fall back to the
+/// largest-that-fits heuristic (correct for single-footprint manifests).
+public protocol QuantConfigured {
+    var quant: Quant { get }
+}
+
 /// Ordered backend preference (first feasible wins at placement time).
 public struct BackendPreference: Sendable, Codable, Equatable {
     public let ordered: [Backend]
@@ -13,7 +24,7 @@ public struct BackendPreference: Sendable, Codable, Equatable {
 
 /// A ready-made configuration covering the common knobs. Packages may use it directly or
 /// compose their own conformer with extra fields.
-public struct StandardConfiguration: PackageConfiguration {
+public struct StandardConfiguration: PackageConfiguration, QuantConfigured {
     public var weightsRepo: String      // e.g. "mlx-community/<name>-<quant>"
     public var revision: String?        // pinned revision (provenance)
     public var quant: Quant

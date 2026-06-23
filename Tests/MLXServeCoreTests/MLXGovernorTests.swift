@@ -166,3 +166,64 @@ private func engine(budget: UInt64, backends: Set<Backend> = [.metalGPU], chip: 
     #expect(after[alt] == nil)
     #expect(after[primary] == 60)
 }
+
+// MARK: - Config-aware footprint (ISSUES W1)
+
+/// Multi-footprint manifest (bf16 160 / int4 56) — the shape that triggered W1.
+private func mockMultiManifest() -> PackageManifest {
+    PackageManifest(
+        license: LicenseDeclaration(weightLicense: .apache2, portCodeLicense: .apache2),
+        provenance: Provenance(sourceRepo: "mock/multi", revision: "main", tier: 1),
+        requirements: RequirementsManifest(
+            footprints: [QuantFootprint(quant: .bf16, residentBytes: 160),
+                         QuantFootprint(quant: .int4, residentBytes: 56)],
+            requiredBackends: [.metalGPU],
+            os: OSRequirement(),
+            chipFloor: nil),
+        surfaces: [ToolDescriptor(name: "mock-multi", capability: .textToImage, summary: "mock")])
+}
+
+@InferenceActor private final class MockMulti: MockBase {
+    nonisolated static var manifest: PackageManifest { mockMultiManifest() }
+    nonisolated init(configuration: StandardConfiguration) {}
+}
+
+@Test func footprintMatchesRegisteredVariant() {
+    let gov = MemoryGovernor(budgetBytes: 90)  // bf16 (160) exceeds budget → exposes the W1 trap
+    let reqs = mockMultiManifest().requirements
+    // Variant-agnostic survey: largest-that-fits picks int4 56 (bf16 doesn't fit) — the old charge.
+    #expect(gov.footprint(for: reqs) == 56)
+    // Config-aware: each registered variant is charged its own declared footprint.
+    #expect(gov.footprint(for: reqs, quant: .bf16) == 160)  // NOT the silent 56 under-reserve
+    #expect(gov.footprint(for: reqs, quant: .int4) == 56)
+    // Safe fallbacks: no opt-in (nil) / no matching declared footprint → largest-that-fits.
+    #expect(gov.footprint(for: reqs, quant: nil) == 56)
+    #expect(gov.footprint(for: reqs, quant: .fp32) == 56)
+}
+
+@Test func registerChargesConfigVariant() async throws {
+    // StandardConfiguration conforms to QuantConfigured → the engine charges the registered variant's
+    // footprint end-to-end (register → prepare → resident). Budget fits bf16.
+    let eBf16 = engine(budget: 300)
+    try await eBf16.register(PackageRegistration.of(MockMulti.self),
+                             configuration: StandardConfiguration(weightsRepo: "mock/multi", quant: .bf16))
+    try await eBf16.prepare(.textToImage)
+    #expect(await eBf16.memory.residentBytes == 160)
+
+    let eInt4 = engine(budget: 300)
+    try await eInt4.register(PackageRegistration.of(MockMulti.self),
+                             configuration: StandardConfiguration(weightsRepo: "mock/multi", quant: .int4))
+    try await eInt4.prepare(.textToImage)
+    #expect(await eInt4.memory.residentBytes == 56)
+}
+
+@Test func bf16NoLongerSilentlyUnderReserves() async throws {
+    // The W1 safety win: at a budget where bf16 (160) doesn't fit, a bf16 registration is charged
+    // 160 and REJECTED at prepare — not silently admitted at the int4 56 figure (the old bug).
+    let e = engine(budget: 90)
+    try await e.register(PackageRegistration.of(MockMulti.self),
+                         configuration: StandardConfiguration(weightsRepo: "mock/multi", quant: .bf16))
+    await #expect(throws: EngineError.self) {
+        _ = try await e.prepare(.textToImage)
+    }
+}
