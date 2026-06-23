@@ -41,6 +41,29 @@ public struct Image: Artifact, Sendable, Codable, Equatable {
     }
 }
 
+/// Canonical matte artifact — a single-channel alpha / coverage map (0 = background … 1 = foreground),
+/// serialized as a grayscale PNG. The first-class output of the `matting` capability; consumable as a
+/// weight-map signal by other capabilities (region-aware restore/upscale, flow-guided propagation),
+/// not just as a cutout source. `kind` records whether the map is a hard segmentation or a soft matte.
+public struct Matte: Artifact, Sendable, Codable, Equatable {
+    public enum Format: String, Sendable, Codable { case png }
+    /// Hard binary segmentation vs. soft alpha matte (fine hair/fur/semi-transparency).
+    public enum Kind: String, Sendable, Codable { case binary, softAlpha }
+    public let format: Format
+    public let data: Data
+    public let width: Int?
+    public let height: Int?
+    public let kind: Kind
+
+    public init(format: Format = .png, data: Data, width: Int? = nil, height: Int? = nil, kind: Kind) {
+        self.format = format
+        self.data = data
+        self.width = width
+        self.height = height
+        self.kind = kind
+    }
+}
+
 /// Canonical video artifact.
 public struct Video: Artifact, Sendable, Codable, Equatable {
     public enum Format: String, Sendable, Codable { case mp4, mov }

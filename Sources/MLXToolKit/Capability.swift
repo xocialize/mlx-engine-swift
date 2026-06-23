@@ -35,6 +35,14 @@ public enum Capability: String, Codable, Sendable, CaseIterable, Hashable {
     /// introduced by MuseTalk. (Distinct from `textToVideo`: conditioned on a source face and
     /// an audio track, not a text prompt.)
     case talkingHead
+    /// Foreground **matte extraction** — an image → a single-channel matte (alpha / coverage map,
+    /// 0 = background … 1 = foreground). Binary segmentation vs. soft alpha is chosen per-request
+    /// (`MattingRequest.preferredKind`). The matte is a **first-class, reusable signal** — other
+    /// capabilities consume it as a weight map (region-aware `imageRestore`/`imageUpscale`,
+    /// `opticalFlow`-guided temporal propagation), so background removal is one consumer, not the
+    /// only one. Contract 1.5.0; introduced by BiRefNet. (Distinct from `imageEdit`, which returns a
+    /// full edited `Image`; matting returns the alpha, not a composited cutout.)
+    case matting
 }
 
 /// The fixed output artifact kind for a capability. Not negotiable per package (C2).
@@ -46,6 +54,8 @@ public enum CanonicalOutput: String, Codable, Sendable {
     case structuredText
     case codes
     case flow
+    /// A single-channel matte / alpha map (grayscale). The canonical output of `matting`.
+    case matte
 }
 
 extension Capability {
@@ -72,6 +82,7 @@ extension Capability {
         case .soundEffect: return .audio
         case .videoEdit: return .video
         case .talkingHead: return .video
+        case .matting: return .matte
         }
     }
 }

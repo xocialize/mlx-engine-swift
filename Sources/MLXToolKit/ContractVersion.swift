@@ -44,5 +44,10 @@ public enum ContractVersion {
     // 1.4.0 (2026-06-14, additive): audio-driven lip-sync —
     //   • `talkingHead` (+ TalkingHeadRequest/Response/Contract) — source face video + driving
     //     audio → re-lip-synced video (introduced by MuseTalk).
-    public static let current = SemanticVersion(major: 1, minor: 4, patch: 0)
+    // 1.5.0 (2026-06-18, additive): foreground matte extraction —
+    //   • `matting` (+ MattingRequest/Response/Contract) — image → single-channel `Matte`
+    //     (binary segmentation or soft alpha, per `preferredKind`); introduced by BiRefNet.
+    //   • `CanonicalOutput.matte` + the `Matte` artifact — a first-class, reusable matte signal
+    //     (consumed as a weight map by region-aware restore/upscale + flow-guided propagation).
+    public static let current = SemanticVersion(major: 1, minor: 5, patch: 0)
 }

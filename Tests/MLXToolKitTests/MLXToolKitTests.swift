@@ -3,8 +3,8 @@ import XCTest
 
 final class MLXToolKitTests: XCTestCase {
 
-    func testContractVersionIsV1_4() {
-        XCTAssertEqual(ContractVersion.current, SemanticVersion(major: 1, minor: 4, patch: 0))
+    func testContractVersionIsV1_5() {
+        XCTAssertEqual(ContractVersion.current, SemanticVersion(major: 1, minor: 5, patch: 0))
     }
 
     // 1.4.0 additive: talkingHead (source face video + driving audio -> re-lip-synced video).
