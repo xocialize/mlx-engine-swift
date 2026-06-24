@@ -3,8 +3,45 @@ import XCTest
 
 final class MLXToolKitTests: XCTestCase {
 
-    func testContractVersionIsV1_6() {
-        XCTAssertEqual(ContractVersion.current, SemanticVersion(major: 1, minor: 6, patch: 0))
+    func testContractVersionIsV1_9() {
+        XCTAssertEqual(ContractVersion.current, SemanticVersion(major: 1, minor: 9, patch: 0))
+    }
+
+    // 1.9.0 additive: Image.Format.rawBGRA8 — raw interleaved BGRA8 pixel bytes at the model
+    // boundary (skips per-tile PNG encode/decode + 8-bit clamp). Still serialized round-trip form,
+    // so the V1 rule holds and the artifact contract does not fork.
+    func testRawBGRA8FormatExists() {
+        XCTAssertEqual(Image.Format.rawBGRA8.rawValue, "rawBGRA8")
+        // png/jpeg call sites are untouched (bytesPerRow is a defaulted param).
+        let png = Image(format: .png, data: Data([0x89]), width: 4, height: 2)
+        XCTAssertNil(png.bytesPerRow)
+    }
+
+    func testRawBGRA8ConvenienceAndCodableRoundTrip() throws {
+        // 2x2 BGRA, tightly packed (16 bytes).
+        let bytes = Data((0..<16).map { UInt8($0) })
+        let img = Image.rawBGRA8(data: bytes, width: 2, height: 2)
+        XCTAssertEqual(img.format, .rawBGRA8)
+        XCTAssertEqual(img.width, 2)
+        XCTAssertEqual(img.height, 2)
+        XCTAssertNil(img.bytesPerRow)   // nil ⇒ tightly packed (width*4)
+
+        // The cross-process serialized path stays valid (bytes survive round-trip).
+        let data = try JSONEncoder().encode(img)
+        let back = try JSONDecoder().decode(Image.self, from: data)
+        XCTAssertEqual(back, img)
+        XCTAssertEqual(back.data, bytes)
+
+        // Explicit stride survives too.
+        let strided = Image.rawBGRA8(data: Data(count: 8 * 2), width: 2, height: 2, bytesPerRow: 8)
+        let back2 = try JSONDecoder().decode(Image.self, from: try JSONEncoder().encode(strided))
+        XCTAssertEqual(back2.bytesPerRow, 8)
+
+        // Backward-compat: a 1.8.0-era payload with no bytesPerRow key still decodes (⇒ nil).
+        let legacy = #"{"format":"png","data":"","width":4,"height":2}"#.data(using: .utf8)!
+        let legacyImg = try JSONDecoder().decode(Image.self, from: legacy)
+        XCTAssertEqual(legacyImg.format, .png)
+        XCTAssertNil(legacyImg.bytesPerRow)
     }
 
     // 1.6.0 additive: characterAnimation (reference character image + driving video ->

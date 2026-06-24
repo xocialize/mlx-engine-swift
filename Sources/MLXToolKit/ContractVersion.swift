@@ -68,5 +68,13 @@ public enum ContractVersion {
     //   • `imageInpaint` (+ InpaintRequest/Response/Contract) — Image + mask (white=remove) → filled
     //     Image at the same dimensions (introduced by LaMa, + MI-GAN fast tier). Canonical output Image.
     //   • The first **two-input** surface (image AND mask). `InpaintContract.best`(LaMa)/`.fast`(MI-GAN).
-    public static let current = SemanticVersion(major: 1, minor: 8, patch: 0)
+    // 1.9.0 (2026-06-24, additive): raw-pixel image boundary —
+    //   • `Image.Format.rawBGRA8` (+ `Image.bytesPerRow`, `Image.rawBGRA8(...)`) — raw interleaved
+    //     BGRA8 pixel bytes in `data`, skipping the per-tile PNG encode/decode + 8-bit clamp at the
+    //     model boundary for in-process consumers (ForgeOptimizer EngineImageEnhancer, BRIDGE-024).
+    //   • Still serialized round-trip form (V1 rule holds, no contract fork); `width`/`height` required,
+    //     `bytesPerRow` optional (defaults to width*4). png/jpeg call sites untouched (param defaulted).
+    //     First adopters: NAFNet (imageRestore) + Real-ESRGAN (imageUpscale); other image capabilities
+    //     opt in by branching their Image→pixel-buffer codec. A later `.rawRGBA16Half` is the 16-bit step.
+    public static let current = SemanticVersion(major: 1, minor: 9, patch: 0)
 }

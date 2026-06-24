@@ -26,18 +26,33 @@ public struct Audio: Artifact, Sendable, Codable, Equatable {
 }
 
 /// Canonical image artifact.
+///
+/// `.png`/`.jpeg` carry compressed bytes. `.rawBGRA8` (1.9.0, additive) carries **raw interleaved
+/// BGRA8 pixel bytes** in `data` — the same serialized round-trip form (so the V1 rule holds, this
+/// does not fork the contract), but with no compression/clamp at the model boundary. For `.rawBGRA8`,
+/// `width` and `height` are **required** (a consumer/package may assume them present), and
+/// `bytesPerRow` is the optional row stride in bytes (defaults to `width * 4`, i.e. tightly packed).
 public struct Image: Artifact, Sendable, Codable, Equatable {
-    public enum Format: String, Sendable, Codable { case png, jpeg }
+    public enum Format: String, Sendable, Codable { case png, jpeg, rawBGRA8 }
     public let format: Format
     public let data: Data
     public let width: Int?
     public let height: Int?
+    /// Row stride in bytes for `.rawBGRA8` (`nil` ⇒ tightly packed `width * 4`). Ignored for png/jpeg.
+    public let bytesPerRow: Int?
 
-    public init(format: Format, data: Data, width: Int? = nil, height: Int? = nil) {
+    public init(format: Format, data: Data, width: Int? = nil, height: Int? = nil, bytesPerRow: Int? = nil) {
         self.format = format
         self.data = data
         self.width = width
         self.height = height
+        self.bytesPerRow = bytesPerRow
+    }
+
+    /// Convenience for the raw BGRA8 case, where `width`/`height` are required.
+    /// `bytesPerRow` defaults to tightly packed (`width * 4`).
+    public static func rawBGRA8(data: Data, width: Int, height: Int, bytesPerRow: Int? = nil) -> Image {
+        Image(format: .rawBGRA8, data: data, width: width, height: height, bytesPerRow: bytesPerRow)
     }
 }
 
