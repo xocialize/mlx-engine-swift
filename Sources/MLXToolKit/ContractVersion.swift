@@ -64,5 +64,9 @@ public enum ContractVersion {
     //     colorized `Image` at the same dimensions (introduced by DDColor). Canonical output `Image`.
     //   • `ColorizeContract.fast`/`.best`/`.artistic` — quality/style tier Modes (DDColor convnext-t
     //     vs convnext-l vs the artistic checkpoint); same input artifact, so a Mode tag (C4), not a surface.
-    public static let current = SemanticVersion(major: 1, minor: 7, patch: 0)
+    // 1.8.0 (2026-06-24, additive): object removal / inpainting —
+    //   • `imageInpaint` (+ InpaintRequest/Response/Contract) — Image + mask (white=remove) → filled
+    //     Image at the same dimensions (introduced by LaMa, + MI-GAN fast tier). Canonical output Image.
+    //   • The first **two-input** surface (image AND mask). `InpaintContract.best`(LaMa)/`.fast`(MI-GAN).
+    public static let current = SemanticVersion(major: 1, minor: 8, patch: 0)
 }

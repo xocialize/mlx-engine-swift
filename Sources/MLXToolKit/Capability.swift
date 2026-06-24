@@ -62,6 +62,13 @@ public enum Capability: String, Codable, Sendable, CaseIterable, Hashable {
     /// restructure content; from `imageRestore`, which cleans artifacts without adding color; and
     /// from `imageUpscale`, which changes resolution.)
     case imageColorize
+    /// **Object removal / inpainting** — an `Image` + a `mask` (white = remove) → an `Image` with the
+    /// masked region plausibly filled from surrounding context, at the same dimensions. The fill is
+    /// *invented* (no full-reference floor) — an opt-in transform. Contract 1.8.0; introduced by LaMa
+    /// (+ MI-GAN fast tier). The two-input (image **and** mask) shape is unique to this surface.
+    /// (Distinct from `imageEdit` — instruction-driven, may add new content; from `matting` — returns
+    /// the mask, not a filled image. The "what to remove" mask is produced upstream, e.g. by `matting`.)
+    case imageInpaint
 }
 
 /// The fixed output artifact kind for a capability. Not negotiable per package (C2).
@@ -104,6 +111,7 @@ extension Capability {
         case .matting: return .matte
         case .characterAnimation: return .video
         case .imageColorize: return .image
+        case .imageInpaint: return .image
         }
     }
 }
