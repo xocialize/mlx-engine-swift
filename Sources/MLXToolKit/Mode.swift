@@ -21,4 +21,9 @@ extension Mode {
     public static let animation: Mode = "animation"
     /// Swap the reference identity into the driving clip (the clip's actor is replaced).
     public static let replacement: Mode = "replacement"
+
+    // imageEdit semantics. The model is one multi-image editor; the tag declares intent
+    // so callers/Forge can surface "style transfer" without a separate capability (C4).
+    /// Content-preserving style transfer: images[0] = content, images[1] = style reference.
+    public static let styleTransfer: Mode = "styleTransfer"
 }
