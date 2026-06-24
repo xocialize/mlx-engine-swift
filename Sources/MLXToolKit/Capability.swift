@@ -55,6 +55,13 @@ public enum Capability: String, Codable, Sendable, CaseIterable, Hashable {
     /// driving clip is a performance source, not the artifact being edited; distinct from
     /// `talkingHead` — full-body video-driven, not audio-driven facial.)
     case characterAnimation
+    /// **Automatic colorization** — a grayscale / desaturated `Image` → a plausibly colorized
+    /// `Image` at the same dimensions. Color is *invented* (no reference), so unlike `imageRestore`
+    /// there is no full-reference quality floor — it's an opt-in enhance-style transform. Contract
+    /// 1.7.0; introduced by DDColor. (Distinct from `imageEdit`, which is instruction-driven and may
+    /// restructure content; from `imageRestore`, which cleans artifacts without adding color; and
+    /// from `imageUpscale`, which changes resolution.)
+    case imageColorize
 }
 
 /// The fixed output artifact kind for a capability. Not negotiable per package (C2).
@@ -96,6 +103,7 @@ extension Capability {
         case .talkingHead: return .video
         case .matting: return .matte
         case .characterAnimation: return .video
+        case .imageColorize: return .image
         }
     }
 }

@@ -59,5 +59,10 @@ public enum ContractVersion {
     //     Wan2.2-Animate (explicit pose/face conditioning) for Model-Manager ranking.
     //     The request is LANE-READY: `drivingMask`/`prompt` are optional now so Wan2.2-Animate
     //     plugs into the same capability with no further contract bump.
-    public static let current = SemanticVersion(major: 1, minor: 6, patch: 0)
+    // 1.7.0 (2026-06-23, additive): automatic colorization —
+    //   • `imageColorize` (+ ColorizeRequest/Response/Contract) — grayscale/desaturated `Image` →
+    //     colorized `Image` at the same dimensions (introduced by DDColor). Canonical output `Image`.
+    //   • `ColorizeContract.fast`/`.best`/`.artistic` — quality/style tier Modes (DDColor convnext-t
+    //     vs convnext-l vs the artistic checkpoint); same input artifact, so a Mode tag (C4), not a surface.
+    public static let current = SemanticVersion(major: 1, minor: 7, patch: 0)
 }
