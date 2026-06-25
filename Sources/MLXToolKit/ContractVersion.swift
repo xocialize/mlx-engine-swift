@@ -76,5 +76,9 @@ public enum ContractVersion {
     //     `bytesPerRow` optional (defaults to width*4). png/jpeg call sites untouched (param defaulted).
     //     First adopters: NAFNet (imageRestore) + Real-ESRGAN (imageUpscale); other image capabilities
     //     opt in by branching their Image→pixel-buffer codec. A later `.rawRGBA16Half` is the 16-bit step.
-    public static let current = SemanticVersion(major: 1, minor: 9, patch: 0)
+    // 1.10.0 (2026-06-25, additive): promptable segmentation —
+    //   • `promptSegment` (+ PromptSegmentRequest/Response/Contract) — Image + point/box prompts →
+    //     `Matte` of the prompted object (introduced by EdgeTAM, on-device SAM 2). Reuses the `.matte`
+    //     output (shared with `matting`); the interactive click/box-select lane for Extract + Erase.
+    public static let current = SemanticVersion(major: 1, minor: 10, patch: 0)
 }

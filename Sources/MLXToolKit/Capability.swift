@@ -62,6 +62,13 @@ public enum Capability: String, Codable, Sendable, CaseIterable, Hashable {
     /// restructure content; from `imageRestore`, which cleans artifacts without adding color; and
     /// from `imageUpscale`, which changes resolution.)
     case imageColorize
+    /// **Promptable segmentation** — an `Image` + point/box prompts → a single-channel `Matte` of the
+    /// indicated object. Interactive (the caller clicks/boxes the thing to segment), unlike `matting`'s
+    /// automatic foreground extraction. Output is the same `Matte` artifact, so consumers (Extract's
+    /// cutout, Erase's fill mask) treat it uniformly. Contract 1.9.0; introduced by EdgeTAM (on-device
+    /// SAM 2). (Distinct from `matting` — promptable vs automatic, same `.matte` output; the shared
+    /// promptable-mask lane for Extract Stage-2 click-select and Erase click-to-erase.)
+    case promptSegment
     /// **Object removal / inpainting** — an `Image` + a `mask` (white = remove) → an `Image` with the
     /// masked region plausibly filled from surrounding context, at the same dimensions. The fill is
     /// *invented* (no full-reference floor) — an opt-in transform. Contract 1.8.0; introduced by LaMa
@@ -112,6 +119,7 @@ extension Capability {
         case .characterAnimation: return .video
         case .imageColorize: return .image
         case .imageInpaint: return .image
+        case .promptSegment: return .matte
         }
     }
 }
