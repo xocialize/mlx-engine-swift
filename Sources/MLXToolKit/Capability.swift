@@ -76,6 +76,14 @@ public enum Capability: String, Codable, Sendable, CaseIterable, Hashable {
     /// (Distinct from `imageEdit` — instruction-driven, may add new content; from `matting` — returns
     /// the mask, not a filled image. The "what to remove" mask is produced upstream, e.g. by `matting`.)
     case imageInpaint
+    /// **Promptable video object tracking** — a `Video` + point/box prompts on one frame → a per-frame
+    /// `Matte` track of the indicated object across the whole clip (masklet propagation). The temporal
+    /// extension of `promptSegment`: click an object once, get its mask on every frame. Output is a
+    /// **sequence** of `Matte`s (`CanonicalOutput.matteSequence`), lossless per-frame (not a re-encoded
+    /// mask video). Contract 1.11.0; introduced by EdgeTAM (on-device SAM 2). (Distinct from
+    /// `promptSegment` — propagates through time vs a single still; from `matting` — promptable +
+    /// temporal. The video masklet lane for Erase click-to-erase across frames + Extract video cutout.)
+    case trackObject
 }
 
 /// The fixed output artifact kind for a capability. Not negotiable per package (C2).
@@ -89,6 +97,10 @@ public enum CanonicalOutput: String, Codable, Sendable {
     case flow
     /// A single-channel matte / alpha map (grayscale). The canonical output of `matting`.
     case matte
+    /// A time-ordered **sequence** of mattes (one per video frame) — a masklet. The canonical output of
+    /// `trackObject`. Lossless per-frame (each element is a `Matte`), distinct from `.video` so generic
+    /// consumers don't treat a mask track as a single playable clip.
+    case matteSequence
 }
 
 extension Capability {
@@ -120,6 +132,7 @@ extension Capability {
         case .imageColorize: return .image
         case .imageInpaint: return .image
         case .promptSegment: return .matte
+        case .trackObject: return .matteSequence
         }
     }
 }

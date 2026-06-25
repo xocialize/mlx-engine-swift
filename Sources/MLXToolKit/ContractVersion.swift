@@ -80,5 +80,14 @@ public enum ContractVersion {
     //   • `promptSegment` (+ PromptSegmentRequest/Response/Contract) — Image + point/box prompts →
     //     `Matte` of the prompted object (introduced by EdgeTAM, on-device SAM 2). Reuses the `.matte`
     //     output (shared with `matting`); the interactive click/box-select lane for Extract + Erase.
-    public static let current = SemanticVersion(major: 1, minor: 10, patch: 0)
+    // 1.11.0 (2026-06-25, additive): promptable video object tracking —
+    //   • `trackObject` (+ TrackObjectRequest/Response/Contract) — `Video` + point/box prompts on one
+    //     frame → a per-frame `Matte` track of the object across the clip (masklet propagation); the
+    //     temporal extension of `promptSegment` (introduced by EdgeTAM's video memory stack). V1 single
+    //     object; the request is lane-ready for multi-object (additive) without a further bump.
+    //   • `CanonicalOutput.matteSequence` — a time-ordered sequence of mattes (lossless per-frame, not a
+    //     re-encoded mask video — hard edges survive); distinct from `.video` so consumers don't treat a
+    //     mask track as a single playable clip. The request carries the whole `Video` (bytes); the
+    //     runtime package decodes to frames (`FrameStreamNative`) — same convention as videoUpscale.
+    public static let current = SemanticVersion(major: 1, minor: 11, patch: 0)
 }
