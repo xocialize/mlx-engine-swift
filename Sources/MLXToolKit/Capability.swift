@@ -84,6 +84,13 @@ public enum Capability: String, Codable, Sendable, CaseIterable, Hashable {
     /// `promptSegment` — propagates through time vs a single still; from `matting` — promptable +
     /// temporal. The video masklet lane for Erase click-to-erase across frames + Extract video cutout.)
     case trackObject
+    /// **Single-image → 3D** — one `Image` → a 3D triangle mesh (`CanonicalOutput.mesh`, GLB bytes).
+    /// The geometry is *invented* from a single view (no multi-view reconstruction). Resolution tier
+    /// (voxel grid 512/1024/1536) rides `mode`. Contract 1.12.0; introduced by Pixal3D / TRELLIS.2.
+    /// (Distinct from every existing surface — the first capability whose artifact is a 3D mesh, not a
+    /// 2D image / video / matte. Background removal of the input is package-internal preprocessing,
+    /// reusing the shipped BiRefNet `matting`, not a request field.)
+    case imageTo3D
 }
 
 /// The fixed output artifact kind for a capability. Not negotiable per package (C2).
@@ -101,6 +108,10 @@ public enum CanonicalOutput: String, Codable, Sendable {
     /// `trackObject`. Lossless per-frame (each element is a `Matte`), distinct from `.video` so generic
     /// consumers don't treat a mask track as a single playable clip.
     case matteSequence
+    /// A 3D triangle **mesh** (vertices + faces), serialized as GLB bytes. The canonical output of
+    /// `imageTo3D`. Net-new artifact kind (all others are 2D image / video / audio / text / matte) —
+    /// distinct from `.image`/`.video` so generic consumers don't treat geometry as a rendered frame.
+    case mesh
 }
 
 extension Capability {
@@ -133,6 +144,7 @@ extension Capability {
         case .imageInpaint: return .image
         case .promptSegment: return .matte
         case .trackObject: return .matteSequence
+        case .imageTo3D: return .mesh
         }
     }
 }

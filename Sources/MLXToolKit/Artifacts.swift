@@ -79,6 +79,30 @@ public struct Matte: Artifact, Sendable, Codable, Equatable {
     }
 }
 
+/// Canonical 3D mesh artifact — a triangle mesh serialized as **GLB** bytes (binary glTF) in `data`
+/// (the V1 serialized round-trip form). The first-class output of the `imageTo3D` capability.
+///
+/// `vertexCount`/`faceCount` are optional descriptive metadata (a consumer can read the true counts
+/// from the GLB). `hasVertexColors` flags whether per-vertex color is baked in (TRELLIS.2 V1 ships
+/// geometry + vertex color; a PBR-texture follow-on stays the same `.glb` artifact, so no fork).
+public struct Mesh: Artifact, Sendable, Codable, Equatable {
+    public enum Format: String, Sendable, Codable { case glb }
+    public let format: Format
+    public let data: Data
+    public let vertexCount: Int?
+    public let faceCount: Int?
+    public let hasVertexColors: Bool
+
+    public init(format: Format = .glb, data: Data,
+                vertexCount: Int? = nil, faceCount: Int? = nil, hasVertexColors: Bool = false) {
+        self.format = format
+        self.data = data
+        self.vertexCount = vertexCount
+        self.faceCount = faceCount
+        self.hasVertexColors = hasVertexColors
+    }
+}
+
 /// Canonical video artifact.
 public struct Video: Artifact, Sendable, Codable, Equatable {
     public enum Format: String, Sendable, Codable { case mp4, mov }

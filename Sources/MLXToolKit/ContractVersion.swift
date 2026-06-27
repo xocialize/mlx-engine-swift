@@ -89,5 +89,13 @@ public enum ContractVersion {
     //     re-encoded mask video — hard edges survive); distinct from `.video` so consumers don't treat a
     //     mask track as a single playable clip. The request carries the whole `Video` (bytes); the
     //     runtime package decodes to frames (`FrameStreamNative`) — same convention as videoUpscale.
-    public static let current = SemanticVersion(major: 1, minor: 11, patch: 0)
+    // 1.12.0 (2026-06-26, additive): single-image to 3D —
+    //   • `imageTo3D` (+ ImageTo3DRequest/Response/Contract) — one `Image` -> a 3D triangle mesh
+    //     (introduced by Pixal3D / TRELLIS.2). Resolution tier (voxel grid 512/1024/1536) rides
+    //     `mode` (`ImageTo3DContract.res512`/`.res1024`/`.res1536`); same input artifact, so a Mode
+    //     tag (C4), not a surface. Input bg-removal reuses the shipped BiRefNet `matting` internally.
+    //   • `CanonicalOutput.mesh` + the `Mesh` artifact (GLB bytes; geometry + vertex color in V1) —
+    //     the first non-2D artifact kind (all others image/video/audio/text/matte). A later
+    //     PBR-texture bake stays the same `.glb` artifact (no fork).
+    public static let current = SemanticVersion(major: 1, minor: 12, patch: 0)
 }

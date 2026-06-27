@@ -34,17 +34,36 @@ extension SPDXLicense {
     /// `.permissiveOnly` policy.
     public static let ltx2Community: SPDXLicense = "LicenseRef-LTX-2-Community"
 
+    /// Meta's DINOv3 License. Non-SPDX, referenced via the `LicenseRef-` convention. Reviewed against
+    /// the license text (ai.meta.com/resources/models-and-libraries/dinov3-license): commercial use
+    /// and redistribution are permitted, with **no revenue/MAU threshold and no non-compete** — the
+    /// obligations are attribution ("Built with DINOv3" displayed prominently), shipping a copy of the
+    /// license with distributed materials, and a standard acceptable-use policy (no military/weapons/
+    /// ITAR). That is functionally permissive and *less* restrictive than `ltx2Community` (which carries
+    /// a revenue gate + non-compete yet is allowlisted), so this project **permits** it. Used by the
+    /// DINOv3 conditioner weights in the TRELLIS.2 image→3D port. Honor the "Built with DINOv3"
+    /// attribution wherever the conditioner is shipped.
+    public static let dinov3: SPDXLicense = "LicenseRef-DINOv3"
+
+    /// CircleStone Labs' Anima Non-Commercial license. Non-SPDX, referenced via `LicenseRef-`.
+    /// **NON-permissive** — personal / research use only, no commercial use (the base denoiser is
+    /// "Built on NVIDIA Cosmos" under the Cosmos Open Model License). Deliberately NOT on
+    /// `permissiveAllowlist`; admitted ONLY under `.permissiveOrAcknowledged` as an explicit
+    /// eval/personal-use opt-in. Used by the Anima anime-T2I port (AnimaT2IPackage).
+    public static let circleStoneNonCommercial: SPDXLicense = "LicenseRef-CircleStone-NonCommercial"
+
     /// The permissive allowlist used by `.permissiveOnly`. Curated; extend deliberately.
     public static let permissiveAllowlist: Set<SPDXLicense> = [
-        .mit, .apache2, .bsd2, .bsd3, .isc, .unlicense, .funasrModel, .ccBy4, .ltx2Community,
+        .mit, .apache2, .bsd2, .bsd3, .isc, .unlicense, .funasrModel, .ccBy4, .ltx2Community, .dinov3,
     ]
 
     /// Non-permissive licenses explicitly acknowledged for **eval/research** use only. These are
     /// NOT permissive (copyleft, non-compete, or otherwise non-shippable) and are admitted solely
     /// under `.permissiveOrAcknowledged`, never under the default `.permissiveOnly`. Each entry is a
     /// deliberate, auditable opt-in — extend only when a port is gated to evaluation, never for
-    /// shippable capabilities. Currently empty: generic infrastructure for a future eval-gated port.
-    public static let evalAcknowledgedAllowlist: Set<SPDXLicense> = []
+    /// shippable capabilities.
+    /// - `circleStoneNonCommercial`: the Anima anime-T2I weights (personal/research use only).
+    public static let evalAcknowledgedAllowlist: Set<SPDXLicense> = [.circleStoneNonCommercial]
 
     public var isPermissive: Bool { SPDXLicense.permissiveAllowlist.contains(self) }
 
