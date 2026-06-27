@@ -1,4 +1,5 @@
 import Testing
+import Foundation
 import MLXToolKit
 @testable import MLXServeCore
 
@@ -55,12 +56,17 @@ extension MockBase {
 
 private func cfg() -> StandardConfiguration { StandardConfiguration(weightsRepo: "mock/mock") }
 
-private func engine(budget: UInt64, backends: Set<Backend> = [.metalGPU], chip: ChipTier = .max) -> MLXServeEngine {
+// These tests use symbolic *byte* budgets (90, 300, …), so the live `phys_footprint` (gigabytes) would
+// always trip the R-MEM-1 real-pressure trigger. Default the injected reading to `nil` (trigger off);
+// the dedicated real-pressure tests below pass an explicit provider.
+private func engine(budget: UInt64, backends: Set<Backend> = [.metalGPU], chip: ChipTier = .max,
+                    physFootprint: @escaping @Sendable () -> UInt64? = { nil }) -> MLXServeEngine {
     let device = DeviceProfile(chipTier: chip,
                                macOS: SemanticVersion(major: 26, minor: 0, patch: 0),
                                backends: backends,
                                totalMemoryBytes: 64_000_000_000)
-    return MLXServeEngine(device: device, governor: MemoryGovernor(budgetBytes: budget))
+    return MLXServeEngine(device: device, governor: MemoryGovernor(budgetBytes: budget),
+                          physFootprint: physFootprint)
 }
 
 // MARK: - Eligibility (C10)
@@ -226,4 +232,135 @@ private func mockMultiManifest() -> PackageManifest {
     await #expect(throws: EngineError.self) {
         _ = try await e.prepare(.textToImage)
     }
+}
+
+// MARK: - Config-aware footprint HINT — same-quant multi-mode (3.1, the BiRefNet case)
+
+/// Single declared fp16 footprint (the "fast" envelope) — the shape where two modes share a quant but
+/// have very different working sets, so `QuantFootprint` (keyed on quant) can't tell them apart.
+private func mockMattingManifest() -> PackageManifest {
+    PackageManifest(
+        license: LicenseDeclaration(weightLicense: .apache2, portCodeLicense: .apache2),
+        provenance: Provenance(sourceRepo: "mock/matting", revision: "main", tier: 1),
+        requirements: RequirementsManifest(
+            footprints: [QuantFootprint(quant: .fp16, residentBytes: 65)],  // fast envelope
+            requiredBackends: [.metalGPU],
+            os: OSRequirement(),
+            chipFloor: nil),
+        surfaces: [ToolDescriptor(name: "mock-matting", capability: .matting, summary: "mock")])
+}
+
+/// A mode-tiered config at one quant (fp16) that declares the selected mode's footprint via a hint.
+private struct ModeConfig: PackageConfiguration, QuantConfigured, FootprintConfigured {
+    var quant: Quant = .fp16
+    var residentBytesHint: UInt64?
+}
+
+@InferenceActor private final class MockMatting: ModelPackage {
+    typealias Configuration = ModeConfig
+    nonisolated static var manifest: PackageManifest { mockMattingManifest() }
+    nonisolated init(configuration: ModeConfig) {}
+    func load() async throws {}
+    func unload() async {}
+    func run(_ request: any CapabilityRequest) async throws -> any CapabilityResponse {
+        LLMResponse(text: "ok", finishReason: .stop)
+    }
+}
+
+@Test func footprintHintOverridesQuantAndSurvey() {
+    let gov = MemoryGovernor(budgetBytes: 300)
+    let reqs = mockMattingManifest().requirements
+    // No hint → quant match (fp16 65), or largest-that-fits when the quant isn't declared.
+    #expect(gov.footprint(for: reqs, quant: .fp16, hint: nil) == 65)
+    #expect(gov.footprint(for: reqs, quant: .int4, hint: nil) == 65)   // no int4 declared → survey
+    // Hint wins over both — the "best" mode declares its own (larger) working set at the same quant.
+    #expect(gov.footprint(for: reqs, quant: .fp16, hint: 183) == 183)
+    #expect(gov.footprint(for: reqs, quant: nil, hint: 183) == 183)
+}
+
+@Test func registerChargesFootprintHintPerMode() async throws {
+    // The BiRefNet fix end-to-end: one package, two same-quant modes, charged their real footprints.
+    let eFast = engine(budget: 300)
+    try await eFast.register(PackageRegistration.of(MockMatting.self),
+                             configuration: ModeConfig(residentBytesHint: nil))  // fast → fp16 65
+    try await eFast.prepare(.matting)
+    #expect(await eFast.memory.residentBytes == 65)
+
+    let eBest = engine(budget: 300)
+    try await eBest.register(PackageRegistration.of(MockMatting.self),
+                             configuration: ModeConfig(residentBytesHint: 183))  // best → 183
+    try await eBest.prepare(.matting)
+    #expect(await eBest.memory.residentBytes == 183)
+}
+
+@Test func admissibilityIsConfigAware() async {
+    // The affordable tier stays admissible where the survey-charged best tier wouldn't: at budget 100,
+    // the fast mode (65) fits; the best mode (183) doesn't — and the config-aware overload reports each.
+    let e = engine(budget: 100)
+    let reqs = mockMattingManifest().requirements
+    let fast = await e.admissibility(for: reqs, configuration: ModeConfig(residentBytesHint: nil))
+    let best = await e.admissibility(for: reqs, configuration: ModeConfig(residentBytesHint: 183))
+    #expect(fast.footprint == 65)
+    #expect(fast.fitsBudget)
+    #expect(best.footprint == 183)
+    #expect(!best.fitsBudget)
+    // The variant-agnostic survey overload still works (largest-that-fits = fp16 65).
+    let survey = await e.admissibility(for: reqs)
+    #expect(survey.footprint == 65)
+}
+
+// MARK: - R-MEM-1 real-pressure trigger (3.7)
+
+/// A controllable `phys_footprint`. Reads `low` until `arm()`, then returns `high` for exactly the next
+/// read and disarms — so a test drives exactly one real-pressure eviction at a chosen moment, robust to
+/// how many benign reads happened before (every cold prepare reads `phys_footprint` once).
+private final class ArmedMem: @unchecked Sendable {
+    private let lock = NSLock()
+    private var armed = false
+    private let high: UInt64, low: UInt64
+    init(high: UInt64, low: UInt64 = 0) { self.high = high; self.low = low }
+    func arm() { lock.lock(); armed = true; lock.unlock() }
+    func read() -> UInt64? {
+        lock.lock(); defer { lock.unlock() }
+        if armed { armed = false; return high }
+        return low
+    }
+}
+
+@Test func realPressureEvictsIdleEvenWhenDeclaredBytesFit() async throws {
+    // Declared bytes fit easily (60 + 60 ≤ 300), but the *actual* footprint sits over the 0.85
+    // watermark (ceiling 255). Admitting the second model must reclaim the idle first one on real
+    // pressure — the gap declared-byte arithmetic alone would miss (R-MEM-1).
+    let e = engine(budget: 300, physFootprint: { 260 })  // constant > ceiling 255
+    let llm = try await e.register(PackageRegistration.of(MockLLM.self), configuration: cfg())
+    try await e.prepare(.llm)
+    try await e.register(PackageRegistration.of(MockTTS.self), configuration: cfg())
+    try await e.prepare(.tts)  // admission here trips real pressure → evicts the idle LLM
+
+    let resident = await e.residentPackages
+    #expect(resident[llm] == nil)              // reclaimed on real pressure
+    #expect(await e.memory.residentBytes == 60) // only TTS remains
+    #expect(await e.memory.underRealPressure)
+}
+
+@Test func realPressureKeepsRecentlyUsed() async throws {
+    // The pressure-aware companion to `lruKeepsRecentlyUsed`: under real pressure the LRU idle resident
+    // is evicted in LRU order, and a more-recently-used one survives. Budget is large so declared bytes
+    // never force eviction (3×60 ≤ 1000); ArmedMem fires a single high reading during the third
+    // admission, so exactly one resident — the LRU — is reclaimed.
+    let mem = ArmedMem(high: 900)  // > ceiling (0.85 × 1000 = 850)
+    let e = engine(budget: 1_000, physFootprint: { mem.read() })
+    let llm = try await e.register(PackageRegistration.of(MockLLM.self), configuration: cfg())
+    try await e.prepare(.llm)                     // llm loaded first
+    let tts = try await e.register(PackageRegistration.of(MockTTS.self), configuration: cfg())
+    try await e.prepare(.tts)                     // tts loaded after
+    _ = try await e.run(LLMRequest(prompt: "x"))  // touch llm → tts is now the LRU
+    try await e.register(PackageRegistration.of(MockImage60.self), configuration: cfg())
+    mem.arm()                                     // arm real pressure for the next admission
+    try await e.prepare(.textToImage)             // one real-pressure eviction → the LRU (tts)
+
+    let resident = await e.residentPackages
+    #expect(resident[tts] == nil)   // LRU idle evicted under real pressure
+    #expect(resident[llm] != nil)   // recently-used survives
+    #expect(resident.count == 2)    // exactly one eviction (llm + image remain)
 }

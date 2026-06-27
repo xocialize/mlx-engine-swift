@@ -25,7 +25,9 @@ C13's "runs only in the serialization domain / no private queue" is **compiler-e
 testing. "Cooperatively evictable" is refined by **R-MEM-1** (architecture.md): a package is
 evictable iff `unload()` releases its full working set *and* the engine's admission-time,
 pressure-aware eviction can reclaim it before the next heavy load — so heavy models swap (queue-shaped)
-rather than stack. R-MEM-1's open gap is the eviction *trigger* (declared bytes vs. real pressure),
-not the package's `unload()` obligation.
+rather than stack. R-MEM-1's eviction *trigger* (declared bytes vs. real pressure) is now wired — the
+admission path reads actual `phys_footprint` — so the remaining open item is **mid-run** preemption +
+the cooperative-cancellation contract C13 names (a *running* inference still can't be stopped), not the
+admission-time trigger or the package's `unload()` obligation.
 
-*The authoritative checklist (pass/fail criteria, failure modes) lives in the `mlx-engine` skill.*
+*The authoritative checklist (pass/fail criteria, failure modes) lives in the `mlx-swift-integration` skill.*

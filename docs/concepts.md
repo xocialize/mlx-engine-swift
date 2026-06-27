@@ -43,4 +43,4 @@ capability. Distinct capabilities are independent slots, so an `llm` enhancer an
 model are **co-resident** — which is how a `promptEnhance` → render pipeline runs through one engine
 without unloading either. Memory admission for every resident is the `MemoryGovernor`'s call.
 
-See the `mlx-engine` skill for the authoritative detail.
+See the `mlx-swift-integration` skill for the authoritative detail.

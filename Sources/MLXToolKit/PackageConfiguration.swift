@@ -16,6 +16,23 @@ public protocol QuantConfigured {
     var quant: Quant { get }
 }
 
+/// Opt-in for configs whose footprint can't be inferred from `quant` alone — when two configurations
+/// at the **same** quant have very different working sets, so `QuantFootprint` (which keys on quant)
+/// can't tell them apart. The canonical case is BiRefNet matting: `fast`@1024 ≈ 4.9 GB vs `best`@2048
+/// ≈ 18.3 GB, **both fp16** — a 3.6× gap the quant match collapses to one figure, which would charge
+/// the affordable tier the expensive tier's bytes and make it inadmissible on small machines.
+///
+/// `residentBytesHint` lets the config declare the **selected** configuration's resident bytes
+/// directly. The value is the **max-over-phase** working set for that variant
+/// (`max(encode, dit+activation, decode-transient)` — NOT the sum of phases; per-phase eviction means
+/// only one phase is resident at peak), measured with the in-app footprint probe. It takes precedence
+/// over the `QuantConfigured` quant match at registration; `nil` falls through to the quant /
+/// largest-that-fits resolution, so adopting the protocol is safe even for variants with no special
+/// hint. Detected by `as?` at registration, mirroring the `QuantConfigured` / `ModelStorable` opt-ins.
+public protocol FootprintConfigured {
+    var residentBytesHint: UInt64? { get }
+}
+
 /// Ordered backend preference (first feasible wins at placement time).
 public struct BackendPreference: Sendable, Codable, Equatable {
     public let ordered: [Backend]

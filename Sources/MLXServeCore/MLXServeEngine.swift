@@ -95,6 +95,9 @@ public actor MLXServeEngine {
     /// Where packages materialize weights + the marker the storage UI counts. Empty by default
     /// (packages use their own cache); a consuming app sets it once via `useModelStore`.
     private var modelStore: ModelStore = ModelStore()
+    /// Real-memory reading for the R-MEM-1 pressure trigger (`phys_footprint`). Injectable so tests
+    /// can drive admission with a controlled footprint; defaults to the live host reading.
+    private let physFootprint: @Sendable () -> UInt64?
 
     /// Observable preparation progress per capability/package (registering → prewarming → downloading
     /// → loading → ready/failed). A consuming app binds `MLXEngineUI.ModelStateView` to this to show a
@@ -103,10 +106,12 @@ public actor MLXServeEngine {
 
     public init(policy: LicensePolicy = .permissiveOnly,
                 device: DeviceProfile = .current(),
-                governor: MemoryGovernor? = nil) {
+                governor: MemoryGovernor? = nil,
+                physFootprint: @Sendable @escaping () -> UInt64? = HostMemory.physFootprint) {
         self.policy = policy
         self.deviceProfile = device
         self.governor = governor ?? .forDevice(device)
+        self.physFootprint = physFootprint
     }
 
     /// Point the engine's model store at a download root (the app's chosen, security-scoped models
@@ -158,11 +163,14 @@ public actor MLXServeEngine {
             }
         }
 
-        // Charge the *registered* variant's footprint (ISSUES W1): if the config opts into
-        // `QuantConfigured`, the governor matches that quant's declared `QuantFootprint` instead of
-        // guessing the largest-that-fits (which under-reserves bf16 when bf16 > budget).
-        let footprint = governor.footprint(for: registration.manifest.requirements,
-                                           quant: (configuration as? QuantConfigured)?.quant)
+        // Charge the *registered* variant's footprint: a `FootprintConfigured` hint (the measured
+        // max-phase bytes for the selected mode — resolves same-quant multi-mode configs like BiRefNet
+        // fast/best) wins; else the `QuantConfigured` quant match (ISSUES W1 — avoids the largest-
+        // that-fits under-reserve of bf16 when bf16 > budget); else largest-that-fits.
+        let footprint = governor.footprint(
+            for: registration.manifest.requirements,
+            quant: (configuration as? QuantConfigured)?.quant,
+            hint: (configuration as? FootprintConfigured)?.residentBytesHint)
         packages[packageID] = Entry(registration: registration,
                                     configuration: configuration,
                                     footprint: footprint)
@@ -207,12 +215,16 @@ public actor MLXServeEngine {
         for (capability, id) in defaults {
             if let bytes = residentFootprint[id] { byCapability[capability] = bytes }
         }
+        let real = physFootprint()
+        let realCeiling = UInt64(Double(governor.budgetBytes) * governor.highWatermark)
         return MemorySnapshot(
             budgetBytes: governor.budgetBytes,
             residentBytes: governor.residentBytes,
             availableBytes: governor.availableBytes,
             underPressure: governor.underPressure,
-            residents: byCapability
+            residents: byCapability,
+            realResidentBytes: real,
+            underRealPressure: (real ?? 0) > realCeiling
         )
     }
 
@@ -221,14 +233,31 @@ public actor MLXServeEngine {
 
     /// Evaluate requirements against the device (C10) + current memory budget **without loading** —
     /// for surfacing "what can this machine run?" and for a Model Manager to rank variants.
-    public func admissibility(for requirements: RequirementsManifest) -> Admissibility {
-        let footprint = governor.footprint(for: requirements)
+    ///
+    /// Pass `quant`/`hint` to evaluate the **selected** variant (the same footprint a real
+    /// registration of that config would charge) rather than the variant-agnostic largest-that-fits
+    /// survey — closing the static-manifest-vs-configured-variant gap on the admissibility side. Both
+    /// default to `nil`, so `admissibility(for: requirements)` keeps the survey behavior.
+    public func admissibility(for requirements: RequirementsManifest,
+                              quant: Quant? = nil,
+                              hint: UInt64? = nil) -> Admissibility {
+        let footprint = governor.footprint(for: requirements, quant: quant, hint: hint)
         return Admissibility(
             eligibility: deviceProfile.eligibility(for: requirements),
             footprint: footprint,
             fitsBudget: governor.fitsBudget(footprint),
             fitsAvailable: governor.canFit(footprint)
         )
+    }
+
+    /// Config-aware admissibility: evaluate exactly the variant a given configuration would load,
+    /// reading its `QuantConfigured` quant and `FootprintConfigured` hint the same way `register`
+    /// does. The ergonomic seam for a Model Manager ranking a concrete configuration.
+    public func admissibility(for requirements: RequirementsManifest,
+                              configuration: any PackageConfiguration) -> Admissibility {
+        admissibility(for: requirements,
+                      quant: (configuration as? QuantConfigured)?.quant,
+                      hint: (configuration as? FootprintConfigured)?.residentBytesHint)
     }
 
     /// Admit + run one request: resolve the package for `request.capability` (the capability's
@@ -384,14 +413,38 @@ public actor MLXServeEngine {
 
     /// Evict least-recently-used idle residents until `bytes` fits the headroom. Terminates because
     /// `bytes ≤ budget` (checked by the caller): evicting every other resident frees the full budget.
+    ///
+    /// Two passes: (1) **declared-byte** headroom — the incoming working set must fit the budget after
+    /// existing charges; (2) **R-MEM-1 real-pressure** — declared `QuantFootprint` bytes are a *floor*,
+    /// so even when the declared sum fits, the process's *actual* `phys_footprint` may be over the
+    /// governor's high-watermark (activations/scratch the declarations omit). In that case evict idle
+    /// LRU residents until real pressure clears or none remain. Conservative and bounded: it only
+    /// reclaims our own idle residents (never the incoming `id`), and stops when nothing's left to
+    /// evict, so external (non-engine) memory pressure can't loop. Degrades to the declared-byte pass
+    /// when no host reading is available.
     private func makeHeadroom(for bytes: UInt64, keeping id: PackageID) async {
         while !governor.canFit(bytes) {
-            let candidates = residents.keys.filter { $0 != id }
-            guard let victim = candidates.min(by: { (lastUsed[$0] ?? 0) < (lastUsed[$1] ?? 0) }) else {
+            guard let victim = lruIdleVictim(excluding: id) else {
                 break // nothing left to evict
             }
             await evictResident(victim)
         }
+
+        // R-MEM-1: real-memory pressure trigger.
+        let ceiling = UInt64(Double(governor.budgetBytes) * governor.highWatermark)
+        while let real = physFootprint(), real > ceiling {
+            guard let victim = lruIdleVictim(excluding: id) else {
+                break // reclaimed everything we can; remaining pressure is external
+            }
+            await evictResident(victim)
+        }
+    }
+
+    /// The least-recently-used resident other than `id`, or nil if none remain.
+    private func lruIdleVictim(excluding id: PackageID) -> PackageID? {
+        residents.keys
+            .filter { $0 != id }
+            .min(by: { (lastUsed[$0] ?? 0) < (lastUsed[$1] ?? 0) })
     }
 
     private func evictResident(_ id: PackageID) async {

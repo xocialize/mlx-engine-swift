@@ -55,6 +55,16 @@ public struct MemoryGovernor: Sendable {
         return footprint(for: requirements)
     }
 
+    /// Fully config-aware footprint. Resolution order: an explicit `hint` (from a `FootprintConfigured`
+    /// config — the measured max-phase bytes for the selected variant) wins over the `quant`-keyed
+    /// `QuantFootprint` match, which wins over the largest-that-fits survey. The `hint` resolves the
+    /// same-quant multi-mode case (e.g. BiRefNet `fast` vs `best`, both fp16) that `quant` alone can't
+    /// express. Every fallback is safe — it never under-reserves a single-footprint manifest.
+    public func footprint(for requirements: RequirementsManifest, quant: Quant?, hint: UInt64?) -> UInt64 {
+        if let hint { return hint }
+        return footprint(for: requirements, quant: quant)
+    }
+
     public mutating func charge(_ bytes: UInt64) {
         residentBytes = residentBytes &+ bytes
     }
@@ -64,7 +74,10 @@ public struct MemoryGovernor: Sendable {
     }
 }
 
-/// Observable snapshot of the engine's memory state.
+/// Observable snapshot of the engine's memory state. `residentBytes` is the **declared** charge (sum
+/// of `QuantFootprint` floors); `realResidentBytes` is the process's **actual** `phys_footprint` when
+/// a reading is available (nil if the host syscall failed). `underRealPressure` is the R-MEM-1 signal:
+/// the actual footprint is over the governor's high-watermark — the trigger declared bytes can miss.
 public struct MemorySnapshot: Sendable, Equatable {
     public let budgetBytes: UInt64
     public let residentBytes: UInt64
@@ -72,4 +85,21 @@ public struct MemorySnapshot: Sendable, Equatable {
     public let underPressure: Bool
     /// Resident capabilities and the bytes charged for each.
     public let residents: [Capability: UInt64]
+    /// Process `phys_footprint` (actual resident memory) if a host reading was available, else nil.
+    public let realResidentBytes: UInt64?
+    /// Actual footprint over the governor's high-watermark (R-MEM-1 real-pressure). False when no
+    /// reading is available.
+    public let underRealPressure: Bool
+
+    public init(budgetBytes: UInt64, residentBytes: UInt64, availableBytes: UInt64,
+                underPressure: Bool, residents: [Capability: UInt64],
+                realResidentBytes: UInt64? = nil, underRealPressure: Bool = false) {
+        self.budgetBytes = budgetBytes
+        self.residentBytes = residentBytes
+        self.availableBytes = availableBytes
+        self.underPressure = underPressure
+        self.residents = residents
+        self.realResidentBytes = realResidentBytes
+        self.underRealPressure = underRealPressure
+    }
 }

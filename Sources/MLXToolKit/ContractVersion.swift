@@ -97,5 +97,13 @@ public enum ContractVersion {
     //   • `CanonicalOutput.mesh` + the `Mesh` artifact (GLB bytes; geometry + vertex color in V1) —
     //     the first non-2D artifact kind (all others image/video/audio/text/matte). A later
     //     PBR-texture bake stays the same `.glb` artifact (no fork).
-    public static let current = SemanticVersion(major: 1, minor: 12, patch: 0)
+    // 1.13.0 (2026-06-27, additive): config-aware memory footprint —
+    //   • `FootprintConfigured` (opt-in protocol; `var residentBytesHint: UInt64?`) — lets a config
+    //     declare the *selected* variant's resident bytes when two modes share a quant so the
+    //     `QuantFootprint` (keyed on quant) can't distinguish them (BiRefNet `fast`@1024 ≈ 4.9 GB vs
+    //     `best`@2048 ≈ 18.3 GB, both fp16). The engine charges the hint over the quant match over the
+    //     largest-that-fits survey; nil is safe. Detected by `as?` at registration like `QuantConfigured`.
+    //     The hint is the max-over-phase working set (not the sum) — the manifest principle. Pairs with
+    //     the R-MEM-1 real-pressure admission trigger (MLXServeCore) closing the declared-bytes-only gap.
+    public static let current = SemanticVersion(major: 1, minor: 13, patch: 0)
 }

@@ -16,4 +16,4 @@ cannot destabilize the pipeline.
 > MIT-licensed engine code. Separate from the two-layer weight/port-code **license gate** that
 > governs which model weights the engine will load and serve.
 
-*Placeholder docs site — the authoritative, detailed specs live in the `mlx-engine` skill.*
+*Placeholder docs site — the authoritative, detailed specs live in the `mlx-swift-integration` skill.*

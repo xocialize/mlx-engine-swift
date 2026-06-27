@@ -3,8 +3,13 @@ import XCTest
 
 final class MLXToolKitTests: XCTestCase {
 
-    func testContractVersionIsV1_9() {
-        XCTAssertEqual(ContractVersion.current, SemanticVersion(major: 1, minor: 9, patch: 0))
+    // The contract is additive at minor versions (C0), so don't pin an exact version — that tripwire
+    // rotted (it sat at 1.9.0 through five additive bumps). Assert the invariant instead: major stays 1
+    // (a major bump is a deliberate breaking change that should update this floor) and the minor is at
+    // or above the floor known when this was written (1.13.0 — config-aware footprint).
+    func testContractVersionIsV1AtOrAboveFloor() {
+        XCTAssertEqual(ContractVersion.current.major, 1)
+        XCTAssertGreaterThanOrEqual(ContractVersion.current, SemanticVersion(major: 1, minor: 13, patch: 0))
     }
 
     // 1.9.0 additive: Image.Format.rawBGRA8 — raw interleaved BGRA8 pixel bytes at the model
