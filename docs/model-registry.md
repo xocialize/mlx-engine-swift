@@ -86,10 +86,12 @@ _Seeded 2026-06-30. Val/Eff/Eng are best-effort at seed time — **backfill per 
 
 | Capability | Package | Model | Role | Home | Avail | Val | Eff | Eng |
 |---|---|---|---|---|---|---|---|---|
-| llm | mlx-qwen-llm-swift | Qwen3.5 | wrapper | think/PROD | ✅ | ✅ | ⬜ | |
+| llm | mlx-qwen-llm-swift | Qwen3.5 | wrapper | think/PROD | ✅ | ✅ | ✅ | 0.15.0 |
 | llm (prompt enhance) | ernie-pe-swift | ERNIE-PE (Ministral-3B) | wrapper+core | image/PROD | ✅ | ✅ | ⬜ | |
 | imageAnalysis | qwen25vl-mlx-swift | Qwen2.5-VL-3B | wrapper+core | think/PROD | ✅ | ✅ | ⬜ | |
 | imageAnalysis | qwen3vl-mlx-swift | Qwen3-VL | core (wrapper pending) | think/WIP | 🧪 | ⬜ | ⬜ | |
+
+> mlx-qwen-llm-swift `Eff: ✅` (2026-06-30, engine 0.15.0) — first **autoregressive** sweep target: the transient is the **context-scaled** activation, not a fixed peak. P1 split: flat `residentBytes = onDisk + 600 MB` (KV-cache-blind) → `FootprintConfigured` split `residentBytesHint = onDiskBytes` (weights floor) + `peakActivationBytesHint = peakActivationBytes` declared at a **documented 2048-token context envelope**. **Measurement surprise (the interesting bit):** Qwen3.5 is a HYBRID linear/full-attention model — only 1-in-4 layers is softmax attention with a context-growing `KVCacheSimple`; the rest are GatedDeltaNet (linear) with a fixed `MambaCache`. So the analytic KV-cache (`QwenModel.kvCacheBytes`, verified **bit-exact** at 12 288 B/token for 0.8B) is TINY (96 MB @8192). But the measured transient is **prefill-scratch-dominated** (the GatedDeltaNet chunked-scan over the prompt), ~20× the KV-cache and ~linear in sequence length: 0.8B-8bit measured 427 MB @~340 tok · 2.1 GB @~2k · 4.2 GB @~4k · 7.0 GB @~8k. Declared peak is the **measured** prefill-scratch at the 2048 envelope (~2.2 GB for 0.8B), width-scaled by `hidden_size` for 4B/9B (only 0.8B measured). Classic "flat footprints UNDER-declare." P2 (per-stage evict) N/A (single model). P3 (mmap) verified — floor ≈ on-disk weight bytes (loads via mlx-swift-lm safetensors). P4 (BudgetAware) the LLM-specific lever = cap context to fit KV-cache into budget; **documented + deferred** (KV-cache is small; silently shrinking context is a correctness surprise). Engine pin `from: 0.3.0 → 0.15.0`, no API drift.
 
 ## 🧱 Shared foundation (not capability providers)
 
