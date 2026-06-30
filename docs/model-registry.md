@@ -43,8 +43,9 @@ _Seeded 2026-06-30. Val/Eff/Eng are best-effort at seed time — **backfill per 
 
 | Capability | Package | Model | Role | Home | Avail | Val | Eff | Eng |
 |---|---|---|---|---|---|---|---|---|
-| textToImage | ernie-image-swift | ERNIE-Image-Turbo | wrapper+core | image/PROD | ✅ | ✅ | ⬜ | |
-| textToImage | lens-mlx-swift | Lens 3.8B | wrapper+core | image/PROD | ✅ | ✅ | ⬜ | |
+| textToImage | ernie-image-swift | ERNIE-Image-Turbo | wrapper+core | image/PROD | ✅ | ✅ | ✅ | 0.16.0 | <!-- split: resident floor bf16 15 GB / int4 5 GB (DiT+VAE; flat was 26/16) + ~11 GB transient; QuantConfigured (bf16/int4); P2 = Mistral-3B encoder load→encode→evict before denoise. activation = smoke est, phys re-baseline pending (image app autorun). -->
+| textToImage | lens-mlx-swift | Lens 3.8B | wrapper+core | image/PROD | ✅ | ✅ | ✅ | 0.16.0 | <!-- split: resident floor bf16 8 GB (DiT+VAE; flat was 62) + ~54 GB transient (GPT-OSS-20B encoder load dominates); QuantConfigured (bf16); P2 = encoder load→encode→evict before denoise, both LensT2I + LensTurboT2I wrappers via shared core. activation = smoke est, phys re-baseline pending (image app autorun). -->
+
 | textToImage / imageEdit | boogu-image-swift | Boogu-Image-0.1 | wrapper+core | image/WIP | 🧪 | 🟡 | ⬜ | |
 | textToImage | anima-mlx-swift | Anima (Cosmos-Predict2-2B) | wrapper+core | image/PROD | ✅ (v0.1.1) | 🟡 | ⬜ | | <!-- NC weights (C7 two-layer gate, rejectedWeight under .permissiveOnly); parity-locked to xocialize/anima-mlx Python (e2e cos 0.999105); measured peak bf16 8.0 GB / int4 6.5 GB @512². Wired into MLXEngineImage ImageValidationView (bf16 + int4 variants, NC admitted via .permissiveOrAcknowledged) — app BUILDS; Val 🟡 = CLI --package-gate green + app-wired, pending one interactive in-app generation. -->
 | imageEdit | qwen-image-edit-swift | Qwen-Image-Edit-2511 | wrapper+core | image/PROD | ✅ | ✅ | ✅ | 0.15.0 |
