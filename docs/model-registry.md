@@ -29,9 +29,9 @@ _Seeded 2026-06-30. Val/Eff/Eng are best-effort at seed time — **backfill per 
 
 | Capability | Package | Model | Role | Home | Avail | Val | Eff | Eng |
 |---|---|---|---|---|---|---|---|---|
-| tts | mlx-kokoro-tts-swift | Kokoro-82M | wrapper+core | audio/PROD | ✅ | ✅ | ⬜ | |
-| tts | mlx-qwen3-tts-swift | Qwen3-TTS | wrapper+core | audio/PROD | ✅ | ✅ | ⬜ | |
-| tts | mlx-voxcpm2-tts-swift | VoxCPM2 | wrapper+core | audio/PROD | ✅ | ✅ | ⬜ | |
+| tts | mlx-kokoro-tts-swift | Kokoro-82M | wrapper+core | audio/PROD | ✅ | ✅ | ➖ | | <!-- Eff n/a: single tiny model (82M, flat bf16 ~500 MB), negligible transient; engine bump not worth the churn. -->
+| tts | mlx-qwen3-tts-swift | Qwen3-TTS | wrapper+core | audio/PROD | ✅ | ✅ | ✅ | 0.15.0 | <!-- split: 1.7B-8bit weights 2.65 GB + measured talker transient ~4.0 GB; FootprintConfigured (variant×size×quant); P2 N/A (talker+codePredictor interleave per frame). -->
+| tts | mlx-voxcpm2-tts-swift | VoxCPM2 | wrapper+core | audio/PROD | ✅ | ✅ | ✅ | 0.15.0 | <!-- split: weights floor 9.3 GB + measured transient 4.0 GB (flat 11 GB under-declared the ~11.9 GB peak); QuantConfigured; P2 N/A (TSLM/RALM/LocDiT interleave per patch). -->
 | audioSeparation | mlx-demucs-swift | HTDemucs v4 | wrapper+core | audio/PROD | ✅ | ✅ | ⬜ | |
 | audioSeparation | mlx-mel-roformer-swift | Mel-Band-RoFormer | wrapper+core | audio/PROD | ✅ | 🟡 | ⬜ | |
 | speechEmotion | mlx-emotion2vec-swift | emotion2vec+ | wrapper+core | audio/PROD | ✅ | ✅ | ➖ | |
