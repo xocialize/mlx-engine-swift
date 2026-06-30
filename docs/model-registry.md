@@ -51,13 +51,13 @@ _Seeded 2026-06-30. Val/Eff/Eng are best-effort at seed time — **backfill per 
 | imageRestore | mlx-nafnet-swift | NAFNet (v0.3.2) | wrapper+core | image/PROD | ✅ | ✅ | ⬜ | |
 | imageUpscale | mlx-realesrgan-swift | Real-ESRGAN 4× | wrapper+core | image/PROD | ✅ | ✅ | ⬜ | |
 | imageInpaint | mlx-lama-swift | LaMa + MI-GAN | wrapper+core | image/PROD | ✅ | ✅ | ⬜ | |
-| matting | mlx-birefnet-swift | BiRefNet | wrapper+core | image/PROD | ✅ | ✅ | 🟡 brief | 0.10.0 |
+| matting | mlx-birefnet-swift | BiRefNet | wrapper+core | image/PROD | ✅ | ✅ | ✅ P1a (P1b deferred) | 0.14.0 |
 | promptSegment / trackObject | mlx-edgetam-swift | EdgeTAM (SAM 2) | wrapper+core | image/PROD | ✅ (v0.3.2) | ✅ | ⬜ | |
 | imageQualityScore | mlx-siglip2-iqa-swift | SigLIP2 NR-IQA | wrapper+core | image/WIP | ✅ | ✅ | ➖ | |
 | opticalFlow | mlx-sea-raft-swift | SEA-RAFT | wrapper+core | image/WIP | ✅ | ✅ | ➖ | |
 | imageTo3D | mlx-trellis2-swift | TRELLIS.2 / Pixal3D | wrapper+core | mlxengine-3d/WIP | ✅ (0.3.0) | 🟡 | ⬜ | 1.12 |
 
-> BiRefNet `Eff: 🟡` — it's the motivating same-quant multi-mode case (fast@1024 vs best@2048); high-value sweep target on the optimizer side.
+> BiRefNet `Eff: ✅ P1a` (2026-06-30, engine 0.14.0) — the motivating same-quant multi-mode case (fast@1024 vs best@2048). Split declared on the **fast** envelope: `QuantFootprint(.fp16, resident 0.9 GB, peakActivation 4.4 GB)` (+ `QuantConfigured`), replacing the flat 6.5 GB → engine charge ~0.9 GB resident + a shared transient. best stays a runtime-guarded variant (`insufficientMemoryForBest`; measured split resident ~0.5 / peakActivation ~17.9 GB, documented not admitted). **P1b deferred** — promoting mode → PackageID (best first-class admitted) is a coordinated change; the PROD consumer (`EngineMatteProvider`) relies on per-request `req.mode` + the fallback.
 
 ## 🎬 Video
 
