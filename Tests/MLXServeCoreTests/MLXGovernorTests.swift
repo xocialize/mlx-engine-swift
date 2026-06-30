@@ -364,3 +364,119 @@ private final class ArmedMem: @unchecked Sendable {
     #expect(resident[llm] != nil)   // recently-used survives
     #expect(resident.count == 2)    // exactly one eviction (llm + image remain)
 }
+
+// MARK: - Serialized-inference transient reserve (E1)
+
+/// One quant with a split footprint: 40 persistent weights + 30 transient activation peak.
+private func mockSplitManifest(capability: Capability) -> PackageManifest {
+    PackageManifest(
+        license: LicenseDeclaration(weightLicense: .apache2, portCodeLicense: .apache2),
+        provenance: Provenance(sourceRepo: "mock/split-\(capability.rawValue)", revision: "main", tier: 1),
+        requirements: RequirementsManifest(
+            footprints: [QuantFootprint(quant: .int4, residentBytes: 40, peakActivationBytes: 30)],
+            requiredBackends: [.metalGPU], os: OSRequirement(), chipFloor: nil),
+        surfaces: [ToolDescriptor(name: "mock-split-\(capability.rawValue)", capability: capability, summary: "mock")])
+}
+
+@InferenceActor private final class MockSplitLLM: MockBase {
+    nonisolated static var manifest: PackageManifest { mockSplitManifest(capability: .llm) }
+    nonisolated init(configuration: StandardConfiguration) {}
+}
+@InferenceActor private final class MockSplitTTS: MockBase {
+    nonisolated static var manifest: PackageManifest { mockSplitManifest(capability: .tts) }
+    nonisolated init(configuration: StandardConfiguration) {}
+}
+
+@Test func footprintSplitResolves() {
+    let gov = MemoryGovernor(budgetBytes: 1000)
+    let reqs = mockSplitManifest(capability: .llm).requirements
+    let s = gov.footprintSplit(for: reqs, quant: .int4, persistentHint: nil, transientHint: nil)
+    #expect(s.persistent == 40)
+    #expect(s.transient == 30)
+    // Hints override either half independently (the per-mode case).
+    let h = gov.footprintSplit(for: reqs, quant: .int4, persistentHint: 100, transientHint: 200)
+    #expect(h.persistent == 100)
+    #expect(h.transient == 200)
+}
+
+@Test func transientReserveIsSingleNotSummed() async throws {
+    // Two models, each 40 weights + 30 activation. Serialized inference means ONE transient is live at
+    // a time, so co-residency needs 40+40 + max(30,30) = 110, NOT 40+40 + 30+30 = 140. At budget 120 both
+    // fit; the naive weights+activation model (70 each) would have evicted one.
+    let e = engine(budget: 120)
+    let llm = try await e.register(PackageRegistration.of(MockSplitLLM.self), configuration: cfg())
+    let tts = try await e.register(PackageRegistration.of(MockSplitTTS.self), configuration: cfg())
+    try await e.prepare(.llm)
+    try await e.prepare(.tts)
+
+    let resident = await e.residentPackages
+    #expect(resident[llm] == 40)            // persistent only is charged as residency
+    #expect(resident[tts] == 40)
+    #expect(resident.count == 2)            // both co-resident — the win
+    let mem = await e.memory
+    #expect(mem.residentBytes == 80)        // Σ persistent
+    #expect(mem.transientReserveBytes == 30) // ONE reserve, not 60
+    #expect(mem.availableBytes == 10)        // 120 − 80 − 30
+}
+
+@Test func transientReserveEvictsWhenAccountingExceedsBudget() async throws {
+    // Same two models at budget 100: 40+40 + max(30) = 110 > 100, so admitting the second evicts the first.
+    let e = engine(budget: 100)
+    let llm = try await e.register(PackageRegistration.of(MockSplitLLM.self), configuration: cfg())
+    try await e.prepare(.llm)
+    try await e.register(PackageRegistration.of(MockSplitTTS.self), configuration: cfg())
+    try await e.prepare(.tts)
+    let resident = await e.residentPackages
+    #expect(resident[llm] == nil)           // evicted to fit the second's accounting
+    #expect(resident.count == 1)
+}
+
+@Test func admissibilityCountsTransient() async {
+    // A model's own peak is persistent + transient (70). It fits a 80 budget but not a 60 one.
+    let reqs = mockSplitManifest(capability: .llm).requirements
+    let big = engine(budget: 80)
+    let small = engine(budget: 60)
+    let a = await big.admissibility(for: reqs, quant: .int4)
+    let b = await small.admissibility(for: reqs, quant: .int4)
+    #expect(a.footprint == 70)
+    #expect(a.fitsBudget)
+    #expect(b.footprint == 70)
+    #expect(!b.fitsBudget)                   // 70 > 60 — transient counted
+}
+
+// MARK: - BudgetAware load-time stamp (E2)
+
+/// Records the headroom the engine stamped at load time.
+private final class BudgetSpy: @unchecked Sendable {
+    private let lock = NSLock(); private var value: UInt64?
+    func set(_ v: UInt64?) { lock.lock(); value = v; lock.unlock() }
+    var seen: UInt64? { lock.lock(); defer { lock.unlock() }; return value }
+}
+nonisolated(unsafe) private var budgetSpy = BudgetSpy()
+
+private struct BudgetCfg: PackageConfiguration, BudgetAware {
+    var availableBudgetBytes: UInt64?
+}
+
+@InferenceActor private final class MockBudgetAware: ModelPackage {
+    typealias Configuration = BudgetCfg
+    nonisolated static var manifest: PackageManifest { mockSplitManifest(capability: .imageRestore) }
+    nonisolated init(configuration: BudgetCfg) { budgetSpy.set(configuration.availableBudgetBytes) }
+    func load() async throws {}
+    func unload() async {}
+    func run(_ request: any CapabilityRequest) async throws -> any CapabilityResponse {
+        LLMResponse(text: "ok", finishReason: .stop)
+    }
+}
+
+@Test func budgetAwareReceivesHeadroomAtLoad() async throws {
+    // Pre-load a 40-weight/30-transient resident, then load a BudgetAware model. It should see
+    // budget − residency(other) − reserve(other) = 1000 − 40 − 30 = 930.
+    budgetSpy.set(nil)
+    let e = engine(budget: 1000)
+    try await e.register(PackageRegistration.of(MockSplitLLM.self), configuration: cfg())
+    try await e.prepare(.llm)
+    try await e.register(PackageRegistration.of(MockBudgetAware.self), configuration: BudgetCfg())
+    try await e.prepare(.imageRestore)
+    #expect(budgetSpy.seen == 930)
+}

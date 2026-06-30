@@ -105,5 +105,18 @@ public enum ContractVersion {
     //     largest-that-fits survey; nil is safe. Detected by `as?` at registration like `QuantConfigured`.
     //     The hint is the max-over-phase working set (not the sum) — the manifest principle. Pairs with
     //     the R-MEM-1 real-pressure admission trigger (MLXServeCore) closing the declared-bytes-only gap.
-    public static let current = SemanticVersion(major: 1, minor: 13, patch: 0)
+    // 1.14.0 (2026-06-30, additive): persistent/transient footprint split + budget-aware load —
+    //   • `QuantFootprint.peakActivationBytes` (default 0) — the transient activation scratch live only
+    //     during inference, on top of the persistent `residentBytes` weights. Because inference is
+    //     serialized (`@InferenceActor`), the engine reserves ONE max transient across residents instead
+    //     of summing per model → more safe co-residency (ComfyUI's minimum_inference_memory idea, made
+    //     exact for our serialized execution). Declare it as max-over-phase activation.
+    //   • `FootprintConfigured.peakActivationBytesHint` (default nil via extension) — per-mode transient
+    //     for same-quant multi-mode configs (BiRefNet best@2048 ≫ fast@1024 activation, both fp16).
+    //   • `BudgetAware` (opt-in; `var availableBudgetBytes: UInt64?`) — the engine stamps the headroom a
+    //     model is loading into (after admission/eviction) so `load()` can pick a memory-adaptive dtype.
+    //   All additive + safe-defaulted: undeclared transient = 0 (reactive R-MEM-1 still covers overflow),
+    //   so existing manifests behave exactly as before. `MemorySnapshot.transientReserveBytes` exposes the
+    //   reserve. Enables the per-package efficiency sweep (mmap lazy load, per-stage eviction, adaptive dtype).
+    public static let current = SemanticVersion(major: 1, minor: 14, patch: 0)
 }

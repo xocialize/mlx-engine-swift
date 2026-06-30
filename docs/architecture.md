@@ -23,6 +23,16 @@ prior **idle** residents (least-recently-used first) until the incoming working 
 *before* constructing/loading the new instance. Swapping in a heavy model under pressure MUST
 reclaim, not stack — the engine, not the caller, owns this.
 
+- **Account for activation separately from weights (serialized-inference reserve).** A footprint is
+  split into **persistent** weights (`QuantFootprint.residentBytes`) and a **transient** activation
+  peak (`QuantFootprint.peakActivationBytes`) that is live only during an inference. Because inference
+  is serialized on `@InferenceActor`, at most one transient is live at any instant, so admission
+  accounts for `Σ persistent(residents) + max(peakActivation)` — reserving a **single** transient, not
+  one per model. This admits more safe co-residency than charging weights+activation per model, and is
+  the proactive complement to the reactive real-pressure trigger below (ComfyUI's
+  `minimum_inference_memory`, made exact for serialized execution). Undeclared transient defaults to 0
+  (the real-pressure pass still catches overflow). `MemorySnapshot.transientReserveBytes` exposes the
+  reserve; admission rejects a model whose own `persistent + transient` exceeds the whole budget.
 - **Trigger on real cost, not just declared bytes.** Admission headroom MUST reflect *actual*
   resident memory, not solely each package's declared `QuantFootprint.residentBytes`. Declared bytes
   are a **floor**, not a measured cap: a model whose true working set (activations + scratch) exceeds

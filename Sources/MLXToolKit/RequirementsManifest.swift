@@ -35,18 +35,29 @@ public struct OSRequirement: Sendable, Codable, Equatable {
     public init(minMacOS: SemanticVersion? = nil) { self.minMacOS = minMacOS }
 }
 
-/// Resident memory footprint for one quantization.
+/// Resident memory footprint for one quantization, split into the **persistent** weight residency and
+/// the **transient** activation peak.
 ///
-/// `residentBytes` is a **declared floor**, not a measured cap: the true working set (activations +
-/// compute scratch) can exceed it at run time. Admission/eviction (R-MEM-1, see docs/architecture.md)
-/// must therefore treat it as a lower bound and additionally honor a runtime pressure signal — two
-/// heavy models whose declared footprints sum under budget can still overrun real memory.
+/// - `residentBytes` — the persistent resident weights (a declared floor, not a measured cap). This is
+///   what stays resident for the whole time the model is loaded.
+/// - `peakActivationBytes` — the *additional* transient scratch (activations + compute buffers) that is
+///   live only **during an inference**, on top of the weights, at the heaviest phase. Default `0` when
+///   a port hasn't measured it; the reactive R-MEM-1 real-pressure trigger then covers any overflow.
+///
+/// Why split: inference is serialized on `@InferenceActor`, so at most **one** model's activation peak
+/// is live at any instant. The governor can therefore admit co-residents as
+/// `Σ residentBytes + max(peakActivationBytes)` — reserving a single transient instead of summing one
+/// per model — which fits more models safely than charging weights+activation per model. Declare
+/// `peakActivationBytes` as the max-over-phase activation (NOT the sum of phases); measure with the
+/// in-app footprint probe. See docs/architecture.md (R-MEM-1).
 public struct QuantFootprint: Sendable, Codable, Equatable {
     public let quant: Quant
     public let residentBytes: UInt64
-    public init(quant: Quant, residentBytes: UInt64) {
+    public let peakActivationBytes: UInt64
+    public init(quant: Quant, residentBytes: UInt64, peakActivationBytes: UInt64 = 0) {
         self.quant = quant
         self.residentBytes = residentBytes
+        self.peakActivationBytes = peakActivationBytes
     }
 }
 

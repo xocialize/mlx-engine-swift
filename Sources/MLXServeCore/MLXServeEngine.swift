@@ -65,11 +65,14 @@ public struct Admissibility: Sendable, Equatable {
 /// `MCPBridge`.
 public actor MLXServeEngine {
 
-    /// A registered package, its init-time configuration, and the resident footprint to charge.
+    /// A registered package, its init-time configuration, and the resolved memory footprint split:
+    /// `persistent` weights (charged for the whole residency) and the `transient` activation peak
+    /// (reserved once across residents, since inference is serialized — see R-MEM-1).
     private struct Entry {
         let registration: PackageRegistration
         let configuration: any PackageConfiguration
-        let footprint: UInt64
+        let persistent: UInt64
+        let transient: UInt64
     }
 
     /// Package id → the registration backing it.
@@ -81,8 +84,10 @@ public actor MLXServeEngine {
     /// Package id → the constructed + resident instance (lazily built on first admission;
     /// shared across every capability the registration serves).
     private var residents: [PackageID: any ModelPackage] = [:]
-    /// Package id → bytes charged to the governor for its resident working set.
+    /// Package id → persistent bytes charged to the governor for its resident weights.
     private var residentFootprint: [PackageID: UInt64] = [:]
+    /// Package id → its transient activation peak (the reserve is the max of these across residents).
+    private var residentTransient: [PackageID: UInt64] = [:]
     /// Package id → last-use tick (for LRU eviction).
     private var lastUsed: [PackageID: UInt64] = [:]
     private var useClock: UInt64 = 0
@@ -163,17 +168,21 @@ public actor MLXServeEngine {
             }
         }
 
-        // Charge the *registered* variant's footprint: a `FootprintConfigured` hint (the measured
-        // max-phase bytes for the selected mode — resolves same-quant multi-mode configs like BiRefNet
-        // fast/best) wins; else the `QuantConfigured` quant match (ISSUES W1 — avoids the largest-
-        // that-fits under-reserve of bf16 when bf16 > budget); else largest-that-fits.
-        let footprint = governor.footprint(
+        // Resolve the registered variant's (persistent weights, transient activation peak) split:
+        // a `FootprintConfigured` hint (measured per-mode bytes — resolves same-quant multi-mode configs
+        // like BiRefNet fast/best) wins; else the `QuantConfigured` quant match (avoids the largest-
+        // that-fits under-reserve of bf16 when bf16 > budget); else largest-that-fits. Transient defaults
+        // to 0 when undeclared (the reactive R-MEM-1 trigger covers any overflow).
+        let fc = configuration as? FootprintConfigured
+        let split = governor.footprintSplit(
             for: registration.manifest.requirements,
             quant: (configuration as? QuantConfigured)?.quant,
-            hint: (configuration as? FootprintConfigured)?.residentBytesHint)
+            persistentHint: fc?.residentBytesHint,
+            transientHint: fc?.peakActivationBytesHint)
         packages[packageID] = Entry(registration: registration,
                                     configuration: configuration,
-                                    footprint: footprint)
+                                    persistent: split.persistent,
+                                    transient: split.transient)
         for capability in registration.manifest.capabilities {
             backing[capability, default: []].append(packageID)
             defaults[capability] = packageID
@@ -217,14 +226,19 @@ public actor MLXServeEngine {
         }
         let real = physFootprint()
         let realCeiling = UInt64(Double(governor.budgetBytes) * governor.highWatermark)
+        // Reserve-aware available: budget − Σ persistent − one transient reserve.
+        let reserve = transientReserve()
+        let used = governor.residentBytes &+ reserve
+        let available = governor.budgetBytes > used ? governor.budgetBytes &- used : 0
         return MemorySnapshot(
             budgetBytes: governor.budgetBytes,
             residentBytes: governor.residentBytes,
-            availableBytes: governor.availableBytes,
+            availableBytes: available,
             underPressure: governor.underPressure,
             residents: byCapability,
             realResidentBytes: real,
-            underRealPressure: (real ?? 0) > realCeiling
+            underRealPressure: (real ?? 0) > realCeiling,
+            transientReserveBytes: reserve
         )
     }
 
@@ -240,24 +254,31 @@ public actor MLXServeEngine {
     /// default to `nil`, so `admissibility(for: requirements)` keeps the survey behavior.
     public func admissibility(for requirements: RequirementsManifest,
                               quant: Quant? = nil,
-                              hint: UInt64? = nil) -> Admissibility {
-        let footprint = governor.footprint(for: requirements, quant: quant, hint: hint)
+                              hint: UInt64? = nil,
+                              transientHint: UInt64? = nil) -> Admissibility {
+        let split = governor.footprintSplit(for: requirements, quant: quant,
+                                            persistentHint: hint, transientHint: transientHint)
+        let ownPeak = split.persistent &+ split.transient                       // weights + its scratch
+        // Right-now fit under the serialized-inference accounting (none excluded — it isn't resident).
+        let required = residency() &+ split.persistent &+ transientReserve(extra: split.transient)
         return Admissibility(
             eligibility: deviceProfile.eligibility(for: requirements),
-            footprint: footprint,
-            fitsBudget: governor.fitsBudget(footprint),
-            fitsAvailable: governor.canFit(footprint)
+            footprint: ownPeak,
+            fitsBudget: ownPeak <= governor.budgetBytes,
+            fitsAvailable: required <= governor.budgetBytes
         )
     }
 
     /// Config-aware admissibility: evaluate exactly the variant a given configuration would load,
-    /// reading its `QuantConfigured` quant and `FootprintConfigured` hint the same way `register`
-    /// does. The ergonomic seam for a Model Manager ranking a concrete configuration.
+    /// reading its `QuantConfigured` quant and `FootprintConfigured` hints (persistent + transient) the
+    /// same way `register` does. The ergonomic seam for a Model Manager ranking a concrete configuration.
     public func admissibility(for requirements: RequirementsManifest,
                               configuration: any PackageConfiguration) -> Admissibility {
-        admissibility(for: requirements,
-                      quant: (configuration as? QuantConfigured)?.quant,
-                      hint: (configuration as? FootprintConfigured)?.residentBytesHint)
+        let fc = configuration as? FootprintConfigured
+        return admissibility(for: requirements,
+                             quant: (configuration as? QuantConfigured)?.quant,
+                             hint: fc?.residentBytesHint,
+                             transientHint: fc?.peakActivationBytesHint)
     }
 
     /// Admit + run one request: resolve the package for `request.capability` (the capability's
@@ -294,6 +315,29 @@ public actor MLXServeEngine {
         await evictResident(id)
     }
 
+    // MARK: - Memory accounting (serialized-inference reserve)
+
+    /// Σ persistent resident weights, optionally excluding one id (the incoming, not yet charged).
+    private func residency(excluding skip: PackageID? = nil) -> UInt64 {
+        residentFootprint.reduce(0) { $1.key == skip ? $0 : $0 &+ $1.value }
+    }
+
+    /// The single transient activation headroom to reserve: `max(peakActivation)` across residents,
+    /// since only one model runs at a time. `extra` folds in an incoming model's transient; `skip`
+    /// excludes one id.
+    private func transientReserve(extra: UInt64 = 0, excluding skip: PackageID? = nil) -> UInt64 {
+        var m = extra
+        for (id, t) in residentTransient where id != skip { m = max(m, t) }
+        return m
+    }
+
+    /// Total budget to account for if `(persistent, transient)` were resident alongside the current
+    /// residents (excluding `id`): Σ persistent + one max transient.
+    private func accountedRequired(persistent p: UInt64, transient t: UInt64,
+                                   excluding id: PackageID) -> UInt64 {
+        residency(excluding: id) &+ p &+ transientReserve(extra: t, excluding: id)
+    }
+
     // MARK: - Admission
 
     private func resolve(_ capability: Capability, _ package: PackageID?) throws -> PackageID {
@@ -326,15 +370,29 @@ public actor MLXServeEngine {
             let gate = policy.evaluate(manifest.license)
             guard gate.isAdmitted else { throw EngineError.licenseRejected(gate) }
 
-            // Memory admission: the working set must fit the budget; evict idle residents (LRU) to
-            // make headroom. A footprint larger than the whole budget can never fit.
-            let footprint = entry.footprint
-            guard governor.fitsBudget(footprint) else {
-                throw EngineError.exceedsMemoryBudget(required: footprint, budget: governor.budgetBytes)
+            // Memory admission (serialized-inference reserve): residency = Σ persistent weights, plus a
+            // single transient activation reserve (only one model runs at a time). The model's own peak
+            // (persistent + transient) must fit the budget; then evict idle LRU until the co-resident
+            // accounting fits.
+            let persistent = entry.persistent
+            let transient = entry.transient
+            guard governor.fitsBudget(persistent &+ transient) else {
+                throw EngineError.exceedsMemoryBudget(required: persistent &+ transient,
+                                                      budget: governor.budgetBytes)
             }
-            await makeHeadroom(for: footprint, keeping: id)
+            await makeHeadroom(persistent: persistent, transient: transient, keeping: id)
 
-            let instance = try entry.registration.makePackage(entry.configuration)
+            // Stamp the headroom this model is loading into onto a BudgetAware config (for memory-adaptive
+            // dtype), computed AFTER eviction so it reflects the real available room. Mirrors how
+            // ModelStorable is stamped — additive, non-conformers untouched.
+            var configuration = entry.configuration
+            if var budgetAware = configuration as? BudgetAware {
+                let used = residency(excluding: id) &+ transientReserve(excluding: id)
+                budgetAware.availableBudgetBytes = governor.budgetBytes > used
+                    ? governor.budgetBytes &- used : 0
+                if let restamped = budgetAware as? any PackageConfiguration { configuration = restamped }
+            }
+            let instance = try entry.registration.makePackage(configuration)
             // Cold-start watchdog mitigation: page the package's declared weight files into the OS cache
             // before load() issues GPU evals, so file-I/O latency never stalls a live Metal command
             // buffer. Opt-in (config conforms to WeightPrewarming) + best-effort (never fails prepare()).
@@ -370,8 +428,9 @@ public actor MLXServeEngine {
                                    revision: manifest.provenance.revision,
                                    capabilities: manifest.capabilities)
             residents[id] = instance
-            residentFootprint[id] = footprint
-            governor.charge(footprint)
+            residentFootprint[id] = persistent
+            residentTransient[id] = transient
+            governor.charge(persistent)
             touch(id)
             await updatePhase(.ready, caps: caps, package: pkg)
             return instance
@@ -411,26 +470,30 @@ public actor MLXServeEngine {
         return !FileManager.default.fileExists(atPath: dir.appending(path: ModelStore.markerName).path)
     }
 
-    /// Evict least-recently-used idle residents until `bytes` fits the headroom. Terminates because
-    /// `bytes ≤ budget` (checked by the caller): evicting every other resident frees the full budget.
+    /// Evict least-recently-used idle residents until the incoming model's accounting fits the budget.
+    /// Terminates because the caller has checked `persistent + transient ≤ budget`: evicting every other
+    /// resident frees the full budget.
     ///
-    /// Two passes: (1) **declared-byte** headroom — the incoming working set must fit the budget after
-    /// existing charges; (2) **R-MEM-1 real-pressure** — declared `QuantFootprint` bytes are a *floor*,
+    /// Two passes: (1) **declared-byte** headroom under the serialized-inference accounting (Σ persistent
+    /// weights + one max transient); (2) **R-MEM-1 real-pressure** — declared `QuantFootprint` bytes are
+    /// a *floor*,
     /// so even when the declared sum fits, the process's *actual* `phys_footprint` may be over the
     /// governor's high-watermark (activations/scratch the declarations omit). In that case evict idle
     /// LRU residents until real pressure clears or none remain. Conservative and bounded: it only
     /// reclaims our own idle residents (never the incoming `id`), and stops when nothing's left to
     /// evict, so external (non-engine) memory pressure can't loop. Degrades to the declared-byte pass
     /// when no host reading is available.
-    private func makeHeadroom(for bytes: UInt64, keeping id: PackageID) async {
-        while !governor.canFit(bytes) {
+    private func makeHeadroom(persistent p: UInt64, transient t: UInt64, keeping id: PackageID) async {
+        // (1) Declared-byte headroom under the serialized-inference accounting (Σ persistent + one
+        // max transient). Evict idle LRU until the incoming model's accounting fits the budget.
+        while accountedRequired(persistent: p, transient: t, excluding: id) > governor.budgetBytes {
             guard let victim = lruIdleVictim(excluding: id) else {
                 break // nothing left to evict
             }
             await evictResident(victim)
         }
 
-        // R-MEM-1: real-memory pressure trigger.
+        // (2) R-MEM-1: real-memory pressure trigger.
         let ceiling = UInt64(Double(governor.budgetBytes) * governor.highWatermark)
         while let real = physFootprint(), real > ceiling {
             guard let victim = lruIdleVictim(excluding: id) else {
@@ -453,6 +516,7 @@ public actor MLXServeEngine {
         if let bytes = residentFootprint.removeValue(forKey: id) {
             governor.release(bytes)
         }
+        residentTransient.removeValue(forKey: id)
         lastUsed.removeValue(forKey: id)
     }
 

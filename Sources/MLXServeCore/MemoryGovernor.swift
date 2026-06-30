@@ -65,6 +65,27 @@ public struct MemoryGovernor: Sendable {
         return footprint(for: requirements, quant: quant)
     }
 
+    /// Resolve the `(persistent weights, transient activation peak)` split the engine accounts for —
+    /// the basis of the serialized-inference reserve (residency = Σ persistent; reserve = one max
+    /// transient). Picks the base `QuantFootprint` by quant match, else largest-that-fits, else
+    /// smallest; `persistentHint`/`transientHint` (from a `FootprintConfigured` config) override the
+    /// chosen footprint's `residentBytes`/`peakActivationBytes`. Safe defaults: transient falls back to
+    /// `0` (no declared activation peak → the reactive R-MEM-1 trigger covers any overflow).
+    public func footprintSplit(for requirements: RequirementsManifest,
+                               quant: Quant?,
+                               persistentHint: UInt64?,
+                               transientHint: UInt64?) -> (persistent: UInt64, transient: UInt64) {
+        let chosen: QuantFootprint? = {
+            if let quant, let match = requirements.footprints.first(where: { $0.quant == quant }) {
+                return match
+            }
+            let sorted = requirements.footprints.sorted { $0.residentBytes < $1.residentBytes }
+            return sorted.last(where: { $0.residentBytes <= budgetBytes }) ?? sorted.first
+        }()
+        return (persistentHint ?? chosen?.residentBytes ?? 0,
+                transientHint ?? chosen?.peakActivationBytes ?? 0)
+    }
+
     public mutating func charge(_ bytes: UInt64) {
         residentBytes = residentBytes &+ bytes
     }
@@ -90,10 +111,15 @@ public struct MemorySnapshot: Sendable, Equatable {
     /// Actual footprint over the governor's high-watermark (R-MEM-1 real-pressure). False when no
     /// reading is available.
     public let underRealPressure: Bool
+    /// The single transient activation headroom currently reserved — `max(peakActivationBytes)` across
+    /// residents, since serialized inference runs one at a time. `residentBytes + transientReserveBytes`
+    /// is the engine's accounted peak; `availableBytes` already subtracts both.
+    public let transientReserveBytes: UInt64
 
     public init(budgetBytes: UInt64, residentBytes: UInt64, availableBytes: UInt64,
                 underPressure: Bool, residents: [Capability: UInt64],
-                realResidentBytes: UInt64? = nil, underRealPressure: Bool = false) {
+                realResidentBytes: UInt64? = nil, underRealPressure: Bool = false,
+                transientReserveBytes: UInt64 = 0) {
         self.budgetBytes = budgetBytes
         self.residentBytes = residentBytes
         self.availableBytes = availableBytes
@@ -101,5 +127,6 @@ public struct MemorySnapshot: Sendable, Equatable {
         self.residents = residents
         self.realResidentBytes = realResidentBytes
         self.underRealPressure = underRealPressure
+        self.transientReserveBytes = transientReserveBytes
     }
 }

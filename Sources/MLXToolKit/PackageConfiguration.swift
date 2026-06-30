@@ -31,6 +31,26 @@ public protocol QuantConfigured {
 /// hint. Detected by `as?` at registration, mirroring the `QuantConfigured` / `ModelStorable` opt-ins.
 public protocol FootprintConfigured {
     var residentBytesHint: UInt64? { get }
+    /// The selected variant's **transient activation peak** (scratch live only during inference, on top
+    /// of the persistent weights), when it differs by mode at the same quant — e.g. BiRefNet `best`@2048
+    /// has a far larger activation peak than `fast`@1024 though both are fp16. `nil` (the default) falls
+    /// back to the matched `QuantFootprint.peakActivationBytes`. Pairs with `residentBytesHint`: the hint
+    /// is the persistent weights, this is the transient peak.
+    var peakActivationBytesHint: UInt64? { get }
+}
+
+public extension FootprintConfigured {
+    var peakActivationBytesHint: UInt64? { nil }
+}
+
+/// Opt-in for configs whose `load()` adapts to the memory it's actually given — e.g. choosing a lighter
+/// weight/compute dtype (fp8 vs bf16 vs fp32) when headroom is tight, the way ComfyUI's `unet_dtype`
+/// picks precision by free memory. The engine stamps `availableBudgetBytes` from the governor **at load
+/// time** (after admission/eviction), so the value reflects the real headroom the model is loading into.
+/// Detected by `as?` like `ModelStorable` / `QuantConfigured`; non-conformers are unaffected. `nil` means
+/// the engine had no figure to provide (load with the configured default).
+public protocol BudgetAware {
+    var availableBudgetBytes: UInt64? { get set }
 }
 
 /// Ordered backend preference (first feasible wins at placement time).
