@@ -35,7 +35,9 @@ public struct ValidationRun: Sendable {
 /// ground's `runFlow` (sampler + heartbeat + security-scoped grants), MLX-free. Each category testing app
 /// drives every package through this instead of hand-rolling the flow, so the split/reserve/peak readout
 /// is uniform. The precise resident floor stays the package's MEM-line job; here `residentFloorBytes` is
-/// the post-run `phys_footprint` (≈ floor when the package clears its transient cache in run/decode).
+/// the post-run `phys_footprint` taken **after** the optional `clearCache` closure releases transient
+/// buffers (without it, MLX retains activation in its pool and the floor over-reads — pass `clearCache`
+/// for a true floor). Use `isolate: true` for a clean per-model measure that evicts all prior residents.
 @MainActor
 public enum ValidationHarness {
     public struct Result { public let response: any CapabilityResponse; public let run: ValidationRun }
@@ -47,6 +49,8 @@ public enum ValidationHarness {
         capability: Capability,
         request: any CapabilityRequest,
         coResident: Bool = false,                 // additive register (multi-package) vs evict-then-register
+        isolate: Bool = false,                    // evict ALL prior residents first (clean per-model measure)
+        clearCache: (@Sendable () -> Void)? = nil, // app passes `{ MLX.GPU.clearCache() }` — see note below
         grantedRoots: [URL] = [],                 // security-scoped roots held for the whole load+run
         inputSummary: String? = nil,
         heartbeatLabel: String? = nil             // non-nil → periodic "alive" console line for long runs
@@ -77,7 +81,17 @@ public enum ValidationHarness {
         for url in grantedRoots where url.startAccessingSecurityScopedResource() { startedScopes.append(url) }
         defer { for url in startedScopes { url.stopAccessingSecurityScopedResource() } }
 
-        if !coResident { await engine.evict(capability) }
+        // Isolation: evict EVERY prior resident (not just this capability) so a multi-package validation
+        // session measures each model alone and process RSS doesn't accumulate across runs. Without this
+        // the harness evicts only `capability`, leaving prior different-capability residents in memory —
+        // the monotonic-RSS-growth the image app's acceptance run found. `clearCache` after eviction
+        // releases the freed buffers back (MLX holds them in its pool otherwise; the engine is MLX-free).
+        if isolate {
+            for id in await engine.residentPackages.keys { await engine.evict(package: id) }
+            clearCache?()
+        } else if !coResident {
+            await engine.evict(capability)
+        }
         let packageID = try await engine.register(registration, configuration: configuration)
 
         let loadStart = Date()
@@ -88,8 +102,14 @@ public enum ValidationHarness {
         let response = try await engine.run(request, package: packageID)
         m.runSeconds = Date().timeIntervalSince(runStart)
 
-        m.residentFloorBytes = HostMemory.physFootprint() ?? 0   // post-run ≈ resident floor (cache cleared)
-        m.peakFootprint = max(m.peakFootprint, sampler.peak, m.residentFloorBytes)
+        // Peak is the sampler's high-water DURING the run (weights + activation). The floor is read AFTER
+        // releasing the transient buffers — without `clearCache`, MLX retains the activation in its pool so
+        // the floor over-reads (the activation hides in the floor and `activationBytes` reads ~0, the image
+        // app's BiRefNet-best mis-attribution). Supply `clearCache: { MLX.GPU.clearCache() }` from the app
+        // (this target is MLX-free) to get a true weights floor and an honest peak−floor activation.
+        m.peakFootprint = max(m.peakFootprint, sampler.peak, HostMemory.physFootprint() ?? 0)
+        clearCache?()
+        m.residentFloorBytes = HostMemory.physFootprint() ?? 0
 
         let snapshot = await engine.memory
         m.engineResidentBytes = snapshot.residents[capability] ?? 0
