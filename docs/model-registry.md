@@ -63,7 +63,7 @@ _Seeded 2026-06-30. Val/Eff/Eng are best-effort at seed time — **backfill per 
 
 | Capability | Package | Model | Role | Home | Avail | Val | Eff | Eng |
 |---|---|---|---|---|---|---|---|---|
-| textToVideo | **ltx-2-mlx-swift** | Lightricks LTX-2.3 | wrapper+core | video/LTX_DEV (research) | 🔬 | 🟡 | 🟡 **brief** | 0.13.0 |
+| textToVideo | **ltx-2-mlx-swift** | Lightricks LTX-2.3 | wrapper+core | video/LTX_DEV (research) | 🔬 | ✅ | ✅ | 0.14.0 |
 | textToVideo | helios-mlx-swift | Helios (Wan) | wrapper+core | video/WAN_DEV (research) | 🔬 | 🟡 | ⬜ | |
 | textToVideo | ti2v-5b-mlx-swift | Wan TI2V-5B | wrapper+core | video/WAN_DEV (research) | 🔬 | 🟡 | ⬜ | |
 | textToVideo | phantom-wan-mlx-swift | Phantom-Wan | wrapper+core | video/WAN_DEV (research) | 🔬 | ⬜ | ⬜ | |
