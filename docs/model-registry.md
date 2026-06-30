@@ -51,7 +51,7 @@ _Seeded 2026-06-30. Val/Eff/Eng are best-effort at seed time — **backfill per 
 | imageRestore | mlx-nafnet-swift | NAFNet (v0.3.2) | wrapper+core | image/PROD | ✅ | ✅ | ⬜ | |
 | imageUpscale | mlx-realesrgan-swift | Real-ESRGAN 4× | wrapper+core | image/PROD | ✅ | ✅ | ⬜ | |
 | imageInpaint | mlx-lama-swift | LaMa + MI-GAN | wrapper+core | image/PROD | ✅ | ✅ | ⬜ | |
-| matting | mlx-birefnet-swift | BiRefNet | wrapper+core | image/WIP | ✅ | ✅ | 🟡 | |
+| matting | mlx-birefnet-swift | BiRefNet | wrapper+core | image/PROD | ✅ | ✅ | 🟡 brief | 0.10.0 |
 | promptSegment / trackObject | mlx-edgetam-swift | EdgeTAM (SAM 2) | wrapper+core | image/PROD | ✅ (v0.3.2) | ✅ | ⬜ | |
 | imageQualityScore | mlx-siglip2-iqa-swift | SigLIP2 NR-IQA | wrapper+core | image/WIP | ✅ | ✅ | ➖ | |
 | opticalFlow | mlx-sea-raft-swift | SEA-RAFT | wrapper+core | image/WIP | ✅ | ✅ | ➖ | |
