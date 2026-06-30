@@ -81,7 +81,7 @@ _Seeded 2026-06-30. Val/Eff/Eng are best-effort at seed time — **backfill per 
 | videoEdit | chronoedit-mlx-swift | ChronoEdit | wrapper+core | video/WAN_DEV (research) | 🧪 | ⬜ | ⬜ | |
 | characterAnimation | scail-2-mlx-swift | SCAIL-2 | wrapper+core | video/WAN_DEV (research) | 🔬 | 🟡 | ⬜ | |
 | talkingHead | musetalk-mlx-swift | MuseTalk 1.5 | wrapper+core | video/PROD | ✅ | ✅ | ✅ (activation = est, phys re-baseline pending) | 0.17.0 |
-| videoUpscale | mlx-seedvr2-swift | SeedVR2-3B | wrapper | video/WIP | 🧪 | ✅ | ⬜ | 0.17.0 |
+| videoUpscale | mlx-seedvr2-swift | SeedVR2-3B | wrapper | video/WIP | ⚠️ | ✅ | ⬜ | 0.17.0 | <!-- SUPERSEDED — DECISION 2026-06-30 (engine owner): the new born-clean PROD package `seedvr2-mlx-swift (MLXSeedVR2)` integrated as `imageUpscale` (Export tier) is now the home for SeedVR2. videoUpscale folds in as a 2nd SURFACE on `SeedVR2UpscalePackage` (same core's temporal CausalConv3d VAE → video is natural; engine backs N surfaces/package), migrating any working video logic from this WIP wrapper. RETIRE this `WIP/mlx-seedvr2-swift` repo + row once the fold lands (it also collides on the `MLXSeedVR2` module name). Tracked as BRIDGE-VID-002 in mlxengine-video/AGENT_BRIDGE.md. --> |
 | frameInterpolate | mlx-rife-swift | RIFE 4.25 | wrapper | video/WIP | ✅ | ✅ | ➖ | |
 | contentClassify | mlx-vjepa2-swift | V-JEPA2 ViT-L | wrapper | video/PROD | ✅ | ✅ | ➖ | |
 
