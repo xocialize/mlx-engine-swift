@@ -46,8 +46,7 @@ _Seeded 2026-06-30. Val/Eff/Eng are best-effort at seed time — **backfill per 
 | textToImage | ernie-image-swift | ERNIE-Image-Turbo | wrapper+core | image/PROD | ✅ | ✅ | ⬜ | |
 | textToImage | lens-mlx-swift | Lens 3.8B | wrapper+core | image/PROD | ✅ | ✅ | ⬜ | |
 | textToImage / imageEdit | boogu-image-swift | Boogu-Image-0.1 | wrapper+core | image/WIP | 🧪 | 🟡 | ⬜ | |
-| textToImage | anima-mlx-swift | Anima (Cosmos-Predict2-2B) | wrapper+core | image/PROD | ✅ | 🟡 | ⬜ | | <!-- NC weights (C7 two-layer gate, rejectedWeight under .permissiveOnly); parity-locked to xocialize/anima-mlx Python (e2e cos 0.999105); measured peak bf16 8.0 GB / int4 6.5 GB @512²; Val = CLI --package-gate (load→run→valid PNG), in-app ValidationView pending. -->
-
+| textToImage | anima-mlx-swift | Anima (Cosmos-Predict2-2B) | wrapper+core | image/PROD | ✅ (v0.1.1) | 🟡 | ⬜ | | <!-- NC weights (C7 two-layer gate, rejectedWeight under .permissiveOnly); parity-locked to xocialize/anima-mlx Python (e2e cos 0.999105); measured peak bf16 8.0 GB / int4 6.5 GB @512². Wired into MLXEngineImage ImageValidationView (bf16 + int4 variants, NC admitted via .permissiveOrAcknowledged) — app BUILDS; Val 🟡 = CLI --package-gate green + app-wired, pending one interactive in-app generation. -->
 | imageEdit | qwen-image-edit-swift | Qwen-Image-Edit-2511 | wrapper+core | image/PROD | ✅ | ✅ | ✅ | 0.15.0 |
 | imageColorize | mlx-ddcolor-swift | DDColor | wrapper+core | image/PROD | ✅ | ✅ | ✅ | 0.15.0 |
 | imageRestore | mlx-nafnet-swift | NAFNet (v0.3.2) | wrapper+core | image/PROD | ✅ | ✅ | ✅ | 0.15.0 |
