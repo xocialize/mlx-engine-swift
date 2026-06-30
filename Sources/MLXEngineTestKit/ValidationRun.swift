@@ -12,20 +12,30 @@ public struct ValidationRun: Sendable {
     public var transientReserveBytes: UInt64 = 0   // the one shared activation reserve (1.14)
     public var baselineFootprint: UInt64 = 0       // phys before load
     public var peakFootprint: UInt64 = 0           // max phys across load+run
-    public var residentFloorBytes: UInt64 = 0      // phys right after run returns ≈ weights resident
+    public var residentFloorBytes: UInt64 = 0      // phys right after LOAD (pre-run) ≈ true weights resident
+    public var postRunResidentBytes: UInt64 = 0    // phys after run+clearCache; > floor ⇒ live model retains intermediates
     public var coResidentBackers: [String] = []    // resident packages backing this capability
     public var inputSummary: String?
 
     public init() {}
 
-    /// Measured transient = peak − floor (the activation high-water on top of resident weights).
+    /// Measured transient = peak − floor (the activation high-water on top of resident weights). Floor is
+    /// the **post-load** resident, so this is the honest activation even when a package retains post-run
+    /// intermediates (which would otherwise inflate a post-run floor and collapse this toward 0).
     public var activationBytes: UInt64 { peakFootprint > residentFloorBytes ? peakFootprint - residentFloorBytes : 0 }
 
-    /// Machine-readable line for headless capture (mirrors the per-package MEM/SPLIT convention).
+    /// Bytes the live model holds AFTER its run + clearCache, beyond the post-load weights floor. A large
+    /// value is a **retention leak**: the model graph keeps run intermediates referenced (so clearCache —
+    /// which only frees *unreferenced* pool buffers — can't reclaim them), and the resident cost balloons
+    /// across successive requests until the package is evicted. ~0 is clean (NAFNet/DDColor flagged this).
+    public var retainedAfterRunBytes: UInt64 { postRunResidentBytes > residentFloorBytes ? postRunResidentBytes - residentFloorBytes : 0 }
+
+    /// Machine-readable line for headless capture (mirrors the per-package MEM/SPLIT convention). `floor` is
+    /// post-load (true resident); `retain` flags post-run retention (≈0 = clean).
     public func splitLogLine(_ label: String) -> String {
-        String(format: "[%@] SPLIT floor=%.2fGB peak=%.2fGB act=%.2fGB engine=%.2fGB reserve=%.2fGB load=%.1fs run=%.1fs",
+        String(format: "[%@] SPLIT floor=%.2fGB peak=%.2fGB act=%.2fGB retain=%.2fGB engine=%.2fGB reserve=%.2fGB load=%.1fs run=%.1fs",
                label,
-               gb(residentFloorBytes), gb(peakFootprint), gb(activationBytes),
+               gb(residentFloorBytes), gb(peakFootprint), gb(activationBytes), gb(retainedAfterRunBytes),
                gb(engineResidentBytes), gb(transientReserveBytes), loadSeconds, runSeconds)
     }
     private func gb(_ b: UInt64) -> Double { Double(b) / 1_000_000_000 }
@@ -34,10 +44,11 @@ public struct ValidationRun: Sendable {
 /// The reusable register → prepare(timed) → run(timed) → capture harness — generalized from the proving
 /// ground's `runFlow` (sampler + heartbeat + security-scoped grants), MLX-free. Each category testing app
 /// drives every package through this instead of hand-rolling the flow, so the split/reserve/peak readout
-/// is uniform. The precise resident floor stays the package's MEM-line job; here `residentFloorBytes` is
-/// the post-run `phys_footprint` taken **after** the optional `clearCache` closure releases transient
-/// buffers (without it, MLX retains activation in its pool and the floor over-reads — pass `clearCache`
-/// for a true floor). Use `isolate: true` for a clean per-model measure that evicts all prior residents.
+/// is uniform. `residentFloorBytes` is the **post-load** `phys_footprint` (true weights resident, before the
+/// run allocates activation); `postRunResidentBytes` is read again after the run so `retainedAfterRunBytes`
+/// surfaces any post-run retention separately instead of inflating the floor. Pass `clearCache`
+/// (`{ MLX.GPU.clearCache() }`, the kit is MLX-free) so both reads drop unreferenced pool buffers first.
+/// Use `isolate: true` for a clean per-model measure that evicts all prior residents.
 @MainActor
 public enum ValidationHarness {
     public struct Result { public let response: any CapabilityResponse; public let run: ValidationRun }
@@ -98,18 +109,25 @@ public enum ValidationHarness {
         try await engine.prepare(capability, package: packageID)
         m.loadSeconds = Date().timeIntervalSince(loadStart)
 
+        // Resident floor = phys right after LOAD, before the run allocates any activation. Reading it here
+        // (not post-run) is the fix for packages whose live model retains run intermediates: a post-run
+        // floor conflates resident weights with those retained buffers (which `clearCache` can't free —
+        // they're still referenced), over-reads the floor, and collapses `activationBytes` to ~0 (the
+        // NAFNet/DDColor 5.4 GB "floor-not-dropping" finding). clearCache first to drop load-time scratch.
+        clearCache?()
+        m.residentFloorBytes = HostMemory.physFootprint() ?? 0
+
         let runStart = Date()
         let response = try await engine.run(request, package: packageID)
         m.runSeconds = Date().timeIntervalSince(runStart)
 
-        // Peak is the sampler's high-water DURING the run (weights + activation). The floor is read AFTER
-        // releasing the transient buffers — without `clearCache`, MLX retains the activation in its pool so
-        // the floor over-reads (the activation hides in the floor and `activationBytes` reads ~0, the image
-        // app's BiRefNet-best mis-attribution). Supply `clearCache: { MLX.GPU.clearCache() }` from the app
-        // (this target is MLX-free) to get a true weights floor and an honest peak−floor activation.
+        // Peak is the sampler's high-water DURING the run (post-load weights + activation). Post-run, read
+        // the resident AGAIN after clearCache: if it sits well above the post-load floor, the live model is
+        // retaining run intermediates (a retention leak surfaced as `retainedAfterRunBytes`) — distinct from
+        // the activation peak, and the real signal behind a stubborn floor.
         m.peakFootprint = max(m.peakFootprint, sampler.peak, HostMemory.physFootprint() ?? 0)
         clearCache?()
-        m.residentFloorBytes = HostMemory.physFootprint() ?? 0
+        m.postRunResidentBytes = HostMemory.physFootprint() ?? 0
 
         let snapshot = await engine.memory
         m.engineResidentBytes = snapshot.residents[capability] ?? 0

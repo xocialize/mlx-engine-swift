@@ -34,9 +34,12 @@ public struct EngineMemoryView: View {
             if let run {
                 Divider().padding(.vertical, 2)
                 Text("Measured split").font(.caption).bold()
-                row("Resident floor", run.residentFloorBytes)
+                row("Resident floor (post-load)", run.residentFloorBytes)
                 row("Activation (peak−floor)", run.activationBytes)
                 row("Peak", run.peakFootprint)
+                if run.retainedAfterRunBytes > 100_000_000 {   // >100 MB held past run = retention leak
+                    row("⚠️ Retained after run", run.retainedAfterRunBytes)
+                }
                 row("Engine charge", run.engineResidentBytes)
                 if !run.coResidentBackers.isEmpty {
                     Text("Co-resident: " + run.coResidentBackers.joined(separator: " · "))
