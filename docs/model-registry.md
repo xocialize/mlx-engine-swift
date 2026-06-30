@@ -47,9 +47,9 @@ _Seeded 2026-06-30. Val/Eff/Eng are best-effort at seed time — **backfill per 
 | textToImage | lens-mlx-swift | Lens 3.8B | wrapper+core | image/PROD | ✅ | ✅ | ⬜ | |
 | textToImage / imageEdit | boogu-image-swift | Boogu-Image-0.1 | wrapper+core | image/WIP | 🧪 | 🟡 | ⬜ | |
 | imageEdit | qwen-image-edit-swift | Qwen-Image-Edit-2511 | wrapper+core | image/PROD | ✅ | ✅ | ⬜ | |
-| imageColorize | mlx-ddcolor-swift | DDColor | wrapper+core | image/PROD | ✅ | ✅ | ⬜ | |
-| imageRestore | mlx-nafnet-swift | NAFNet (v0.3.2) | wrapper+core | image/PROD | ✅ | ✅ | ⬜ | |
-| imageUpscale | mlx-realesrgan-swift | Real-ESRGAN 4× | wrapper+core | image/PROD | ✅ | ✅ | ⬜ | |
+| imageColorize | mlx-ddcolor-swift | DDColor | wrapper+core | image/PROD | ✅ | ✅ | ✅ | 0.15.0 |
+| imageRestore | mlx-nafnet-swift | NAFNet (v0.3.2) | wrapper+core | image/PROD | ✅ | ✅ | ✅ | 0.15.0 |
+| imageUpscale | mlx-realesrgan-swift | Real-ESRGAN 4× | wrapper+core | image/PROD | ✅ | ✅ | ✅ | 0.15.0 |
 | imageInpaint | mlx-lama-swift | LaMa + MI-GAN | wrapper+core | image/PROD | ✅ | ✅ | ⬜ | |
 | matting | mlx-birefnet-swift | BiRefNet | wrapper+core | image/PROD | ✅ | ✅ | ✅ P1a (P1b deferred) | 0.14.0 |
 | promptSegment / trackObject | mlx-edgetam-swift | EdgeTAM (SAM 2) | wrapper+core | image/PROD | ✅ (v0.3.2) | ✅ | ⬜ | |
@@ -58,6 +58,8 @@ _Seeded 2026-06-30. Val/Eff/Eng are best-effort at seed time — **backfill per 
 | imageTo3D | mlx-trellis2-swift | TRELLIS.2 / Pixal3D | wrapper+core | mlxengine-3d/WIP | ✅ (0.3.0) | 🟡 | ⬜ | 1.12 |
 
 > BiRefNet `Eff: ✅ P1a` (2026-06-30, engine 0.14.0) — the motivating same-quant multi-mode case (fast@1024 vs best@2048). Split declared on the **fast** envelope: `QuantFootprint(.fp16, resident 0.9 GB, peakActivation 4.4 GB)` (+ `QuantConfigured`), replacing the flat 6.5 GB → engine charge ~0.9 GB resident + a shared transient. best stays a runtime-guarded variant (`insufficientMemoryForBest`; measured split resident ~0.5 / peakActivation ~17.9 GB, documented not admitted). **P1b deferred** — promoting mode → PackageID (best first-class admitted) is a coordinated change; the PROD consumer (`EngineMatteProvider`) relies on per-request `req.mode` + the fallback.
+
+> Optimizer image trio `Eff: ✅` (2026-06-30, engine 0.15.0) — NAFNet (`imageRestore`) · Real-ESRGAN (`imageUpscale`) · DDColor (`imageColorize`), the ForgeOptimizer chain alongside BiRefNet matting. All three are single-component (P2/P3 n/a) and activation-dominated, so the win is the **split + the shared transient reserve**: each now declares a small resident weights floor + its activation peak (measured via each package's own smoke target through `MLXServeEngine` at the documented envelope), and all conform to `QuantConfigured`. Floors/activation: NAFNet signage **64 MB / 2.0 GB** (fp16) + width64 **512 MB / 2.9 GB** (fp32) @1024² · Real-ESRGAN **32 MB / 2.2 GB** (fp32, tile-bounded — 1024² peaked below 512²) · DDColor **512 MB / 1.8 GB** (fp16, best). Finding: the old flat NAFNet-fp16 0.6 GB and Real-ESRGAN 1.0 GB **under-declared** the real activation peak; the split right-sizes the charge AND frees it into the single shared reserve, so the trio + BiRefNet co-reside on ~1.1 GB of weights (64+32+512+~900 MB) sharing ONE ~4.4 GB transient (BiRefNet fast is the max) instead of each baking activation into residency. BudgetAware deferred on all three (validated runtime dtypes, no in-variant quality/memory lever).
 
 ## 🎬 Video
 
