@@ -35,9 +35,10 @@ _Seeded 2026-06-30. Val/Eff/Eng are best-effort at seed time — **backfill per 
 | audioSeparation | mlx-demucs-swift | HTDemucs v4 | wrapper+core | audio/PROD | ✅ | ✅ | ✅ | 0.17.0 | <!-- split: weights floor ~0.3 GB (84 MB fp16 on disk) + 30 s-chunk transient ~2.2 GB (flat 2.5 GB baked it in); QuantConfigured (fp16); P2 N/A (single VocalSeparator); unload clearCache. activation = smoke est, phys re-baseline pending. -->
 | audioSeparation | mlx-mel-roformer-swift | Mel-Band-RoFormer | wrapper+core | audio/PROD | ✅ | 🟡 | ✅ | 0.17.0 | <!-- split per variant: kimVocal2 bf16 0.7 GB + 8 s-chunk transient 0.8 GB · zfturboVocalsV1 fp16 0.3 GB + 0.3 GB (flat 1.5/0.6 GB); QuantConfigured (variants distinguished by quant); P2 N/A (single RoFormerSeparator); unload clearCache. activation = smoke est, phys re-baseline pending. Val 🟡 left as-is (out of scope). -->
 
-| speechEmotion | mlx-emotion2vec-swift | emotion2vec+ | wrapper+core | audio/PROD | ✅ | ✅ | ➖ | |
-| audioCodec | mlx-mimi-codec-swift | Kyutai Mimi | wrapper+core | audio/PROD | ✅ | ✅ | ➖ | |
-| audioPolish | mlx-audio-polish-swift | AudioPolishKit (DSP) | wrapper+core | audio/PROD | ✅ | ✅ | ➖ | |
+| speechEmotion | mlx-emotion2vec-swift | emotion2vec+ | wrapper+core | audio/PROD | ✅ | ✅ | ➖ | | <!-- Eff n/a (deliberate, 2026-06-30): single-component recogniser (flat fp16 ~1.0 GB ≈ weights, one short-utterance forward → negligible transient). Split would be low-value; revisit only if it becomes a co-residency bottleneck. -->
+| audioCodec | mlx-mimi-codec-swift | Kyutai Mimi | wrapper+core | audio/PROD | ✅ | ✅ | ➖ | | <!-- Eff n/a (deliberate, 2026-06-30): single MimiEncoder, flat fp32 ~0.8 GB, streaming neural codec → negligible transient. Not worth the engine-bump churn. -->
+| audioPolish | mlx-audio-polish-swift | AudioPolishKit (DSP) | wrapper+core | audio/PROD | ✅ | ✅ | ➖ | | <!-- Eff n/a (deliberate, 2026-06-30): Accelerate DSP — NO MLX, no weights, no GPU (the non-MLX capability seam). Nothing to split; the efficiency contract doesn't apply. -->
+
 | soundEffect | mlx-moss-soundeffect-swift | MOSS SoundEffect | wrapper+core | audio/PROD | ✅ | ✅ | ✅ | 0.17.0 | <!-- split per quant: resident post-evict (DiT + fp32 VAE) bf16 5 GB / int4 3 GB + 100-step CFG denoise @1500-token transient ~10 GB (flat 15/13 GB); QuantConfigured (bf16/int4). P2 APPLIED: Qwen3-1.7B text encoder (~4 GB) encoded once then EVICTED before the denoise loop (encoder-evict lever, in core Pipeline.generate) — removed from the resident floor. unload clearCache. activation = smoke est, phys re-baseline pending. -->
 
 
