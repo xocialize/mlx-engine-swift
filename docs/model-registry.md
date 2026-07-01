@@ -19,7 +19,7 @@ current.
 - **Val** — in-app live-validation: ✅ validated · 🟡 partial/CLI-only · ⬜ not yet.
 - **Eff** — 1.14 efficiency adoption (split footprint + mmap + per-stage evict + BudgetAware):
   ✅ adopted · 🔵 in progress · 🟡 brief written · ⬜ not started · ➖ n/a (trivial/single-component low-peak).
-- **Eng** — engine contract the package targets / is pinned to (blank = backfill).
+- **Eng** — the engine **contract version the package was validated/adopted against** (its resolved build), blank = backfill. NOT the SPM `from:` floor in `Package.swift` — that floor is a resolve-**forward** minimum (`from: "0.3.0"` resolves to the latest 0.x, i.e. 0.17.0), so a low floor is usually fine, not drift. Only bump a floor when the package's code actually needs a newer contract API (e.g. `peakActivationBytes`/`QuantConfigured`/`BudgetAware` ⇒ needs ≥0.14) and you're touching the package anyway; a floor-only bump across the library is churn we deliberately skip (see the Kokoro note).
 
 _Seeded 2026-06-30. Val/Eff/Eng are best-effort at seed time — **backfill per package as it's revisited.**_
 
