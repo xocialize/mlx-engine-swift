@@ -45,6 +45,20 @@ extension SPDXLicense {
     /// attribution wherever the conditioner is shipped.
     public static let dinov3: SPDXLicense = "LicenseRef-DINOv3"
 
+    /// Google's Gemma Terms of Use (ai.google.dev/gemma/terms). Non-SPDX, referenced via the
+    /// `LicenseRef-` convention. Reviewed against the terms text (2026-07-02): commercial use is
+    /// permitted (§2.2); redistribution and Model Derivatives are permitted with obligations —
+    /// pass the §3.2 use restrictions downstream, ship a copy of the Agreement, mark modified
+    /// files, and carry the "Gemma is provided under and subject to the Gemma Terms of Use…"
+    /// notice on non-hosted distributions (§3.1). Google claims no rights in Outputs (§3.3).
+    /// **No revenue/MAU threshold, no non-compete, no eval-only clause** — the only bind is the
+    /// Gemma Prohibited Use Policy (an AUP, §3.2). That is functionally permissive-with-AUP,
+    /// strictly less restrictive than the allowlisted `ltx2Community` (revenue gate + non-compete)
+    /// and the same shape as the allowlisted `dinov3` (attribution + AUP), so this project
+    /// **permits** it. Honor the notice + terms-passthrough wherever Gemma weights are shipped.
+    /// Used by the Gemma-3 `llm` package (GemmaLLMPackage) and the LTX-2.3 text encoder layer.
+    public static let gemmaTerms: SPDXLicense = "LicenseRef-Gemma-Terms"
+
     /// CircleStone Labs' Anima Non-Commercial license. Non-SPDX, referenced via `LicenseRef-`.
     /// **NON-permissive** — personal / research use only, no commercial use (the base denoiser is
     /// "Built on NVIDIA Cosmos" under the Cosmos Open Model License). Deliberately NOT on
@@ -55,6 +69,7 @@ extension SPDXLicense {
     /// The permissive allowlist used by `.permissiveOnly`. Curated; extend deliberately.
     public static let permissiveAllowlist: Set<SPDXLicense> = [
         .mit, .apache2, .bsd2, .bsd3, .isc, .unlicense, .funasrModel, .ccBy4, .ltx2Community, .dinov3,
+        .gemmaTerms,
     ]
 
     /// Non-permissive licenses explicitly acknowledged for **eval/research** use only. These are
