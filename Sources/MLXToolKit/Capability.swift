@@ -91,6 +91,17 @@ public enum Capability: String, Codable, Sendable, CaseIterable, Hashable {
     /// 2D image / video / matte. Background removal of the input is package-internal preprocessing,
     /// reusing the shipped BiRefNet `matting`, not a request field.)
     case imageTo3D
+    /// **Text embedding** — a batch of texts → one dense vector per text, for semantic retrieval.
+    /// Asymmetric-retrieval-aware: `inputType` distinguishes query-side texts (which receive an
+    /// instruction prefix) from stored document-side texts (which don't), and an optional
+    /// Matryoshka `dimensions` truncates before L2-normalization so a consumer can shrink its
+    /// index. Vectors ride the response directly (`EmbedResponse.vectors`, the
+    /// `imageQualityScore` non-Artifact precedent) — an index must never mix models or
+    /// dimensions, so the response also carries `modelID` + `dimension` provenance. Contract
+    /// 1.15.0; introduced by Qwen3-Embedding-0.6B. (Distinct from `llm` — deterministic
+    /// text → vector encoding, no generation; from `MLXRetrievalKit` — that is web search,
+    /// not vector production.)
+    case embed
 }
 
 /// The fixed output artifact kind for a capability. Not negotiable per package (C2).
@@ -145,6 +156,7 @@ extension Capability {
         case .promptSegment: return .matte
         case .trackObject: return .matteSequence
         case .imageTo3D: return .mesh
+        case .embed: return .structuredText
         }
     }
 }

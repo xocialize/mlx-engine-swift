@@ -266,6 +266,42 @@ final class MLXToolKitTests: XCTestCase {
         XCTAssertEqual(d.parameters.first?.kind, .image)
     }
 
+    func testEmbedContractAndIO() {
+        // Defaults: document-side, no instruction, native width.
+        let doc = EmbedRequest(texts: ["stored summary"])
+        XCTAssertEqual(EmbedRequest.capability, .embed)
+        XCTAssertEqual(doc.inputType, .document)
+        XCTAssertNil(doc.instruction)
+        XCTAssertNil(doc.dimensions)
+
+        // Query-side with a custom instruction + Matryoshka truncation.
+        let query = EmbedRequest(texts: ["what did we plan?", "second query"],
+                                 inputType: .query,
+                                 instruction: "Retrieve relevant memories",
+                                 dimensions: 256)
+        XCTAssertEqual(query.texts.count, 2)
+        XCTAssertEqual(query.inputType, .query)
+        XCTAssertEqual(query.dimensions, 256)
+
+        let resp = EmbedResponse(vectors: [[0.6, 0.8], [1.0, 0.0]],
+                                 dimension: 2,
+                                 normalized: true,
+                                 modelID: "mlx-community/Qwen3-Embedding-0.6B-8bit")
+        XCTAssertEqual(resp.vectors.count, 2)
+        XCTAssertEqual(resp.dimension, 2)
+        XCTAssertTrue(resp.normalized)
+        XCTAssertEqual(resp.modelID, "mlx-community/Qwen3-Embedding-0.6B-8bit")
+
+        // Vectors ride the response (imageQualityScore precedent); canonical kind is structuredText.
+        XCTAssertEqual(Capability.embed.canonicalOutput, .structuredText)
+
+        let d = EmbedContract.descriptor(name: "embedText", summary: "Text → dense vectors")
+        XCTAssertEqual(d.capability, .embed)
+        XCTAssertEqual(d.parameters.first?.name, "texts")
+        XCTAssertEqual(d.parameters.first?.kind, .array)
+        XCTAssertTrue(d.parameters.contains { $0.name == "dimensions" && !$0.required })
+    }
+
     func testAudioPolishContractAndIO() {
         let audio = Audio(data: Data([0x52, 0x49, 0x46, 0x46]), sampleRate: 48_000, channels: 1)
         let req = AudioPolishRequest(audio: audio, mode: .broadcast)

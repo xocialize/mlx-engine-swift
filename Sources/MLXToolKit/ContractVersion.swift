@@ -118,5 +118,18 @@ public enum ContractVersion {
     //   All additive + safe-defaulted: undeclared transient = 0 (reactive R-MEM-1 still covers overflow),
     //   so existing manifests behave exactly as before. `MemorySnapshot.transientReserveBytes` exposes the
     //   reserve. Enables the per-package efficiency sweep (mmap lazy load, per-stage eviction, adaptive dtype).
-    public static let current = SemanticVersion(major: 1, minor: 14, patch: 0)
+    // 1.15.0 (2026-07-04, additive): text embedding —
+    //   • `embed` (+ EmbedRequest/Response/Contract) — batch of texts → one dense vector per text for
+    //     semantic retrieval (introduced by Qwen3-Embedding-0.6B; unblocks MLXCompanion semantic memory,
+    //     ENGINE-NEEDS N4). Rich shape: `texts` batch-first (order-preserving), `inputType`
+    //     query/document for asymmetric retrieval (query-side texts get the model's instruction prefix,
+    //     stored document-side texts don't), optional `instruction` task override, optional Matryoshka
+    //     `dimensions` truncation (applied BEFORE L2-normalization; nil = native).
+    //   • Vectors ride the response directly (`EmbedResponse.vectors: [[Float]]`) — the
+    //     `imageQualityScore` non-Artifact precedent; no `CanonicalOutput.vector` artifact kind (no
+    //     consumer needs the vector as a routed artifact — it feeds an index, not a media pipeline;
+    //     canonical output maps to `.structuredText` like the other non-Artifact responses).
+    //   • `EmbedResponse.dimension`/`normalized`/`modelID` — index-safety provenance: an index must
+    //     never mix models or dimensions, so every batch is stamped with what produced it.
+    public static let current = SemanticVersion(major: 1, minor: 15, patch: 0)
 }
