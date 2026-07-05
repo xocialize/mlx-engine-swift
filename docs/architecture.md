@@ -68,6 +68,38 @@ the cooperative-cancellation contract it needs (the engine signals; packages yie
 tokens/steps — today a running inference can't be stopped at all). v1 evicts idle residents at
 admission only.
 
+### R-MEM-2 — GPU buffer-pool policy (engine ≥ 0.21.0, ENGINE-NEEDS N5)
+
+The governor budgets **weights admission**; it does not constrain MLX's process-global Metal
+buffer-recycling pool, which is effectively unbounded by default and never returns memory to the
+OS. Interactive consumers (chat: llm + embed + tts per turn, each run with new tensor shapes)
+ratchet the pool by GBs per interaction — the MLXCompanion 43 GB "leak" staircase (2026-07-05).
+The engine owns the GPU and the budget, so the pool policy lives beside the governor:
+
+- **Default-managed:** `MLXServeEngine.init` applies `GPUCacheConfiguration` — `.automatic`
+  (default) resolves to `min(2 GB, 5% of the governor budget)` and writes `MLX.Memory.cacheLimit`
+  once, at construction. `.bytes(_)` fixes the cap (`0` disables recycling); `.unmanaged` opts out
+  entirely. **Precedence is last-write-wins on the process-global setting**: the engine writes at
+  init and never re-asserts, so a host writing later overrides it, and a host that bounded the
+  pool *before* constructing the engine gets superseded (pass `.unmanaged` to keep a pre-set value).
+- **Best-effort by design:** the first allocator call initializes MLX's Metal device, which can
+  fail in processes that can't load the bundled metallib (the SPM `swift test` runner gap — every
+  package's offline admissibility tests construct engines). All engine MLX touches are scoped
+  through `MLX.withError`; on failure the engine degrades to unmanaged (recorded in
+  `appliedGPUCacheLimitBytes`) instead of aborting. A process where the write fails cannot run GPU
+  work anyway, so the degradation is exact, not lossy.
+- **Trim hooks:** `trimCaches()` drops the pool on demand (the "after a burst" hook — what
+  `MLXEngineTestKit.ValidationRun` does between measurement phases); optional knobs
+  `trimAfterEvict` / `trimEveryRuns` (both default off) automate it around the lifecycle.
+- **Telemetry:** `gpuPoolSnapshot()` → `GPUPoolSnapshot` (active / cache / peak / effective
+  limit) so consumers observe the pool without importing MLX. Reading: `phys_footprint ≈ baseline
+  + active + cache`; `cache` saturating at the limit is healthy; `active` climbing across turns is
+  a real retention leak no cache limit will fix.
+
+This is the repo's one runtime dependency (`mlx-swift`, scoped to `MLXServeCore` — allocator API
+only, still no inference math in the engine). `MLXToolKit` stays dependency-free, so packages'
+offline contract builds are unaffected.
+
 ## The package abstraction
 
 - `PackageManifest` — the registrable blueprint (license, provenance, requirements, specialty,

@@ -1,4 +1,5 @@
 import Foundation
+import MLX
 import MLXToolKit
 
 /// Errors the coordinator raises around admission and routing.
@@ -109,14 +110,43 @@ public actor MLXServeEngine {
     /// consistent download/first-load affordance. Updated as `prepare()`/`resident()` runs.
     public nonisolated let preparation = PreparationMonitor()
 
+    /// GPU buffer-pool policy (N5). Applied once here; see `GPUCacheConfiguration` for the
+    /// precedence rules against hosts that write `MLX.Memory.cacheLimit` themselves.
+    private let gpuCache: GPUCacheConfiguration
+    /// The cap init actually wrote, or nil when the policy was `.unmanaged` OR the write
+    /// failed because this process can't initialize MLX's Metal device (see init).
+    public private(set) var appliedGPUCacheLimitBytes: UInt64?
+    /// Successful `run`s since the last `trimEveryRuns` trim.
+    private var runsSinceTrim = 0
+
     public init(policy: LicensePolicy = .permissiveOnly,
                 device: DeviceProfile = .current(),
                 governor: MemoryGovernor? = nil,
+                gpuCache: GPUCacheConfiguration = GPUCacheConfiguration(),
                 physFootprint: @Sendable @escaping () -> UInt64? = HostMemory.physFootprint) {
         self.policy = policy
         self.deviceProfile = device
         self.governor = governor ?? .forDevice(device)
+        self.gpuCache = gpuCache
         self.physFootprint = physFootprint
+        // Bound MLX's process-global buffer-recycling pool NOW (before any package loads or
+        // runs) so interactive consumers stop ratcheting phys_footprint by GBs per turn
+        // (ENGINE-NEEDS N5). `.unmanaged` resolves to nil and leaves the global untouched.
+        //
+        // BEST-EFFORT: the first allocator call initializes MLX's Metal device, which can
+        // fail in processes that can't load the bundled metallib (the known SPM `swift test`
+        // runner gap — engines are constructed in every package's offline admissibility
+        // tests). `withError` scopes that to a caught throw instead of the default aborting
+        // handler; a process where this fails cannot run GPU work anyway, so degrading to
+        // "unmanaged" there is exact, not lossy. `appliedGPUCacheLimitBytes` records the
+        // outcome for diagnostics.
+        if let cap = gpuCache.resolvedLimitBytes(budgetBytes: self.governor.budgetBytes) {
+            let clamped = cap > UInt64(Int.max) ? Int.max : Int(cap)
+            let applied = (try? MLX.withError { Memory.cacheLimit = clamped }) != nil
+            self.appliedGPUCacheLimitBytes = applied ? cap : nil
+        } else {
+            self.appliedGPUCacheLimitBytes = nil
+        }
     }
 
     /// Point the engine's model store at a download root (the app's chosen, security-scoped models
@@ -291,7 +321,18 @@ public actor MLXServeEngine {
         let instance = try await resident(id)
         let response = try await instance.run(request)
         touch(id) // mark recently used after a successful run
+        noteRunForTrimPolicy()
         return response
+    }
+
+    /// The `trimEveryRuns` knob: drop the buffer pool after every N successful runs.
+    private func noteRunForTrimPolicy() {
+        guard let every = gpuCache.trimEveryRuns, every > 0 else { return }
+        runsSinceTrim += 1
+        if runsSinceTrim >= every {
+            runsSinceTrim = 0
+            try? MLX.withError { Memory.clearCache() }
+        }
     }
 
     /// Ensure the package for a capability is constructed + loaded, returning it. Warms a model
@@ -518,10 +559,41 @@ public actor MLXServeEngine {
         }
         residentTransient.removeValue(forKey: id)
         lastUsed.removeValue(forKey: id)
+        // Belt-and-braces on top of the package's own unload()-time clearCache: with the
+        // knob on, eviction also returns pooled transients to the OS immediately.
+        if gpuCache.trimAfterEvict {
+            try? MLX.withError { Memory.clearCache() }
+        }
     }
 
     private func touch(_ id: PackageID) {
         useClock &+= 1
         lastUsed[id] = useClock
     }
+
+    // MARK: - GPU buffer-pool policy (N5)
+
+    /// Drop MLX's buffer-recycling pool now, returning pooled (unreferenced) GPU memory to
+    /// the OS. The explicit "after a burst of work" hook — mirrors what
+    /// `MLXEngineTestKit.ValidationRun` does between measurement phases. Live tensors
+    /// (`GPUPoolSnapshot.activeBytes`) are unaffected. Process-global and cheap; `nonisolated`
+    /// so hosts can call it from any context without hopping the actor. Best-effort no-op in
+    /// a process that can't initialize MLX's Metal device.
+    public nonisolated func trimCaches() {
+        try? MLX.withError { Memory.clearCache() }
+    }
+
+    /// A point-in-time reading of MLX's GPU buffer accounting (active / cache / peak / the
+    /// effective cache limit) so consumers get pool observability without importing MLX.
+    /// Process-global — one MLX pool per process, whichever engine reads it. `nil` when the
+    /// process can't initialize MLX's Metal device (some CI/test runners) — a process where
+    /// this is nil has no pool to observe.
+    public nonisolated func gpuPoolSnapshot() -> GPUPoolSnapshot? {
+        GPUPoolSnapshot.current()
+    }
+
+    /// The GPU cache policy this engine was constructed with (the *configured* intent;
+    /// `gpuPoolSnapshot().cacheLimitBytes` is the *effective* process-global value, which a
+    /// later host write may have changed — last-write-wins).
+    public nonisolated var gpuCachePolicy: GPUCacheConfiguration { gpuCache }
 }

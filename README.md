@@ -29,6 +29,9 @@ cross-model work is uniform from a programming standpoint.
   two-layer license gate + device-eligibility (C10) admission, and lazily constructs / loads /
   routes / evicts each `ModelPackage` by capability, backed by a `MemoryGovernor` (budget +
   LRU eviction of idle residents) and multi-package-per-capability routing (select by PackageID).
+  Since 0.21.0 the engine also owns the **MLX GPU buffer-pool policy** — a bounded `cacheLimit`
+  derived from the governor budget by default (opt out via `GPUCacheConfiguration.unmanaged`),
+  `trimCaches()`, and `gpuPoolSnapshot()` telemetry (`docs/architecture.md` R-MEM-2).
   Some advanced facilities (mid-run eviction-under-pressure + requeue, `MCPBridge`, Hub SHA256
   verification) are still in progress.
 - **MLXServeConformance** — the C0–C13 self-check harness (in progress).
