@@ -266,6 +266,43 @@ final class MLXToolKitTests: XCTestCase {
         XCTAssertEqual(d.parameters.first?.kind, .image)
     }
 
+    // 1.16.0 additive: LLMRequest.responseFormat — opt-in structured output (ENGINE-NEEDS N6).
+    // A request-level knob, not a capability: canonical output stays text.
+    func testResponseFormatIsAdditiveStructuredOutput() throws {
+        // Existing callers unchanged: the field defaults nil on both inits.
+        let freeform = LLMRequest(prompt: "hello")
+        XCTAssertNil(freeform.responseFormat)
+
+        // The three MLXCompanion shapes: array (parseFacts), object (parseAffect), any.
+        let facts = LLMRequest(prompt: "extract facts",
+                               responseFormat: .json(container: .array))
+        XCTAssertEqual(facts.responseFormat, .json(container: .array))
+        let affect = LLMRequest(prompt: "read mood",
+                                responseFormat: .json(container: .object))
+        XCTAssertEqual(affect.responseFormat, .json(container: .object))
+        XCTAssertEqual(ResponseFormat.json, .json(container: .any))
+
+        // Lane-ready schema case is distinct from plain .json.
+        let schema = ResponseFormat.jsonSchema(#"{"type":"object"}"#)
+        XCTAssertNotEqual(schema, .json)
+
+        // ResponseFormat is Codable (it rides serialized request envelopes).
+        let decoded = try JSONDecoder().decode(
+            ResponseFormat.self, from: JSONEncoder().encode(ResponseFormat.json(container: .array)))
+        XCTAssertEqual(decoded, .json(container: .array))
+
+        // C11 honest advertisement: the responseFormat parameter appears only when declared.
+        let plain = LLMContract.descriptor(name: "llm", summary: "text")
+        XCTAssertFalse(plain.parameters.contains { $0.name == "responseFormat" })
+        let constrained = LLMContract.descriptor(name: "llm", summary: "text",
+                                                 supportsStructuredOutput: true)
+        XCTAssertTrue(constrained.parameters.contains { $0.name == "responseFormat" })
+
+        // The legible rejection exists for packages that can't honor the field.
+        let rejection = PackageError.unsupportedRequestFeature("responseFormat")
+        XCTAssertEqual(rejection, .unsupportedRequestFeature("responseFormat"))
+    }
+
     func testEmbedContractAndIO() {
         // Defaults: document-side, no instruction, native width.
         let doc = EmbedRequest(texts: ["stored summary"])

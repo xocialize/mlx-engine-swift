@@ -131,5 +131,22 @@ public enum ContractVersion {
     //     canonical output maps to `.structuredText` like the other non-Artifact responses).
     //   • `EmbedResponse.dimension`/`normalized`/`modelID` — index-safety provenance: an index must
     //     never mix models or dimensions, so every batch is stamped with what produced it.
-    public static let current = SemanticVersion(major: 1, minor: 15, patch: 0)
+    // 1.16.0 (2026-07-05, additive): structured output on the `llm` surface (ENGINE-NEEDS N6) —
+    //   • `LLMRequest.responseFormat: ResponseFormat?` — opt-in constrained decoding. A
+    //     request-level knob, NOT a new capability (canonical output stays text); `nil` =
+    //     freeform, all existing consumers unchanged. Introduced by three MLXCompanion call
+    //     sites (parseFacts → JSON array, parseAffect → JSON object, decideSearchQuery) that
+    //     regex-scraped free text and silently dropped passes when 0.8–4B models broke format.
+    //   • `ResponseFormat.json(container: .any/.object/.array)` — grammar-constrained
+    //     syntactically-valid JSON, exactly one top-level value then stop; the container hint
+    //     is enforced from the first token. `.jsonSchema(String)` lands lane-ready: V1 packages
+    //     satisfy it best-effort (`.json` syntax + container inferred from the schema root),
+    //     full schema-DFA enforcement is a package-side upgrade needing no further bump.
+    //   • Honest advertisement (C11): `LLMContract.descriptor(supportsStructuredOutput:)`
+    //     includes a `responseFormat` ParameterSchema only when the package really constrains.
+    //   • `PackageError.unsupportedRequestFeature(String)` — the legible rejection for a
+    //     canonical request field a package can't honor; silent-ignore is a contract violation.
+    //     Runtime home for the decoder: mlx-constrained-decoding-swift (shared by the llm
+    //     packages; the contract stays MLX-free).
+    public static let current = SemanticVersion(major: 1, minor: 16, patch: 0)
 }

@@ -67,6 +67,12 @@ public enum PackageError: Error, Sendable, Equatable {
     case unsupportedCapability(Capability)
     /// `run(_:)` was called while the working set was not resident.
     case notLoaded
+    /// `run(_:)` received a canonical request field this package cannot honor (e.g.
+    /// `LLMRequest.responseFormat` on a package without constrained decoding). Rejecting
+    /// legibly is required — silently ignoring the field would hand the caller output that
+    /// violates what the request contracted for. (1.16.0, additive; C12: keep a `default`
+    /// when switching over this enum.)
+    case unsupportedRequestFeature(String)
 }
 
 /// What the engine registers for a package: its static `manifest` plus a factory the engine
