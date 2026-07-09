@@ -11,7 +11,9 @@ cannot destabilize the pipeline.
 - [Concepts](concepts.md) — capability / mode / specialty, and the package model
 - [Architecture](architecture.md)
 - [Contributing a package](contributing-a-package.md)
-- [Conformance (C0–C13)](conformance-c0-c13.md)
+- [Conformance (C0–C13)](conformance-c0-c13.md) — ⚠ does not yet cover the executable **MAT gate**
+  (first-run weight materialization, MAT-1..5; bundled-weights vocabulary since v0.24.0); see the
+  handoff note at the bottom of that page for ground-truth pointers
 
 > MIT-licensed engine code. Separate from the two-layer weight/port-code **license gate** that
 > governs which model weights the engine will load and serve.
