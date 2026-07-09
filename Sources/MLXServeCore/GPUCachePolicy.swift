@@ -40,20 +40,31 @@ public struct GPUCacheConfiguration: Sendable, Equatable {
     /// already `clearCache()` in `unload()`, so this is belt-and-braces for hosts that want
     /// eviction to also return pooled transients immediately.
     public var trimAfterEvict: Bool
-    /// Trim the pool after every N successful `run`s (a burst-shaped host's "drop the pool
-    /// between interactions" knob). `nil` (default) or values < 1 disable it.
+    /// Trim the pool after every N `run`s — successful or thrown (a burst-shaped host's
+    /// "drop the pool between interactions" knob). `nil` (default) or values < 1 disable it.
     public var trimEveryRuns: Int?
+    /// Trim the pool when a run ends in `CancellationError` and the cancelled package's
+    /// resolved transient activation peak (`QuantFootprint.peakActivationBytes` / the
+    /// `FootprintConfigured` hint) is at least this many bytes. A cancelled long run abandons
+    /// a pool full of large one-off buffers (the LTX 2.3 multi-GB mid-denoise case — V1 in the
+    /// run-lifecycle program), and a cancel is already latency-insensitive, so unlike the other
+    /// trim knobs this defaults **on** (1 GiB). `nil` disables it; the `.unmanaged` preset
+    /// disables it along with everything else.
+    public var trimAfterCancelBytes: UInt64?
 
     public init(limit: Limit = .automatic,
                 trimAfterEvict: Bool = false,
-                trimEveryRuns: Int? = nil) {
+                trimEveryRuns: Int? = nil,
+                trimAfterCancelBytes: UInt64? = 1_073_741_824) {  // 1 GiB
         self.limit = limit
         self.trimAfterEvict = trimAfterEvict
         self.trimEveryRuns = trimEveryRuns
+        self.trimAfterCancelBytes = trimAfterCancelBytes
     }
 
-    /// The whole-feature opt-out: no limit write, no trims.
-    public static let unmanaged = GPUCacheConfiguration(limit: .unmanaged)
+    /// The whole-feature opt-out: no limit write, no trims (including cancel hygiene).
+    public static let unmanaged = GPUCacheConfiguration(limit: .unmanaged,
+                                                        trimAfterCancelBytes: nil)
 
     /// The byte cap `limit` resolves to against a governor budget; `nil` = leave the
     /// process-global setting untouched.

@@ -110,14 +110,26 @@ public actor MLXServeEngine {
     /// consistent download/first-load affordance. Updated as `prepare()`/`resident()` runs.
     public nonisolated let preparation = PreparationMonitor()
 
+    /// Observable run-time phase progress per capability/package (contract 1.18.0, ENGINE-NEEDS V2):
+    /// the latest `RunPhaseReport` a package reported from inside `run()` (encode → denoise →
+    /// upsample → decode, with step counts), or `nil` when no run is in flight. The run-time sibling
+    /// of `preparation` — a consuming app binds its generation UI to this for a real phase seam
+    /// instead of one indeterminate "Generating…".
+    public nonisolated let runProgress = RunMonitor()
+
     /// GPU buffer-pool policy (N5). Applied once here; see `GPUCacheConfiguration` for the
     /// precedence rules against hosts that write `MLX.Memory.cacheLimit` themselves.
     private let gpuCache: GPUCacheConfiguration
     /// The cap init actually wrote, or nil when the policy was `.unmanaged` OR the write
     /// failed because this process can't initialize MLX's Metal device (see init).
     public private(set) var appliedGPUCacheLimitBytes: UInt64?
-    /// Successful `run`s since the last `trimEveryRuns` trim.
+    /// `run`s (returned or thrown) since the last `trimEveryRuns` trim.
     private var runsSinceTrim = 0
+    /// Engine-policy pool trims performed so far (`trimEveryRuns` / `trimAfterEvict` / cancel
+    /// hygiene). Internal observability: offline tests prove the trim accounting fires through
+    /// this counter, because the `clearCache()` itself is best-effort in a process without
+    /// MLX's Metal device.
+    private(set) var policyTrimCount = 0
 
     public init(policy: LicensePolicy = .permissiveOnly,
                 device: DeviceProfile = .current(),
@@ -314,25 +326,77 @@ public actor MLXServeEngine {
     /// Admit + run one request: resolve the package for `request.capability` (the capability's
     /// default, or `package` when the caller selects a specific module), lazily construct and
     /// page it in (evicting LRU residents if needed), then run on the `InferenceActor`.
+    ///
+    /// **Pool hygiene runs on every outcome** (V1, run-lifecycle program): a run that throws —
+    /// a user cancel surfacing as `CancellationError`, or a genuine failure — has already
+    /// churned the GPU buffer pool, so it still counts toward `trimEveryRuns`; a *cancelled*
+    /// run whose package declares a large transient peak additionally trims the pool right now
+    /// (`GPUCacheConfiguration.trimAfterCancelBytes` — the LTX-scale multi-GB mid-denoise
+    /// abandonment case). A thrown run also still `touch`es LRU recency — deliberate, not
+    /// incidental: its weights are hot and the measured post-cancel pattern is an immediate
+    /// re-run (the LTX cancel→re-run recovery), so the cancelled package must not become the
+    /// next eviction victim. The error itself propagates to the caller unchanged either way
+    /// (`ModelPackage.run` contract: governor preemption requeues, everything else surfaces).
     public func run(_ request: any CapabilityRequest,
                     package: PackageID? = nil) async throws -> any CapabilityResponse {
         let capability = request.capability
         let id = try resolve(capability, package)
         let instance = try await resident(id)
-        let response = try await instance.run(request)
-        touch(id) // mark recently used after a successful run
-        noteRunForTrimPolicy()
-        return response
+        // Bind the ambient run-progress sink around the package's run() — the run-time mirror of
+        // the WeightDownloadProgress binding in resident() (V2, run-lifecycle program). A package
+        // that reports coarse phases (RunProgress.report) surfaces them on the observable
+        // `runProgress` monitor; task-local, so the binding scopes to exactly this run. Cleared on
+        // EVERY exit (return, throw, cancel): no run in flight must read as nil.
+        let pkg = id.description
+        let sink: RunProgress.Sink = { [runProgress] report in
+            Task { @MainActor in
+                runProgress.update(capability, package: pkg, to: report)
+            }
+        }
+        defer {
+            Task { @MainActor [runProgress] in
+                runProgress.clear(capability, package: pkg)
+            }
+        }
+        do {
+            let response = try await RunProgress.$sink.withValue(sink) {
+                try await instance.run(request)
+            }
+            touch(id) // mark recently used after a completed run
+            noteRunForTrimPolicy()
+            return response
+        } catch {
+            touch(id) // hot weights + likely re-run — keep the package most-recently-used
+            noteRunForTrimPolicy()
+            if error is CancellationError { noteCancelledRun(of: id) }
+            throw error
+        }
     }
 
-    /// The `trimEveryRuns` knob: drop the buffer pool after every N successful runs.
+    /// The `trimEveryRuns` knob: drop the buffer pool after every N runs (returned or thrown).
     private func noteRunForTrimPolicy() {
         guard let every = gpuCache.trimEveryRuns, every > 0 else { return }
         runsSinceTrim += 1
         if runsSinceTrim >= every {
             runsSinceTrim = 0
-            try? MLX.withError { Memory.clearCache() }
+            performPolicyTrim()
         }
+    }
+
+    /// The `trimAfterCancelBytes` knob: a cancelled run abandoned its in-flight activations
+    /// into the pool, so when the package's resolved transient peak says those are big,
+    /// return them to the OS now rather than waiting for the next managed-limit rollover.
+    private func noteCancelledRun(of id: PackageID) {
+        guard let threshold = gpuCache.trimAfterCancelBytes,
+              (residentTransient[id] ?? 0) >= threshold else { return }
+        performPolicyTrim()
+    }
+
+    /// One engine-policy pool trim: count it (offline-test observable), then best-effort drop
+    /// the pool (no-op in a process that can't initialize MLX's Metal device).
+    private func performPolicyTrim() {
+        policyTrimCount += 1
+        try? MLX.withError { Memory.clearCache() }
     }
 
     /// Ensure the package for a capability is constructed + loaded, returning it. Warms a model
@@ -571,7 +635,7 @@ public actor MLXServeEngine {
         // Belt-and-braces on top of the package's own unload()-time clearCache: with the
         // knob on, eviction also returns pooled transients to the OS immediately.
         if gpuCache.trimAfterEvict {
-            try? MLX.withError { Memory.clearCache() }
+            performPolicyTrim()
         }
     }
 

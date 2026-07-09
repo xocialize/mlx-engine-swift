@@ -160,5 +160,21 @@ public enum ContractVersion {
     //   • `MLXServeEngine.needsDownload` reads `false` for a bundled-only configuration whose
     //     sources all resolve — the sanctioned signal, replacing the always-present-prewarmPaths
     //     workaround (`WeightPrewarming` keeps its real job: cold-start page-in before load()).
-    public static let current = SemanticVersion(major: 1, minor: 17, patch: 0)
+    // 1.18.0 (2026-07-09, additive): run-phase progress plane (run-lifecycle program V2) —
+    //   • `RunPhase` + `RunPhaseReport` + `RunProgress` — an ambient task-local sink mirroring
+    //     `WeightDownloadProgress`, for COARSE run-time phases (encode → denoise → upsample →
+    //     decode, optional 1-based step/totalSteps + stage/totalStages). No-op unbound; the
+    //     engine binds it around `run()` per request (task-local ⇒ no cross-run talk). Born from
+    //     the LTX M3 cancel-acceptance pass: a decode-chunk cancel was indistinguishable from a
+    //     denoise-step cancel, and 16–21 s compile-heavy worst-case cancels read as hangs.
+    //   • `RunPhase` is governed like `Mode`/`Specialty`: open String raw value + canonical
+    //     constants (`.encode`/`.denoise`/`.upsample`/`.decode`/`.generate`/`.postprocess`);
+    //     consumers tolerate unknown phases. NOT token streaming (companion N2) and NOT a new
+    //     response shape. `RunPhaseReport` is a struct so later fields ride in additively.
+    //   • `RunMonitor` — the observable engine-owned record (sibling of `PreparationMonitor`,
+    //     same capability/package key scheme); `MLXServeEngine.runProgress` exposes it; entries
+    //     clear when the run exits (success, failure, or cancellation). First reporter: LTX-2.3;
+    //     Wan/Bernini, SeedVR2, IndexTTS2 follow. V3 preemption policy will read this signal
+    //     when weighing mid-run eviction victims.
+    public static let current = SemanticVersion(major: 1, minor: 18, patch: 0)
 }

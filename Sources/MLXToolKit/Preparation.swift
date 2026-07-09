@@ -22,8 +22,9 @@ public enum PreparePhase: Sendable, Equatable {
     case failed(String)
 }
 
-/// Identity for a preparation phase: a capability, optionally narrowed to a specific backing package
-/// (when several packages back one capability). `packageID` is the package's string id.
+/// Identity for a phase-monitor entry (shared by `PreparationMonitor` and `RunMonitor`): a
+/// capability, optionally narrowed to a specific backing package (when several packages back
+/// one capability). `packageID` is the package's string id.
 public struct PreparationKey: Hashable, Sendable {
     public let capability: Capability
     public let packageID: String?

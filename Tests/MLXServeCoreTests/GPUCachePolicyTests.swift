@@ -44,10 +44,15 @@ final class GPUCachePolicyTests: XCTestCase {
         XCTAssertNil(GPUCacheConfiguration.unmanaged.resolvedLimitBytes(budgetBytes: 128_000_000_000))
     }
 
-    func testTrimKnobsDefaultOff() {
+    func testTrimKnobDefaults() {
         let config = GPUCacheConfiguration()
         XCTAssertFalse(config.trimAfterEvict)
         XCTAssertNil(config.trimEveryRuns)
+        // Cancel hygiene (V1, run-lifecycle program) defaults ON at 1 GiB — a cancel is off
+        // the hot path, so the default trades nothing for the reclaim.
+        XCTAssertEqual(config.trimAfterCancelBytes, 1_073_741_824)
+        // The whole-feature opt-out disables it along with everything else.
+        XCTAssertNil(GPUCacheConfiguration.unmanaged.trimAfterCancelBytes)
     }
 
     // MARK: - Engine init applies the limit (process-global, allocator API only)
@@ -122,7 +127,8 @@ final class GPUCachePolicyTests: XCTestCase {
 
     func testConfiguredPolicyIsReadable() {
         let config = GPUCacheConfiguration(
-            limit: .bytes(1), trimAfterEvict: true, trimEveryRuns: 4)
+            limit: .bytes(1), trimAfterEvict: true, trimEveryRuns: 4,
+            trimAfterCancelBytes: 5_000_000_000)
         let engine = MLXServeEngine(
             device: device(totalGB: 64),
             governor: MemoryGovernor(budgetBytes: 20_000_000_000),
@@ -130,5 +136,6 @@ final class GPUCachePolicyTests: XCTestCase {
         XCTAssertEqual(engine.gpuCachePolicy, config)
         XCTAssertEqual(engine.gpuCachePolicy.trimEveryRuns, 4)
         XCTAssertTrue(engine.gpuCachePolicy.trimAfterEvict)
+        XCTAssertEqual(engine.gpuCachePolicy.trimAfterCancelBytes, 5_000_000_000)
     }
 }
