@@ -19,6 +19,15 @@ extension Specialty {
     public static let poseless: Specialty = "poseless"
     /// Explicit pose / face-expression conditioning (e.g. Wan2.2-Animate).
     public static let poseDriven: Specialty = "poseDriven"
+
+    // tts control-plane ranking (E12 lane): native per-request control levers a TTS model
+    // carries, so the orchestrator/dub route can prefer native control over post-hoc shims
+    // (instruct-string emotion, WSOLA time-stretch fit).
+    /// Native emotion control decoupled from speaker identity (e.g. IndexTTS2's
+    /// categorical-8 / vector emotion plane).
+    public static let emotionControl: Specialty = "emotionControl"
+    /// Native output-duration control (e.g. IndexTTS2's length-regulator target length).
+    public static let durationControl: Specialty = "durationControl"
 }
 
 /// A specialty paired with a strength in 0...1. A model declares an array of these.

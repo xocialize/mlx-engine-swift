@@ -66,6 +66,15 @@ extension SPDXLicense {
     /// eval/personal-use opt-in. Used by the Anima anime-T2I port (AnimaT2IPackage).
     public static let circleStoneNonCommercial: SPDXLicense = "LicenseRef-CircleStone-NonCommercial"
 
+    /// bilibili's IndexTTS2 model license (INDEX_MODEL_LICENSE). Non-SPDX, referenced via
+    /// `LicenseRef-`. **NON-permissive** — personal / research / educational use permitted;
+    /// commercial use requires bilibili's separate written authorization. Deliberately NOT on
+    /// `permissiveAllowlist`; admitted ONLY under `.permissiveOrAcknowledged` as an explicit
+    /// eval/personal-use opt-in (same pattern as Anima). The port code (mlx-indextts2-swift,
+    /// donor solar2ain/mlx-indextts) is Apache-2.0/MIT — only the weights carry this license.
+    /// Used by the IndexTTS2 emotion+duration TTS port (IndexTTS2Package).
+    public static let indexTTS2Model: SPDXLicense = "LicenseRef-Index-Model"
+
     /// The permissive allowlist used by `.permissiveOnly`. Curated; extend deliberately.
     public static let permissiveAllowlist: Set<SPDXLicense> = [
         .mit, .apache2, .bsd2, .bsd3, .isc, .unlicense, .funasrModel, .ccBy4, .ltx2Community, .dinov3,
@@ -78,7 +87,11 @@ extension SPDXLicense {
     /// deliberate, auditable opt-in — extend only when a port is gated to evaluation, never for
     /// shippable capabilities.
     /// - `circleStoneNonCommercial`: the Anima anime-T2I weights (personal/research use only).
-    public static let evalAcknowledgedAllowlist: Set<SPDXLicense> = [.circleStoneNonCommercial]
+    /// - `indexTTS2Model`: the IndexTTS2 TTS weights (commercial use needs bilibili written
+    ///   authorization).
+    public static let evalAcknowledgedAllowlist: Set<SPDXLicense> = [
+        .circleStoneNonCommercial, .indexTTS2Model,
+    ]
 
     public var isPermissive: Bool { SPDXLicense.permissiveAllowlist.contains(self) }
 
