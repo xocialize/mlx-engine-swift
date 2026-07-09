@@ -26,15 +26,25 @@ testing. "Cooperatively evictable" is refined by **R-MEM-1** (architecture.md): 
 evictable iff `unload()` releases its full working set *and* the engine's admission-time,
 pressure-aware eviction can reclaim it before the next heavy load — so heavy models swap (queue-shaped)
 rather than stack. R-MEM-1's eviction *trigger* (declared bytes vs. real pressure) is now wired — the
-admission path reads actual `phys_footprint` — so the remaining open item is **mid-run** preemption +
-the cooperative-cancellation contract C13 names (a *running* inference still can't be stopped), not the
-admission-time trigger or the package's `unload()` obligation.
+admission path reads actual `phys_footprint` — and **mid-run preemption + requeue landed too**
+(run-lifecycle program V3, engine 0.26.0: user cancel = cancel the `Task` wrapping `engine.run()`,
+surfaces `CancellationError` → classify `.cancelled`; governor preemption requeues — see
+`docs/run-lifecycle.md`). The cancellation-honoring half of C13 has an **executable adjunct**: the
+**CAN gate** (`MLXServeConformance.CancellationConformance`, CAN-1..3, offline) — the same
+relationship the MAT gate has to `WeightSourcing`. CAN-1: a pre-cancelled `run()` surfaces
+`CancellationError` (entry checkpoint first, before validation). CAN-2: the outcome is
+cancelled-not-failed in the capability's canonical shape (the error rethrown unwrapped, or
+`FinishReason.cancelled` on a partial response). CAN-3: a manifest that implies long runs
+(video/audio generation, or ≥ 2 GB declared peak activation) declares its checkpoint cadence
+(per step / chunk / token / frame / layer, per `RunPhase`; per-step `RunProgress` reporting is
+accepted evidence). The live counterpart is `MLXEngineTestKit.CancellationBench` (the `[CAN]`
+timed cancel-latency probe; Xcode-app harness only).
 
 *The authoritative checklist (pass/fail criteria, failure modes) lives in the `mlx-swift-integration` skill.*
 
 ---
 
-## Handoff — the MAT gate is not yet documented in this docs set
+## Handoff — the MAT and CAN gates are only summarized in this docs set
 
 > **TODO (noted 2026-07-09, post engine v0.24.0 / contract 1.17.0).** Since v0.19.0 the C0–C13
 > checklist has an **executable adjunct**: the **MAT gate** (MAT-1..5, offline) — every package's
@@ -51,6 +61,12 @@ admission-time trigger or the package's `unload()` obligation.
 > - `EngineeringDocs/MLXEngineDocs/conformance.md` → MAT-gate section (internal write-up)
 > - the `mlx-swift-integration` skill, `references/porting-conformance.md` §4 (package-author
 >   requirements; reference implementations: MLXLTX2 = network, mlx-realesrgan-swift = bundled)
+>
+> The **CAN gate** (engine ≥ 0.27.0, summarized above) has the same shape: ground truth is
+> `Sources/MLXServeConformance/CancellationConformance.swift` (CAN-1..3),
+> `Sources/MLXEngineTestKit/CancellationRun.swift` (the live `[CAN]` bench),
+> `EngineeringDocs/MLXEngineDocs/conformance.md` → CAN-gate section, and the
+> `mlx-swift-integration` skill's cancellation-conformance section.
 >
 > When writing the public section: cover the four package-author requirements (declare / execute
 > with `WeightDownloadProgress` / prove offline / prewarm the store view), the explicit-directory

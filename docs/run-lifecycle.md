@@ -80,8 +80,13 @@ Nothing new beyond the existing `ModelPackage.run` contract: **honor cancellatio
 yield points** (per token / denoise step / VAE chunk / encoder layer), unwind cleanly, and
 rethrow the `CancellationError`. Checkpoint *placement* stays package-owned and model-specific.
 LTX 2.3 is the reference adopter (per-step, per-chunk, per-layer checkpoints; clean
-cancel→re-run recovery). The executable conformance gate for this is V4 (planned) in the
-run-lifecycle program.
+cancel→re-run recovery). The executable conformance gate for this is the **CAN gate** (V4,
+engine ≥ 0.27.0): `MLXServeConformance.CancellationConformance` offline in the package's own
+suite (CAN-1 pre-cancelled `run()` surfaces `CancellationError` — make
+`try Task.checkCancellation()` the FIRST act of `run()`, before `notLoaded` validation; CAN-2
+the outcome is cancelled-not-failed, the error never laundered; CAN-3 long-run manifests declare
+their checkpoint cadence), plus the live timed probe `MLXEngineTestKit.CancellationBench`
+(`[CAN]`; Xcode-app harness only). See `docs/conformance-c0-c13.md`.
 
 ## Every exit is clean
 
