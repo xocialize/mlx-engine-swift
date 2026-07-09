@@ -10,6 +10,8 @@ cannot destabilize the pipeline.
 - [Getting started](getting-started.md)
 - [Concepts](concepts.md) — capability / mode / specialty, and the package model
 - [Architecture](architecture.md)
+- [Run lifecycle](run-lifecycle.md) — cancellation semantics (the sanctioned user-cancel seam),
+  governor preemption + requeue, and what a package must honor
 - [Contributing a package](contributing-a-package.md)
 - [Conformance (C0–C13)](conformance-c0-c13.md) — ⚠ does not yet cover the executable **MAT gate**
   (first-run weight materialization, MAT-1..5; bundled-weights vocabulary since v0.24.0); see the

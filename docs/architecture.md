@@ -49,8 +49,11 @@ reclaim, not stack — the engine, not the caller, owns this.
   co-resident on purpose (the multi-package / `PackageID` path), but that is an explicit override of
   the default swap, and the governor MUST still evict under true pressure. There is no hard
   "one heavy model" rule — fit, measured against real memory, is the arbiter.
-- **Out of scope (next layer, TODO):** mid-run preemption + requeue of an already-executing model
-  (`MemoryGovernor` / `MLXServeEngine` doc-comments). v1 evicts idle residents at admission only.
+- **Mid-run preemption is the last resort, behind idle eviction (V3, wired).** When idle-LRU
+  eviction can't make room for a queued contender, the governor may cancel a *running* inference
+  and reclaim its residency — see **Run lifecycle** below. A package with a run in flight is
+  never an "idle" victim (V3 closed the v1 hazard where a long run's stale LRU tick could get
+  its weights unloaded mid-inference).
 
 **Status:** both the eviction *mechanism* (`makeHeadroom` → LRU `evictResident`,
 `evictsLRUWhenFull` / `lruKeepsRecentlyUsed`) **and** the real-memory *trigger* are now implemented.
@@ -63,10 +66,30 @@ real memory is over watermark) and `realPressureKeepsRecentlyUsed` (the pressure
 declaration (`QuantConfigured` quant match + `FootprintConfigured` per-mode hint) keeps the *declared*
 floor honest so the trigger only fires on genuine activation/scratch overflow.
 
-**Still out of scope (next layer):** mid-run preemption + requeue of an already-executing model, and
-the cooperative-cancellation contract it needs (the engine signals; packages yield between
-tokens/steps — today a running inference can't be stopped at all). v1 evicts idle residents at
-admission only.
+**The "next layer" landed (V3, run-lifecycle program, 2026-07-09):** mid-run preemption + requeue
+of an already-executing model is implemented, on top of the cooperative-cancellation contract the
+packages honor (yield between tokens/steps — LTX 2.3 proved the package side: 1.08 s steady-state
+preempt latency, one-MLX-eval granularity).
+
+## Run lifecycle — two cancellation lanes (V3)
+
+Full doc: [run-lifecycle.md](run-lifecycle.md). The short form:
+
+- **User cancel** — the sanctioned app seam is *cancelling the `Task` wrapping `engine.run()`*;
+  the engine forwards it into the run and the `CancellationError` surfaces to the caller
+  unchanged (classify `.cancelled`).
+- **Governor preemption** — each run executes in an engine-scoped run-handle task the governor
+  can cancel; the handle is marked *preempted* before cancelling, which is how the engine tells
+  its own doing from the user lane (both reach the package as the same `CancellationError`).
+  The preempted request is **requeued** through normal admission — the caller keeps awaiting and
+  gets a genuine response — bounded by `PreemptionPolicy.maxRequeues`
+  (`EngineError.preemptionRetryExhausted` past it). Policy (`PreemptionPolicy`): idle eviction
+  first; a victim whose V2 `RunPhaseReport` progress reads ≥ `preserveNearlyDoneFraction` is
+  waited for, not cancelled; requeued attempts only ever wait (no preemption ping-pong);
+  `prepare()` never preempts. Admission bookkeeping is serialized by an engine-internal gate so
+  a requeued victim can't race its preemptor's mid-`load()` accounting.
+- **Every exit clean** — V1 pool hygiene and the V2 run-monitor clear run on every outcome of
+  every attempt. Tests: `RunPreemptionTests`.
 
 ### R-MEM-2 — GPU buffer-pool policy (engine ≥ 0.21.0, ENGINE-NEEDS N5)
 

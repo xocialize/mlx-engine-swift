@@ -14,6 +14,10 @@ public enum EngineError: Error, Sendable, Equatable {
     case ineligible(DeviceEligibility)
     /// The package's resident footprint exceeds the whole memory budget — it can't fit even alone.
     case exceedsMemoryBudget(required: UInt64, budget: UInt64)
+    /// The request was governor-preempted more times than `PreemptionPolicy.maxRequeues`
+    /// tolerates. `requeues` counts the preemptions suffered. The clear-error degradation of
+    /// the requeue loop (V3) — the caller sees this, never a `CancellationError` it didn't cause.
+    case preemptionRetryExhausted(requeues: Int)
 }
 
 /// Engine-side identity for a registered package — lets several packages back the SAME
@@ -61,8 +65,9 @@ public struct Admissibility: Sendable, Equatable {
 ///
 /// Admission enforces **C10 device eligibility** (`DeviceProfile`) at registration and
 /// **memory headroom** (`MemoryGovernor`) at load: when a new working set won't fit, idle residents
-/// are evicted **LRU** until it does. Still TODO and tracked elsewhere: `HubAssetSource` SHA256
-/// verification, mid-run eviction-under-pressure + requeue, `MemoryPool` backend placement,
+/// are evicted **LRU** until it does; as a *last resort* the governor may preempt a running
+/// inference and requeue it (V3, `PreemptionPolicy` — see `run(_:package:)`). Still TODO and
+/// tracked elsewhere: `HubAssetSource` SHA256 verification, `MemoryPool` backend placement,
 /// `MCPBridge`.
 public actor MLXServeEngine {
 
@@ -93,11 +98,50 @@ public actor MLXServeEngine {
     private var lastUsed: [PackageID: UInt64] = [:]
     private var useClock: UInt64 = 0
 
+    /// Engine-internal handle to one in-flight `run()` attempt — the seam the governor cancels
+    /// for mid-run preemption (V3). All mutable state is engine-actor-confined; `task.cancel()`
+    /// itself is thread-safe (also called from the caller-cancellation handler).
+    private struct ActiveRun {
+        let id: PackageID
+        let task: Task<any CapabilityResponse, Error>
+        /// The transient activation peak charged for the package at admission, carried on the
+        /// handle so cancel-trim hygiene can't race the victim's eviction (which removes the
+        /// `residentTransient` entry before the preempted attempt's catch path may run).
+        let transientBytes: UInt64
+        /// Set (on the engine actor) BEFORE the governor cancels `task` — the engine-internal
+        /// marker that distinguishes its own preemption from the caller's cancellation. Both
+        /// reach the package as the same `CancellationError`; this is how the engine tells
+        /// "requeue" from "surface `.cancelled`".
+        var preempted = false
+        /// Latest report from the run's `RunProgress` sink — the V2 signal the preemption
+        /// policy weighs before picking a mid-run victim. Advisory (hops the actor to land).
+        var latestReport: RunPhaseReport?
+    }
+
+    /// Run token → in-flight run. Bookkeeping supports N entries (actor reentrancy means runs
+    /// overlap at await points even though `InferenceActor` serializes the compute), but the
+    /// preemption story is the serialized one: a QUEUED contender needing residency a runner
+    /// holds — not concurrent runs racing.
+    private var activeRuns: [UInt64: ActiveRun] = [:]
+    private var runTokenClock: UInt64 = 0
+
+    /// Admission serialization (V3): `lockAdmission`/`unlockAdmission` make each admission
+    /// (headroom → construct → load → charge → run-handle registration) one critical section.
+    /// Actor reentrancy would otherwise interleave two admissions at their awaits — e.g. a
+    /// requeued victim re-loading into the very headroom its preemptor is mid-`load()` into
+    /// (the charge lands only after `load()` returns). Runs themselves are NOT serialized by
+    /// this gate — only their admission bookkeeping is.
+    private var admissionLocked = false
+    private var admissionWaiters: [CheckedContinuation<Void, Never>] = []
+
     private let policy: LicensePolicy
     /// The host profile used for the C10 eligibility check.
     public nonisolated let deviceProfile: DeviceProfile
     /// Memory budgeting + watermark policy.
     private var governor: MemoryGovernor
+    /// Mid-run preemption policy (V3) — last-resort cancellation of a running inference when a
+    /// queued contender can't fit after idle-LRU eviction. See `PreemptionPolicy`.
+    private let preemption: PreemptionPolicy
     /// Where packages materialize weights + the marker the storage UI counts. Empty by default
     /// (packages use their own cache); a consuming app sets it once via `useModelStore`.
     private var modelStore: ModelStore = ModelStore()
@@ -135,11 +179,13 @@ public actor MLXServeEngine {
                 device: DeviceProfile = .current(),
                 governor: MemoryGovernor? = nil,
                 gpuCache: GPUCacheConfiguration = GPUCacheConfiguration(),
+                preemption: PreemptionPolicy = PreemptionPolicy(),
                 physFootprint: @Sendable @escaping () -> UInt64? = HostMemory.physFootprint) {
         self.policy = policy
         self.deviceProfile = device
         self.governor = governor ?? .forDevice(device)
         self.gpuCache = gpuCache
+        self.preemption = preemption
         self.physFootprint = physFootprint
         // Bound MLX's process-global buffer-recycling pool NOW (before any package loads or
         // runs) so interactive consumers stop ratcheting phys_footprint by GBs per turn
@@ -327,50 +373,181 @@ public actor MLXServeEngine {
     /// default, or `package` when the caller selects a specific module), lazily construct and
     /// page it in (evicting LRU residents if needed), then run on the `InferenceActor`.
     ///
-    /// **Pool hygiene runs on every outcome** (V1, run-lifecycle program): a run that throws —
-    /// a user cancel surfacing as `CancellationError`, or a genuine failure — has already
-    /// churned the GPU buffer pool, so it still counts toward `trimEveryRuns`; a *cancelled*
-    /// run whose package declares a large transient peak additionally trims the pool right now
+    /// **Two cancellation lanes** (V3, run-lifecycle program — the `ModelPackage.run` contract
+    /// made real):
+    /// - **User cancel** — the sanctioned app seam is *cancelling the `Task` that wraps this
+    ///   call*. The engine forwards that cancellation into the run (structured propagation via
+    ///   a cancellation handler on the engine-scoped run task), the package's cooperative
+    ///   checkpoints throw, and the `CancellationError` surfaces to the caller **unchanged**
+    ///   (classify it `.cancelled`, not failed).
+    /// - **Governor preemption** — when a queued contender can't fit after idle-LRU eviction,
+    ///   the governor may cancel this run as a *last resort* (see `PreemptionPolicy`). The
+    ///   engine marks the run-handle preempted *before* cancelling, so the same
+    ///   `CancellationError` is recognized as its own doing and the request is **requeued**
+    ///   through normal admission — the caller keeps awaiting and eventually gets a genuine
+    ///   response. Repeated preemption is bounded by `PreemptionPolicy.maxRequeues`, degrading
+    ///   to `EngineError.preemptionRetryExhausted`. If the caller cancels *while* a preemption
+    ///   is in flight, the user lane wins: `CancellationError` surfaces, nothing requeues.
+    ///   A requeued attempt never preempts others — it waits — so two requests can't
+    ///   preempt-ping-pong.
+    ///
+    /// **Pool hygiene runs on every outcome of every attempt** (V1): a run that throws — a user
+    /// cancel, a governor preemption, or a genuine failure — has already churned the GPU buffer
+    /// pool, so it still counts toward `trimEveryRuns`; a cancelled/preempted run whose package
+    /// declares a large transient peak additionally trims the pool right now
     /// (`GPUCacheConfiguration.trimAfterCancelBytes` — the LTX-scale multi-GB mid-denoise
-    /// abandonment case). A thrown run also still `touch`es LRU recency — deliberate, not
-    /// incidental: its weights are hot and the measured post-cancel pattern is an immediate
-    /// re-run (the LTX cancel→re-run recovery), so the cancelled package must not become the
-    /// next eviction victim. The error itself propagates to the caller unchanged either way
-    /// (`ModelPackage.run` contract: governor preemption requeues, everything else surfaces).
+    /// abandonment case). A thrown run also still `touch`es LRU recency — deliberate: its
+    /// weights are hot and the measured post-cancel pattern is an immediate re-run (the LTX
+    /// cancel→re-run recovery). Genuine errors propagate to the caller unchanged.
     public func run(_ request: any CapabilityRequest,
                     package: PackageID? = nil) async throws -> any CapabilityResponse {
         let capability = request.capability
         let id = try resolve(capability, package)
-        let instance = try await resident(id)
-        // Bind the ambient run-progress sink around the package's run() — the run-time mirror of
-        // the WeightDownloadProgress binding in resident() (V2, run-lifecycle program). A package
-        // that reports coarse phases (RunProgress.report) surfaces them on the observable
-        // `runProgress` monitor; task-local, so the binding scopes to exactly this run. Cleared on
+        var requeues = 0
+        while true {
+            // A user cancel that lands between attempts (e.g. during a requeue wait, where the
+            // in-flight awaits are not cancellation-responsive) surfaces here, at the next
+            // admission boundary.
+            try Task.checkCancellation()
+            let conduct: AdmissionConduct = !preemption.enabled ? .idleOnly
+                : (requeues == 0 ? .preempting : .waiting)
+            switch try await runAttempt(request, id: id, capability: capability, conduct: conduct) {
+            case .response(let response):
+                return response
+            case .preempted:
+                requeues += 1
+                guard requeues <= preemption.maxRequeues else {
+                    throw EngineError.preemptionRetryExhausted(requeues: requeues)
+                }
+                // Queue behavior on requeue: let the in-flight runs (including the admission
+                // that preempted us) finish before re-admitting, rather than contending for
+                // residency they hold.
+                await drainActiveRuns()
+            }
+        }
+    }
+
+    /// How an admission may claim headroom beyond idle-LRU eviction (V3).
+    private enum AdmissionConduct {
+        /// v1 semantics: evict idle residents only; never touch a running inference
+        /// (`prepare`, and all admissions when `PreemptionPolicy.enabled == false`).
+        case idleOnly
+        /// May preempt a running victim as a last resort (a request's FIRST attempt).
+        case preempting
+        /// May wait for a running victim to finish and then evict it, but never cancels it
+        /// (REQUEUED attempts — structurally prevents preemption ping-pong).
+        case waiting
+    }
+
+    private enum RunAttemptOutcome {
+        case response(any CapabilityResponse)
+        case preempted
+    }
+
+    /// One admission + execution attempt. Admission (residency + run-handle registration) runs
+    /// inside the admission gate; the package's `run()` executes in an engine-scoped task — the
+    /// run-handle the governor can cancel — while a cancellation handler keeps the caller's own
+    /// cancellation structurally propagating into it.
+    private func runAttempt(_ request: any CapabilityRequest,
+                            id: PackageID,
+                            capability: Capability,
+                            conduct: AdmissionConduct) async throws -> RunAttemptOutcome {
+        await lockAdmission()
+        let instance: any ModelPackage
+        do {
+            instance = try await resident(id, conduct: conduct)
+        } catch {
+            unlockAdmission()
+            throw error
+        }
+
+        // Bind the ambient run-progress sink around the package's run() — the run-time mirror
+        // of the WeightDownloadProgress binding in resident() (V2). Reports land on the
+        // observable `runProgress` monitor AND on the run-handle (the governor's preemption-
+        // policy signal). Task-local, so the binding scopes to exactly this attempt; cleared on
         // EVERY exit (return, throw, cancel): no run in flight must read as nil.
         let pkg = id.description
+        runTokenClock &+= 1
+        let token = runTokenClock
         let sink: RunProgress.Sink = { [runProgress] report in
             Task { @MainActor in
                 runProgress.update(capability, package: pkg, to: report)
             }
+            Task { await self.noteRunProgress(token: token, report: report) }
         }
+        let task = Task {
+            try await RunProgress.$sink.withValue(sink) {
+                try await instance.run(request)
+            }
+        }
+        activeRuns[token] = ActiveRun(id: id, task: task,
+                                      transientBytes: residentTransient[id] ?? 0)
+        unlockAdmission()
+
         defer {
+            activeRuns[token] = nil
             Task { @MainActor [runProgress] in
                 runProgress.clear(capability, package: pkg)
             }
         }
         do {
-            let response = try await RunProgress.$sink.withValue(sink) {
-                try await instance.run(request)
+            let response = try await withTaskCancellationHandler {
+                try await task.value
+            } onCancel: {
+                task.cancel() // the user lane: caller's Task cancel → the run-handle
             }
             touch(id) // mark recently used after a completed run
             noteRunForTrimPolicy()
-            return response
+            return .response(response)
         } catch {
             touch(id) // hot weights + likely re-run — keep the package most-recently-used
             noteRunForTrimPolicy()
-            if error is CancellationError { noteCancelledRun(of: id) }
+            if error is CancellationError {
+                noteCancelledRun(transientBytes: activeRuns[token]?.transientBytes ?? 0)
+                // Engine-initiated AND the caller still wants the result → requeue. If the
+                // caller cancelled too (or instead), the user lane wins and `.cancelled`
+                // surfaces below.
+                if activeRuns[token]?.preempted == true, !Task.isCancelled {
+                    return .preempted
+                }
+            }
             throw error
         }
+    }
+
+    /// Record a run's latest phase report on its handle (the preemption-policy signal).
+    private func noteRunProgress(token: UInt64, report: RunPhaseReport) {
+        activeRuns[token]?.latestReport = report
+    }
+
+    /// Internal observability for offline tests: the latest phase report an in-flight run of
+    /// `id` has delivered to the preemption policy (nil = no active run, or no report landed).
+    func activeRunLatestReport(for id: PackageID) -> RunPhaseReport? {
+        activeRuns.values.first { $0.id == id }?.latestReport
+    }
+
+    /// Await completion of every currently in-flight run (snapshot; runs started later are not
+    /// waited). Cheap when nothing is running.
+    private func drainActiveRuns() async {
+        for run in activeRuns.values {
+            _ = try? await run.task.value
+        }
+    }
+
+    // MARK: - Admission gate (V3)
+
+    /// Acquire the admission critical section. FIFO-ish: each `unlockAdmission` wakes one
+    /// waiter, which re-checks and claims the gate.
+    private func lockAdmission() async {
+        while admissionLocked {
+            await withCheckedContinuation { admissionWaiters.append($0) }
+        }
+        admissionLocked = true
+    }
+
+    private func unlockAdmission() {
+        admissionLocked = false
+        if !admissionWaiters.isEmpty { admissionWaiters.removeFirst().resume() }
     }
 
     /// The `trimEveryRuns` knob: drop the buffer pool after every N runs (returned or thrown).
@@ -386,9 +563,11 @@ public actor MLXServeEngine {
     /// The `trimAfterCancelBytes` knob: a cancelled run abandoned its in-flight activations
     /// into the pool, so when the package's resolved transient peak says those are big,
     /// return them to the OS now rather than waiting for the next managed-limit rollover.
-    private func noteCancelledRun(of id: PackageID) {
+    /// Takes the bytes (carried on the run-handle) rather than a package id: on the preempt
+    /// path the victim's `residentTransient` entry is already gone by eviction time.
+    private func noteCancelledRun(transientBytes: UInt64) {
         guard let threshold = gpuCache.trimAfterCancelBytes,
-              (residentTransient[id] ?? 0) >= threshold else { return }
+              transientBytes >= threshold else { return }
         performPolicyTrim()
     }
 
@@ -400,11 +579,15 @@ public actor MLXServeEngine {
     }
 
     /// Ensure the package for a capability is constructed + loaded, returning it. Warms a model
-    /// (and applies memory admission) before the first `run`.
+    /// (and applies memory admission) before the first `run`. Prepare never preempts a running
+    /// inference — warming is not worth throwing away in-flight work (v1 idle-LRU semantics).
     @discardableResult
     public func prepare(_ capability: Capability,
                         package: PackageID? = nil) async throws -> any ModelPackage {
-        try await resident(resolve(capability, package))
+        let id = try resolve(capability, package)
+        await lockAdmission()
+        defer { unlockAdmission() }
+        return try await resident(id)
     }
 
     /// Evict a capability's resident instance (`unload()` + release its budget); the registration
@@ -456,7 +639,8 @@ public actor MLXServeEngine {
         return id
     }
 
-    private func resident(_ id: PackageID) async throws -> any ModelPackage {
+    private func resident(_ id: PackageID,
+                          conduct: AdmissionConduct = .idleOnly) async throws -> any ModelPackage {
         if let existing = residents[id] {
             touch(id)
             return existing
@@ -485,7 +669,8 @@ public actor MLXServeEngine {
                 throw EngineError.exceedsMemoryBudget(required: persistent &+ transient,
                                                       budget: governor.budgetBytes)
             }
-            await makeHeadroom(persistent: persistent, transient: transient, keeping: id)
+            await makeHeadroom(persistent: persistent, transient: transient, keeping: id,
+                               conduct: conduct)
 
             // Stamp the headroom this model is loading into onto a BudgetAware config (for memory-adaptive
             // dtype), computed AFTER eviction so it reflects the real available room. Mirrors how
@@ -588,23 +773,36 @@ public actor MLXServeEngine {
     /// Terminates because the caller has checked `persistent + transient ≤ budget`: evicting every other
     /// resident frees the full budget.
     ///
-    /// Two passes: (1) **declared-byte** headroom under the serialized-inference accounting (Σ persistent
-    /// weights + one max transient); (2) **R-MEM-1 real-pressure** — declared `QuantFootprint` bytes are
-    /// a *floor*,
-    /// so even when the declared sum fits, the process's *actual* `phys_footprint` may be over the
-    /// governor's high-watermark (activations/scratch the declarations omit). In that case evict idle
-    /// LRU residents until real pressure clears or none remain. Conservative and bounded: it only
-    /// reclaims our own idle residents (never the incoming `id`), and stops when nothing's left to
-    /// evict, so external (non-engine) memory pressure can't loop. Degrades to the declared-byte pass
-    /// when no host reading is available.
-    private func makeHeadroom(persistent p: UInt64, transient t: UInt64, keeping id: PackageID) async {
+    /// Passes, cheapest lever first:
+    /// (1) **Declared-byte** headroom under the serialized-inference accounting (Σ persistent
+    /// weights + one max transient): evict **idle** LRU residents — a package with a run in
+    /// flight is never idle (V3 closed the v1 hazard where a long run's stale `lastUsed` tick
+    /// made it the LRU "idle" victim and it was unloaded mid-inference). When idle eviction
+    /// isn't enough and `conduct` allows, reclaim from a RUNNING victim as a **last resort**:
+    /// `.preempting` cancels it (unless its V2 progress reads nearly done, in which case it is
+    /// waited for); `.waiting` (requeued admissions) only ever waits. Either way the victim's
+    /// run ends before its weights are evicted and the contender loads — the preempted
+    /// request's own `run()` requeues it (see `runAttempt`).
+    /// (2) **R-MEM-1 real-pressure** — declared `QuantFootprint` bytes are a *floor*, so even
+    /// when the declared sum fits, the process's *actual* `phys_footprint` may be over the
+    /// governor's high-watermark (activations/scratch the declarations omit). In that case evict
+    /// idle LRU residents until real pressure clears or none remain. Conservative and bounded:
+    /// it only reclaims our own idle residents (never the incoming `id`), and stops when
+    /// nothing's left to evict, so external (non-engine) memory pressure can't loop. Degrades to
+    /// the declared-byte pass when no host reading is available.
+    private func makeHeadroom(persistent p: UInt64, transient t: UInt64, keeping id: PackageID,
+                              conduct: AdmissionConduct = .idleOnly) async {
         // (1) Declared-byte headroom under the serialized-inference accounting (Σ persistent + one
-        // max transient). Evict idle LRU until the incoming model's accounting fits the budget.
+        // max transient). Idle LRU first; a running victim only as a last resort.
         while accountedRequired(persistent: p, transient: t, excluding: id) > governor.budgetBytes {
-            guard let victim = lruIdleVictim(excluding: id) else {
-                break // nothing left to evict
+            if let victim = lruIdleVictim(excluding: id) {
+                await evictResident(victim)
+                continue
             }
-            await evictResident(victim)
+            guard conduct != .idleOnly, let token = activeVictimToken(excluding: id) else {
+                break // nothing left to evict (or reclaim)
+            }
+            await reclaimActiveRun(token, conduct: conduct)
         }
 
         // (2) R-MEM-1: real-memory pressure trigger.
@@ -617,11 +815,50 @@ public actor MLXServeEngine {
         }
     }
 
-    /// The least-recently-used resident other than `id`, or nil if none remain.
+    /// The least-recently-used **idle** resident other than `id`, or nil if none remain.
+    /// A package with a run in flight is not idle — it is never an LRU victim (V3).
     private func lruIdleVictim(excluding id: PackageID) -> PackageID? {
-        residents.keys
-            .filter { $0 != id }
+        let running = Set(activeRuns.values.map(\.id))
+        return residents.keys
+            .filter { $0 != id && !running.contains($0) }
             .min(by: { (lastUsed[$0] ?? 0) < (lastUsed[$1] ?? 0) })
+    }
+
+    /// The in-flight run whose eviction the governor should consider next: backs a resident
+    /// package other than the contender's, lowest reported progress first (an unreported run
+    /// reads as fraction 0 — nothing measurable to preserve).
+    private func activeVictimToken(excluding id: PackageID) -> UInt64? {
+        activeRuns
+            .filter { $0.value.id != id && residents[$0.value.id] != nil }
+            .min(by: { progressFraction($0.value) < progressFraction($1.value) })?
+            .key
+    }
+
+    /// The V2 progress signal as a fraction: `step/totalSteps` of the run's latest report,
+    /// 0 when unknown. Deliberately coarse — a denoise step 90/100 with decode still ahead
+    /// reads as 0.9; good enough for "don't throw away minutes of GPU work".
+    private func progressFraction(_ run: ActiveRun) -> Double {
+        guard let report = run.latestReport,
+              let step = report.step, let total = report.totalSteps, total > 0 else { return 0 }
+        return Double(step) / Double(total)
+    }
+
+    /// Last-resort reclaim of a running victim's residency. `.preempting` cancels it first —
+    /// marking the handle so the victim's own `run()` recognizes the engine's doing and
+    /// requeues — unless its progress reads at/past the nearly-done threshold, where waiting
+    /// preserves the work. `.waiting` never cancels. Either way the run ends before its weights
+    /// are evicted. The handle stays in `activeRuns` (the victim's catch path still reads its
+    /// `preempted` marker; the victim's own `runAttempt` defer removes it) — eviction makes the
+    /// package non-resident, which is what disqualifies it from being picked again.
+    private func reclaimActiveRun(_ token: UInt64, conduct: AdmissionConduct) async {
+        guard let run = activeRuns[token] else { return }
+        if conduct == .preempting,
+           progressFraction(run) < preemption.preserveNearlyDoneFraction {
+            activeRuns[token]?.preempted = true
+            run.task.cancel()
+        }
+        _ = try? await run.task.value // prompt if cancelled; else runs to completion
+        await evictResident(run.id)
     }
 
     private func evictResident(_ id: PackageID) async {

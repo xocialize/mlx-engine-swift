@@ -15,9 +15,11 @@ import MLXToolKit
 //     surfaces) and resolves a capability call to the single constructed ModelPackage.
 //   - Admission: run the license gate on the manifest, SHA256-verify weights (HubAssetSource),
 //     then call PackageRegistration.makePackage to construct — never the package itself (C13).
-//   - InferenceActor scheduling: serialize run(_:) onto the compute resources; under memory
-//     pressure, cancel an in-flight run to evict and REQUEUE the request (a governor-initiated
-//     CancellationError is retried, not surfaced; genuine errors propagate to the caller).
+//   - InferenceActor scheduling: serialize run(_:) onto the compute resources. LANDED (V3,
+//     run-lifecycle program): under memory pressure the governor cancels an in-flight run as a
+//     last resort and the engine REQUEUES the request (its own CancellationError is retried,
+//     bounded by PreemptionPolicy.maxRequeues; a user cancel — cancelling the Task wrapping
+//     engine.run() — surfaces as .cancelled; genuine errors propagate to the caller).
 //   - MemoryGovernor (watermark ladder) + MemoryPool placement; load()/unload() drive residency.
 //   - MCPBridge (capability-as-tool exposure) over each manifest surface.
 //   - Model Manager + DeviceProfile (manifest.requirements ⊆ device.capabilities).

@@ -50,6 +50,10 @@ public protocol ModelPackage: AnyObject, Sendable {
     /// `try Task.checkCancellation()` at natural yield points (per generated token, per decoded
     /// frame) so the `MemoryGovernor` can preempt a long generation to reclaim memory. A
     /// governor-initiated cancellation is the engine's signal to **requeue** the request — not a
-    /// failure the caller sees; genuine errors propagate to the caller unchanged.
+    /// failure the caller sees; genuine errors propagate to the caller unchanged. The package
+    /// cannot (and must not) tell the two apart — both arrive as the same `CancellationError`;
+    /// unwind cleanly and rethrow, and the engine disambiguates. The sanctioned *user* cancel is
+    /// the app cancelling the `Task` wrapping `engine.run()`; it surfaces to the caller as the
+    /// `CancellationError` (classify `.cancelled`, not failed).
     func run(_ request: any CapabilityRequest) async throws -> any CapabilityResponse
 }
