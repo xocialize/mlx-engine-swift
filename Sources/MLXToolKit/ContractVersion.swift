@@ -148,5 +148,17 @@ public enum ContractVersion {
     //     canonical request field a package can't honor; silent-ignore is a contract violation.
     //     Runtime home for the decoder: mlx-constrained-decoding-swift (shared by the llm
     //     packages; the contract stays MLX-free).
-    public static let current = SemanticVersion(major: 1, minor: 16, patch: 0)
+    // 1.17.0 (2026-07-09, additive): bundled-weights materialization vocabulary —
+    //   • `BundledWeightSource` + `BundledWeightSourcing` — a configuration whose checkpoints are
+    //     vendored in the binary's resource bundle declares role→bundle-URL sources; the MAT gate
+    //     verifies them PRESENT on a fresh machine (the inverse of `WeightSourcing`'s
+    //     required-missing network set). Closes the gap where bundled packages (first case:
+    //     Real-ESRGAN's ~2 MB SRVGGNetCompact checkpoints) could honestly pass only MAT-1 —
+    //     declaring a network source would either fail MAT-4 or force a pointless download.
+    //   • One role namespace across both vocabularies (MAT-3); hybrid packages conform to both
+    //     and get each subset checked by its own rule (MAT-4 "fresh-machine posture").
+    //   • `MLXServeEngine.needsDownload` reads `false` for a bundled-only configuration whose
+    //     sources all resolve — the sanctioned signal, replacing the always-present-prewarmPaths
+    //     workaround (`WeightPrewarming` keeps its real job: cold-start page-in before load()).
+    public static let current = SemanticVersion(major: 1, minor: 17, patch: 0)
 }

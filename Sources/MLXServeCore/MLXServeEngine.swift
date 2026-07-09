@@ -492,13 +492,22 @@ public actor MLXServeEngine {
     /// Best-effort pre-`prepare` check: will this capability's package still need to materialize weights
     /// from the network? A consumer uses it to route the user into the download UI first.
     ///
-    /// Heuristic: if the configuration declares local weight paths (`WeightPrewarming`) and they all
-    /// exist → no download. Otherwise → needs download when the per-package install marker is absent
-    /// under the current store root (the same signal the storage UI counts). NB this reads as `true`
-    /// the first time for *bundled* packages too (they have no marker yet but won't actually hit the
-    /// network); their phase will simply skip `.downloading`.
+    /// Bundled-only packages (`BundledWeightSourcing`, no `WeightSourcing`) read `false` as soon as
+    /// their vendored sources resolve — they can never need the network. Otherwise, heuristic: if the
+    /// configuration declares local weight paths (`WeightPrewarming`) and they all exist → no
+    /// download. Otherwise → needs download when the per-package install marker is absent under the
+    /// current store root (the same signal the storage UI counts).
     public func needsDownload(_ capability: Capability, package: PackageID? = nil) -> Bool {
         guard let id = try? resolve(capability, package), let entry = packages[id] else { return false }
+        if let bundled = entry.configuration as? BundledWeightSourcing,
+           !(entry.configuration is WeightSourcing) {   // hybrids fall through to the network heuristics
+            let sources = bundled.bundledWeightSources
+            if !sources.isEmpty, sources.allSatisfy({ source in
+                source.url.map { FileManager.default.fileExists(atPath: $0.path) } ?? false
+            }) {
+                return false
+            }
+        }
         if let prewarming = entry.configuration as? WeightPrewarming {
             let paths = prewarming.prewarmPaths
             if !paths.isEmpty,
