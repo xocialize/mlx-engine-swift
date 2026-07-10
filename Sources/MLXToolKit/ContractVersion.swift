@@ -176,9 +176,18 @@ public enum ContractVersion {
     //     clear when the run exits (success, failure, or cancellation). First reporter: LTX-2.3;
     //     Wan/Bernini, SeedVR2, IndexTTS2 follow. V3 preemption policy will read this signal
     //     when weighing mid-run eviction victims.
-    // 1.19.0 — RESERVED by feat/meshrig-capability (meshRig, SkinTokens); unlanded at the time
-    //   this branch (feat/stt-capability) was cut. Whichever branch lands second reconciles the
-    //   changelog ordering; the version numbers themselves do not collide.
+    // 1.19.0 (2026-07-10, additive): mesh auto-rigging —
+    //   • `meshRig` (+ MeshRigRequest/Response/Contract) — a 3D triangle `Mesh` (GLB) → the SAME
+    //     geometry with a skeleton + skin weights (JOINTS_0/WEIGHTS_0) injected (introduced by
+    //     SkinTokens). The first surface whose INPUT and OUTPUT are both `Mesh` (`imageTo3D` only
+    //     outputs one). Reuses `CanonicalOutput.mesh` (no new artifact kind).
+    //   • `MeshRigContract.auto`/`.skinOnly` — generate-skeleton-and-skin vs skin-a-provided-skeleton
+    //     (J-in==J-out, the companion-character VRM path). Same input artifact → a Mode tag (C4).
+    //   • `MeshRigRequest.skeleton: Mesh?` — optional explicit skeleton source for `skinOnly` (the
+    //     `imageInpaint` two-input precedent); nil = use the mesh's own embedded skeleton (a VRM).
+    //   • `ParameterSchema.Kind.mesh` — first mesh-typed INPUT parameter. `meshRig` joins
+    //     `longRunCapabilities` (grammar-constrained beam decode is a per-token-checkpoint long run).
+    //   (Landed second — filled the 1.19.0 slot the stt branch reserved; stt took 1.20.0.)
     // 1.20.0 (2026-07-10, additive): speech-to-text —
     //   • `stt` (+ STTRequest/STTSegment/STTResponse/STTContract) — one complete spoken utterance
     //     (canonical `Audio`, any rate/channels) + optional BCP-47 `language` hint (nil =

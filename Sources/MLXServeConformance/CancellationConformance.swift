@@ -172,7 +172,7 @@ public enum CancellationConformance {
     /// loop is the motivating miss). Packages backing any of these must declare a cadence.
     public static let longRunCapabilities: Set<Capability> = [
         .textToVideo, .videoEdit, .videoUpscale, .frameInterpolate, .characterAnimation,
-        .talkingHead, .tts, .soundEffect, .imageTo3D,
+        .talkingHead, .tts, .soundEffect, .imageTo3D, .meshRig,
         // stt transcribes arbitrarily long audio via the cache-aware chunk loop — genuinely
         // long-run, so a cadence declaration is required (contract 1.20.0).
         .stt,

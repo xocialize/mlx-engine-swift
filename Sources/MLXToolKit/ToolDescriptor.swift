@@ -11,6 +11,9 @@ public struct ParameterSchema: Sendable, Codable, Equatable {
         case video
         case object
         case array
+        /// A 3D mesh input (GLB bytes). First used by `meshRig` (contract 1.19.0) — the first
+        /// capability whose INPUT is a mesh (`imageTo3D` only OUTPUTs one, from an image input).
+        case mesh
     }
 
     public let name: String

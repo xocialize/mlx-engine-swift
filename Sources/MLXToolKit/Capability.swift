@@ -112,6 +112,14 @@ public enum Capability: String, Codable, Sendable, CaseIterable, Hashable {
     /// `speechEmotion` — transcription, not classification; from `llm` — deterministic audio → text
     /// recognition, not generation.)
     case stt
+    /// **Mesh auto-rigging** — a 3D triangle `Mesh` (GLB) → the SAME mesh with a skeleton + skin
+    /// weights injected (`CanonicalOutput.mesh`, rigged GLB bytes). Two modes ride `mode`
+    /// (`MeshRigContract.auto` = generate skeleton + skin · `.skinOnly` = predict skin for a
+    /// caller-provided skeleton). Contract 1.19.0; introduced by SkinTokens. (Distinct from
+    /// `imageTo3D`: that INVENTS geometry from an image; this takes existing geometry and adds a
+    /// rig — mesh-in / rigged-mesh-out, the first surface whose input AND output are `Mesh`.
+    /// The companion-character path: a VRM's own skeleton → `skinOnly` → skinned VRM.)
+    case meshRig
 }
 
 /// The fixed output artifact kind for a capability. Not negotiable per package (C2).
@@ -168,6 +176,7 @@ extension Capability {
         case .imageTo3D: return .mesh
         case .embed: return .structuredText
         case .stt: return .text
+        case .meshRig: return .mesh
         }
     }
 }
