@@ -2,10 +2,12 @@
 
 > ## Status — usable, evolving
 >
-> MLXEngine is **published and consumable**: tagged **v0.4.0** (capability contract **1.3.0**),
-> and already serving a roster of ~two-dozen conformant model packages — LLM, TTS, text→image /
-> text→video (+ editing), audio separation, speech emotion, audio codec/polish, image quality /
-> restore / upscale, video upscale, frame interpolation, content classification, and optical flow.
+> MLXEngine is **published and consumable**: tagged **v0.30.0** (capability contract **1.20.0**),
+> and already serving a roster of ~50 conformant model packages across **41 capabilities** — LLM,
+> TTS, **speech-to-text**, text→image / text→video (+ image/video editing), image→3D, text
+> embedding, audio separation / codec / polish, sound effects, speech emotion, image quality /
+> restore / upscale / colorize / inpaint, matting & promptable segmentation, video upscale,
+> frame interpolation, optical flow, character animation, talking-head, mesh rigging, and more.
 > The contract is **additive**: capabilities and conformance levels grow at minor versions, and a
 > breaking change is a major bump with a deprecation window — so **pin a tag** for production use.
 
@@ -34,7 +36,9 @@ cross-model work is uniform from a programming standpoint.
   `trimCaches()`, and `gpuPoolSnapshot()` telemetry (`docs/architecture.md` R-MEM-2).
   Some advanced facilities (mid-run eviction-under-pressure + requeue, `MCPBridge`, Hub SHA256
   verification) are still in progress.
-- **MLXServeConformance** — the C0–C13 self-check harness (in progress).
+- **MLXServeConformance** — the C0–C13 self-check harness, plus the offline **MAT** (weight
+  auto-materialization) and **CAN** (cooperative-cancellation cadence) gates each package runs in
+  its own test suite.
 - **MLXEngineUI** — reusable SwiftUI for engine management (model-storage + web-search settings,
   and `ModelStateView` — the live "downloading weights / first load is heavy / ready" strip bound to
   `MLXServeEngine.preparation`) plus the Marquee design tokens, so consuming apps share one look.
