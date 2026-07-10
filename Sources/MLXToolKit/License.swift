@@ -93,10 +93,23 @@ extension SPDXLicense {
     /// wherever the codec weights are shipped.
     public static let nvidiaOpenModel: SPDXLicense = "LicenseRef-NVIDIA-Open-Model"
 
+    /// Linux Foundation OpenMDW License v1.1 (openmdw.ai/license/1-1). Referenced by its official
+    /// name (SPDX inclusion pending at review time). Reviewed against the license text:
+    /// **maximally permissive** — grants free-of-charge permission to "deal in the Model Materials
+    /// without restriction" under all copyright, patent, database, and trade secret rights; no
+    /// field-of-use, revenue, or geographic restriction; **no restrictions or obligations on
+    /// outputs**. The only binds are: retain the agreement text + notices of origin when
+    /// distributing Model Materials (attribution, same shape as MIT), and a defensive-patent/
+    /// copyright termination (same shape as Apache-2.0 §3). Strictly less restrictive than
+    /// several allowlisted entries (`ltx2Community`, `dinov3`, `gemmaTerms`), so this project
+    /// **permits** it. Used by the NVIDIA Nemotron 3.5 ASR streaming weights in the STT port
+    /// (NemotronSTTPackage); NVIDIA adopted OpenMDW across the Nemotron/Cosmos/GR00T families.
+    public static let openMDW1_1: SPDXLicense = "OpenMDW-1.1"
+
     /// The permissive allowlist used by `.permissiveOnly`. Curated; extend deliberately.
     public static let permissiveAllowlist: Set<SPDXLicense> = [
         .mit, .apache2, .bsd2, .bsd3, .isc, .unlicense, .funasrModel, .ccBy4, .ltx2Community, .dinov3,
-        .gemmaTerms, .nvidiaOpenModel,
+        .gemmaTerms, .nvidiaOpenModel, .openMDW1_1,
     ]
 
     /// Non-permissive licenses explicitly acknowledged for **eval/research** use only. These are

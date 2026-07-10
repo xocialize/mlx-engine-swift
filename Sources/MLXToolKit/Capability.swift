@@ -102,6 +102,16 @@ public enum Capability: String, Codable, Sendable, CaseIterable, Hashable {
     /// text → vector encoding, no generation; from `MLXRetrievalKit` — that is web search,
     /// not vector production.)
     case embed
+    /// **Speech-to-text** — a speech `Audio` clip (+ optional BCP-47 `language` hint, nil = auto-detect)
+    /// → the transcript with native punctuation/capitalization, plus timestamped segments and the
+    /// detected language. Utterance-shaped and one-shot: the caller sends a complete utterance; live
+    /// partial hypotheses are NOT this surface (that is the deferred token-streaming contract,
+    /// companion N2 — same boundary `RunPhase` drew in 1.18.0). Contract 1.20.0; introduced by
+    /// Nemotron 3.5 ASR streaming (cache-aware FastConformer-RNNT; the model's internal chunked
+    /// streaming is package-internal memory discipline, not a request surface). (Distinct from
+    /// `speechEmotion` — transcription, not classification; from `llm` — deterministic audio → text
+    /// recognition, not generation.)
+    case stt
 }
 
 /// The fixed output artifact kind for a capability. Not negotiable per package (C2).
@@ -157,6 +167,7 @@ extension Capability {
         case .trackObject: return .matteSequence
         case .imageTo3D: return .mesh
         case .embed: return .structuredText
+        case .stt: return .text
         }
     }
 }

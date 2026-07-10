@@ -176,5 +176,24 @@ public enum ContractVersion {
     //     clear when the run exits (success, failure, or cancellation). First reporter: LTX-2.3;
     //     Wan/Bernini, SeedVR2, IndexTTS2 follow. V3 preemption policy will read this signal
     //     when weighing mid-run eviction victims.
-    public static let current = SemanticVersion(major: 1, minor: 18, patch: 0)
+    // 1.19.0 — RESERVED by feat/meshrig-capability (meshRig, SkinTokens); unlanded at the time
+    //   this branch (feat/stt-capability) was cut. Whichever branch lands second reconciles the
+    //   changelog ordering; the version numbers themselves do not collide.
+    // 1.20.0 (2026-07-10, additive): speech-to-text —
+    //   • `stt` (+ STTRequest/STTSegment/STTResponse/STTContract) — one complete spoken utterance
+    //     (canonical `Audio`, any rate/channels) + optional BCP-47 `language` hint (nil =
+    //     auto-detect) → transcript with native punctuation/capitalization, timestamped
+    //     `segments`, and `detectedLanguage`. Canonical output `.text` (the transcript is the
+    //     deliverable; segments/locale are response fields, per the embed/imageQualityScore
+    //     non-Artifact precedent). Introduced by Nemotron 3.5 ASR streaming (cache-aware
+    //     FastConformer-RNNT, 40 locales; unblocks MLXCompanion voice input).
+    //   • Utterance-shaped and ONE-SHOT by design: live partial hypotheses remain the deferred
+    //     token-streaming contract (companion N2) — the same boundary RunPhase drew in 1.18.0.
+    //     The model's internal chunked cache-aware streaming is package-internal memory
+    //     discipline (per-chunk RunPhase reports + cancellation checkpoints), not a request
+    //     surface.
+    //   • `SPDXLicense.openMDW1_1` ("OpenMDW-1.1", LF Open Model/Data/Weights v1.1) added to the
+    //     permissive allowlist (C7) — reviewed maximally permissive (no field-of-use/revenue
+    //     restriction, no output obligations; attribution + defensive-termination only).
+    public static let current = SemanticVersion(major: 1, minor: 20, patch: 0)
 }
