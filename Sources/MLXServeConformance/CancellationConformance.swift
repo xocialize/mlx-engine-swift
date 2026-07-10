@@ -173,6 +173,9 @@ public enum CancellationConformance {
     public static let longRunCapabilities: Set<Capability> = [
         .textToVideo, .videoEdit, .videoUpscale, .frameInterpolate, .characterAnimation,
         .talkingHead, .tts, .soundEffect, .imageTo3D,
+        // stt transcribes arbitrarily long audio via the cache-aware chunk loop — genuinely
+        // long-run, so a cadence declaration is required (contract 1.20.0).
+        .stt,
     ]
 
     /// Declared transient peak at or above this implies a long run regardless of capability
