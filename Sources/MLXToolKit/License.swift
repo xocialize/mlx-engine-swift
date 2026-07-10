@@ -75,10 +75,28 @@ extension SPDXLicense {
     /// Used by the IndexTTS2 emotion+duration TTS port (IndexTTS2Package).
     public static let indexTTS2Model: SPDXLicense = "LicenseRef-Index-Model"
 
+    /// NVIDIA Open Model License Agreement (v. June 14, 2024). Non-SPDX, referenced via the
+    /// `LicenseRef-` convention. Reviewed against the full agreement text: **commercially
+    /// permissive** — "Models are commercially useable"; §2.2 grants a perpetual, worldwide,
+    /// royalty-free license to reproduce, create derivatives, make, **sell, offer for sale,
+    /// distribute and import**; §3 permits redistribution of the Model and Derivative Models in
+    /// any medium with or without modification; §2.4 — NVIDIA claims **no ownership of outputs**
+    /// and You own Your Derivative Models. **No revenue/MAU threshold, no non-compete, no
+    /// eval-only clause** — strictly *less* restrictive than the allowlisted `ltx2Community`
+    /// (revenue gate + non-compete) and the same shape as the allowlisted `dinov3`/`gemmaTerms`
+    /// (commercial + attribution + AUP). The only binds are: §3.1 — when **distributing the
+    /// weights**, ship a copy of the Agreement plus a "Notice" file reading "Licensed by NVIDIA
+    /// Corporation under the NVIDIA Open Model License"; a §2.3 AI-ethics AUP; §4 no trademark
+    /// grant; §10 export compliance; and a §2.1 defensive-patent termination (same shape as
+    /// Apache-2.0 §3). On that basis this project **permits** it. Used by the NVIDIA NanoCodec
+    /// vocoder weights in the Gepard streaming-TTS port (GepardPackage); honor the §3.1 Notice
+    /// wherever the codec weights are shipped.
+    public static let nvidiaOpenModel: SPDXLicense = "LicenseRef-NVIDIA-Open-Model"
+
     /// The permissive allowlist used by `.permissiveOnly`. Curated; extend deliberately.
     public static let permissiveAllowlist: Set<SPDXLicense> = [
         .mit, .apache2, .bsd2, .bsd3, .isc, .unlicense, .funasrModel, .ccBy4, .ltx2Community, .dinov3,
-        .gemmaTerms,
+        .gemmaTerms, .nvidiaOpenModel,
     ]
 
     /// Non-permissive licenses explicitly acknowledged for **eval/research** use only. These are
