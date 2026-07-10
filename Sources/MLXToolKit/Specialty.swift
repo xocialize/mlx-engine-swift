@@ -28,6 +28,15 @@ extension Specialty {
     public static let emotionControl: Specialty = "emotionControl"
     /// Native output-duration control (e.g. IndexTTS2's length-regulator target length).
     public static let durationControl: Specialty = "durationControl"
+
+    // tts voice-cloning / architecture ranking: the selection axes that let the
+    // orchestrator/dub route prefer a cloner or a streaming-first engine.
+    /// Zero-shot voice cloning from a short reference clip — no per-speaker fine-tune
+    /// (the axis IndexTTS2, VoxCPM2, Qwen3-TTS, and Gepard-1.0 all share).
+    public static let voiceClone: Specialty = "voiceClone"
+    /// Streaming-first, low-latency architecture that emits audio incrementally
+    /// rather than only after whole-utterance synthesis (e.g. Gepard-1.0).
+    public static let realtimeStreaming: Specialty = "realtimeStreaming"
 }
 
 /// A specialty paired with a strength in 0...1. A model declares an array of these.
