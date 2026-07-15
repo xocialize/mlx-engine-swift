@@ -1,9 +1,13 @@
 import Foundation
 
-/// Canonical single-image → 3D request: one `Image` → a 3D triangle `Mesh` (GLB).
+/// Canonical image → 3D request: a primary `Image` (plus optional additional views) → a 3D triangle
+/// `Mesh` (GLB).
 ///
-/// The geometry is *invented* from a single view (no multi-view reconstruction, no full-reference
-/// floor) — an opt-in generative transform. Resolution tier (the voxel grid size) rides `mode`
+/// From a single view the geometry is *invented* (no full-reference floor) — an opt-in generative
+/// transform. Passing `additionalViews` (e.g. a front/¾/side/back turnaround of the SAME subject) is
+/// genuine multi-view conditioning: a package that supports it concatenates the views' features, which
+/// resolves back/side ambiguity and reduces single-view artifacts. Packages that don't support it use
+/// `image` only. Resolution tier (the voxel grid size) rides `mode`
 /// (`ImageTo3DContract.res512`/`.res1024`/`.res1536`); a package documents the tiers it honors via its
 /// `ToolDescriptor`. Background removal of the input is package-internal preprocessing (the shipped
 /// BiRefNet `matting`), not a request field.
@@ -12,14 +16,18 @@ import Foundation
 public struct ImageTo3DRequest: CapabilityRequest {
     public static var capability: Capability { .imageTo3D }
 
-    /// The image to reconstruct a 3D mesh from (canonical `Image` artifact).
+    /// The primary image to reconstruct a 3D mesh from (canonical `Image` artifact).
     public let image: Image
+    /// Optional additional views of the SAME subject (multi-view conditioning). Empty/nil ⇒ single-view.
+    /// A package that doesn't support multi-view ignores these and uses `image`.
+    public let additionalViews: [Image]?
     /// Resolution tier (voxel grid). Optional; a package picks its default tier when nil.
     public let mode: Mode?
     public let metaData: MetaData
 
-    public init(image: Image, mode: Mode? = nil, metaData: MetaData = [:]) {
+    public init(image: Image, additionalViews: [Image]? = nil, mode: Mode? = nil, metaData: MetaData = [:]) {
         self.image = image
+        self.additionalViews = additionalViews
         self.mode = mode
         self.metaData = metaData
     }

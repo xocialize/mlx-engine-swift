@@ -204,5 +204,13 @@ public enum ContractVersion {
     //   • `SPDXLicense.openMDW1_1` ("OpenMDW-1.1", LF Open Model/Data/Weights v1.1) added to the
     //     permissive allowlist (C7) — reviewed maximally permissive (no field-of-use/revenue
     //     restriction, no output obligations; attribution + defensive-termination only).
-    public static let current = SemanticVersion(major: 1, minor: 20, patch: 0)
+    // 1.21.0 (2026-07-14, additive): multi-view conditioning on the `imageTo3D` surface —
+    //   • `ImageTo3DRequest.additionalViews: [Image]?` — optional additional views of the SAME
+    //     subject (e.g. a front/¾/side/back turnaround). A package that supports multi-view
+    //     concatenates the views' image-conditioner features (resolving back/side ambiguity and
+    //     reducing single-view artifacts); a package that doesn't ignores them and uses `image`.
+    //     Same canonical output (`.mesh`), same Mode tiers — a request-level field, NOT a new
+    //     surface. `nil`/empty = single-view, so every existing consumer is unchanged. Introduced
+    //     by the TRELLIS.2 turnaround front door (klein + BiRefNet → 3 matted T-pose views).
+    public static let current = SemanticVersion(major: 1, minor: 21, patch: 0)
 }
