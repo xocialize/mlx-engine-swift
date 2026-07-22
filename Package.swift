@@ -16,6 +16,9 @@ let package = Package(
         .library(name: "MLXToolKit", targets: ["MLXToolKit"]),
         .library(name: "MLXServeCore", targets: ["MLXServeCore"]),
         .library(name: "MLXServeConformance", targets: ["MLXServeConformance"]),
+        // Metadata-only hub access (file listings + sizes) behind an injectable seam. NOT a
+        // downloader — it exists so the engine can preview download size / disk fit (MS-3).
+        .library(name: "MLXHubMetadata", targets: ["MLXHubMetadata"]),
         .library(name: "MLXEngineUI", targets: ["MLXEngineUI"]),
         // Test/validation harness — the reusable seams every category testing app needs (memory
         // split readout, transient reserve, admissibility tiers, phase-tagged trace, headless
@@ -41,8 +44,13 @@ let package = Package(
         // Links MLX for the GPU buffer-pool policy (N5) — allocator API only, no kernels.
         .target(name: "MLXServeCore", dependencies: [
             "MLXToolKit",
+            "MLXHubMetadata",
             .product(name: "MLX", package: "mlx-swift"),
         ]),
+
+        // Metadata-only HF access (URLSession + Foundation; no MLX, no downloads). Keeps
+        // MLXToolKit network-free while letting the engine size a materialization before it runs.
+        .target(name: "MLXHubMetadata", dependencies: ["MLXToolKit"]),
 
         // C0–C13 self-check harness (placeholder this phase).
         .target(name: "MLXServeConformance", dependencies: ["MLXToolKit"]),
@@ -62,8 +70,9 @@ let package = Package(
         .target(name: "MLXRetrievalKit", dependencies: ["MLXRetrievalKitContracts"]),
 
         .testTarget(name: "MLXToolKitTests", dependencies: ["MLXToolKit"]),
+        .testTarget(name: "MLXHubMetadataTests", dependencies: ["MLXHubMetadata", "MLXToolKit"]),
         .testTarget(name: "MLXServeCoreTests", dependencies: [
-            "MLXServeCore", "MLXToolKit",
+            "MLXServeCore", "MLXToolKit", "MLXHubMetadata",
             // For pre-setting / reading the process-global cache limit around engine init.
             .product(name: "MLX", package: "mlx-swift"),
         ]),

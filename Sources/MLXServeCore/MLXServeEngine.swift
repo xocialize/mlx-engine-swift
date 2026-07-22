@@ -1,5 +1,6 @@
 import Foundation
 import MLX
+import MLXHubMetadata
 import MLXToolKit
 
 /// Errors the coordinator raises around admission and routing.
@@ -22,6 +23,10 @@ public enum EngineError: Error, Sendable, Equatable {
     /// Evict it first. Registered-but-not-resident is deletable by design — the weights
     /// re-materialize on the next prepare.
     case weightsInUse(repo: String, packageID: PackageID)
+    /// The store's volume can't hold what this package still has to download (MS-3): refused
+    /// **before** materialization rather than failing mid-write, gigabytes in. Only raised when a
+    /// size preview was actually obtainable — an unreachable hub never blocks a load.
+    case insufficientDisk(required: UInt64, free: UInt64)
 }
 
 /// Engine-side identity for a registered package — lets several packages back the SAME
@@ -153,6 +158,12 @@ public actor MLXServeEngine {
     /// Real-memory reading for the R-MEM-1 pressure trigger (`phys_footprint`). Injectable so tests
     /// can drive admission with a controlled footprint; defaults to the live host reading.
     private let physFootprint: @Sendable () -> UInt64?
+    /// Metadata-only hub client used to size a pending materialization (MS-3). Injectable so tests
+    /// (and offline consumers) never touch the network.
+    private let hubMetadata: any HubMetadataProviding
+    /// Whether `resident()` refuses a load whose pending download can't fit the store volume.
+    /// On by default; the escape hatch exists for hosts that manage disk themselves.
+    public var diskPrecheckEnabled: Bool
 
     /// Observable preparation progress per capability/package (registering → prewarming → downloading
     /// → loading → ready/failed). A consuming app binds `MLXEngineUI.ModelStateView` to this to show a
@@ -185,13 +196,17 @@ public actor MLXServeEngine {
                 governor: MemoryGovernor? = nil,
                 gpuCache: GPUCacheConfiguration = GPUCacheConfiguration(),
                 preemption: PreemptionPolicy = PreemptionPolicy(),
-                physFootprint: @Sendable @escaping () -> UInt64? = HostMemory.physFootprint) {
+                physFootprint: @Sendable @escaping () -> UInt64? = HostMemory.physFootprint,
+                hubMetadata: any HubMetadataProviding = HubMetadataClient(),
+                diskPrecheckEnabled: Bool = true) {
         self.policy = policy
         self.deviceProfile = device
         self.governor = governor ?? .forDevice(device)
         self.gpuCache = gpuCache
         self.preemption = preemption
         self.physFootprint = physFootprint
+        self.hubMetadata = hubMetadata
+        self.diskPrecheckEnabled = diskPrecheckEnabled
         // Bound MLX's process-global buffer-recycling pool NOW (before any package loads or
         // runs) so interactive consumers stop ratcheting phys_footprint by GBs per turn
         // (ENGINE-NEEDS N5). `.unmanaged` resolves to nil and leaves the global untouched.
@@ -687,6 +702,11 @@ public actor MLXServeEngine {
                     ? governor.budgetBytes &- used : 0
                 if let restamped = budgetAware as? any PackageConfiguration { configuration = restamped }
             }
+            // Disk admission (MS-3), the storage-side sibling of the memory check above: refuse a
+            // load whose pending download can't fit the store volume, instead of discovering it
+            // gigabytes into the write. Skipped silently whenever the size isn't knowable.
+            try await assertDiskFits(entry)
+
             let instance = try entry.registration.makePackage(configuration)
             // Cold-start watchdog mitigation: page the package's declared weight files into the OS cache
             // before load() issues GPU evals, so file-I/O latency never stalls a live Metal command
@@ -772,6 +792,40 @@ public actor MLXServeEngine {
         let repo = entry.registration.manifest.provenance.sourceRepo
         guard modelStore.root != nil else { return true }
         return !modelStore.hasMarker(for: repo)
+    }
+
+    /// What this capability's package would still have to download, and whether the store volume
+    /// can take it (MS-3) — the "needs 34 GB, 41 GB free" affordance, computed **before** any
+    /// package code runs.
+    ///
+    /// Sizes only the sources the MS-2 probe reports **missing**: an already-materialized source
+    /// costs nothing. Returns `nil` when the capability resolves to no package or its configuration
+    /// declares no `WeightSourcing` (nothing to preview). Degrades honestly when the hub is
+    /// unreachable — unknown sizes, `fits == nil`, never a refusal.
+    public func materializationPreview(_ capability: Capability,
+                                       package: PackageID? = nil) async -> MaterializationPreview? {
+        guard let id = try? resolve(capability, package), let entry = packages[id],
+              let sourcing = entry.configuration as? WeightSourcing else { return nil }
+        return await MaterializationPreview.make(
+            missing: sourcing.missingWeightSources(storeRoot: modelStore.root),
+            storeRoot: modelStore.root,
+            provider: hubMetadata)
+    }
+
+    /// The `resident()` precheck: throw rather than let a downloader fail mid-write, but ONLY on a
+    /// preview we could actually obtain (known total, known free, and it doesn't fit). Unknown
+    /// sizes — offline, private repo, no store root — proceed exactly as before.
+    private func assertDiskFits(_ entry: Entry) async throws {
+        guard diskPrecheckEnabled, modelStore.root != nil,
+              let sourcing = entry.configuration as? WeightSourcing else { return }
+        let missing = sourcing.missingWeightSources(storeRoot: modelStore.root)
+        guard !missing.isEmpty else { return }
+        let preview = await MaterializationPreview.make(missing: missing,
+                                                        storeRoot: modelStore.root,
+                                                        provider: hubMetadata)
+        guard let required = preview.totalBytes, let free = preview.freeBytes,
+              required > free else { return }
+        throw EngineError.insufficientDisk(required: required, free: free)
     }
 
     /// Delete a repo's weights from the model store (MS-4) — the disk-side sibling of `evict`.

@@ -235,6 +235,11 @@ public enum ContractVersion {
     //     count; an HF snapshot links into `blobs/`, so identity-dedup is what stops a 2×
     //     over-report). The residency guard is engine-side: `MLXServeEngine.deleteWeights(repo:)`
     //     → `EngineError.weightsInUse(repo:packageID:)`.
+    //   • MS-3 (NOT in MLXToolKit — recorded here for the program's history): materialization
+    //     preview + disk precheck ship in a NEW target `MLXHubMetadata` (Foundation + URLSession,
+    //     metadata only, behind `HubMetadataProviding`) so MLXToolKit stays network-free and the
+    //     "the engine downloads no weights" stance holds. `MLXServeEngine.materializationPreview`
+    //     + `EngineError.insufficientDisk` + `diskPrecheckEnabled` are engine-side.
     //   • MS-5 (docs/comments only): the never-built `HubAssetSource` SHA256-verification claims
     //     are retired across both doc trees. Weight integrity is the hub client's responsibility
     //     (xet chunk hashes / ETag verification in swift-huggingface); the engine verifies

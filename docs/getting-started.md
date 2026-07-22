@@ -24,6 +24,34 @@ conformant package:
   to build a package.
 - **MLXServeCore** — the runtime coordinator (in progress).
 - **MLXServeConformance** — the C0–C13 self-check harness (in progress).
+- **MLXHubMetadata** — metadata-only hub access (file listings + sizes) behind
+  `HubMetadataProviding`. Not a downloader; it exists so the engine can size a download before it
+  starts.
+
+## First run: how much will this download?
+
+The engine downloads no weights itself — each package materializes through its own hub client into
+the engine's `ModelStore` root. Two seams let an app show a first-run affordance before any package
+code runs:
+
+```swift
+await engine.useModelStore(ModelStore(root: chosenFolder))
+
+if await engine.needsDownload(.llm),
+   let preview = await engine.materializationPreview(.llm) {
+    // preview.sources — per missing source: role, repo, expectedBytes
+    // preview.totalBytes / preview.freeBytes / preview.fits  (each nil = "unknown", never a refusal)
+}
+
+let package = try await engine.prepare(.llm)   // downloads + loads
+```
+
+`prepare()` runs a **disk precheck** on the way in: when the size is knowable and the pending
+download exceeds free space on the store volume, it throws `EngineError.insufficientDisk(required:
+free:)` instead of failing gigabytes into the write. An unreachable hub means unknown size, which
+never blocks a load; hosts that manage disk themselves can pass `diskPrecheckEnabled: false` to
+`MLXServeEngine.init`. Live progress during the download arrives on `engine.preparation`
+(`.downloading(fraction:bytesPerSecond:)`).
 
 ## Build
 
