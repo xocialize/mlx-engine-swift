@@ -20,6 +20,16 @@ not an opinion. Most declarative items are made once on the `PackageManifest`.
 | C12 | Forward-compat discipline (`@unknown default` on capability switches) |
 | C13 | Runtime governance cooperation (engine-owned lifecycle; `@InferenceActor`-isolated; cancellation-honoring; cooperatively evictable; no private queue) |
 
+**C11 is scoped to introspectability, not MCP wire compatibility** (decided 2026-07-22). A surface
+satisfies C11 by publishing a complete, honest `ToolDescriptor` — a bridge can enumerate the tool,
+its parameters and kinds, and its I/O types from the manifest alone. `ParameterSchema` is an
+MCP-*like* subset: no value constraints (`minimum`/`maximum`/`enum`/`default`), opaque
+`object`/`array`, and **no declared JSON encoding for the binary artifact kinds**
+(`image`/`audio`/`video`/`mesh`). Closing that gap is purely additive and is done **at integration
+time, when a non-LLM MCP consumer actually exists** (in practice alongside `MCPBridge`, whose schema
+layer it is) — so nothing is reserved for it in the contract. The `llm` surface is unaffected: its
+structured output and tool-use ride FoundationModels' `GenerationSchema`, which is full JSON Schema.
+
 C13's "runs only in the serialization domain / no private queue" is **compiler-enforced** by
 `ModelPackage`'s `@InferenceActor` isolation; its eviction/cancellation behavior needs runtime
 testing. "Cooperatively evictable" is refined by **R-MEM-1** (architecture.md): a package is

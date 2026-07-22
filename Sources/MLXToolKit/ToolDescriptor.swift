@@ -1,5 +1,14 @@
 /// A minimal, introspectable parameter schema so MCPBridge can describe a tool without
 /// reverse-engineering it (C11).
+///
+/// **Deliberately an MCP-*like* subset, not JSON Schema** (decided 2026-07-22; C11 asserts
+/// introspectability, not wire compatibility). Missing versus JSON Schema: value constraints
+/// (`minimum`/`maximum`/`enum`/`default`), `properties`/`items` for the `object`/`array` kinds, and
+/// a declared JSON encoding for the binary kinds (`image`/`audio`/`video`/`mesh`). Closing that gap
+/// is **purely additive** — optional fields on this type plus a serializer — so it is left to
+/// **integration time**, when a real non-LLM MCP consumer exists to settle the binary-encoding
+/// convention rather than us guessing it. See `EngineeringDocs/MLXEngineDocs/
+/// mcp-wire-fidelity-spike.md` for the per-surface gap list and ordering.
 public struct ParameterSchema: Sendable, Codable, Equatable {
     public enum Kind: String, Sendable, Codable {
         case string
