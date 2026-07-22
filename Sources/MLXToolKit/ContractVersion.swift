@@ -224,6 +224,17 @@ public enum ContractVersion {
     //   • Legacy tolerance: marker READS fall back to the pre-MS-1 `<root>/<org>/<name>/` path for
     //     one release (read-both, write-new). No data migration — markers regenerate on load().
     //     REMOVE `legacyDirectory(for:)` + its fallback at the next minor.
+    //   • MS-2: `WeightSourcing.missingWeightSources(storeRoot:)` gains a DEFAULT implementation
+    //     (+ `defaultMissingWeightSources(storeRoot:)` to delegate to from an override, and the
+    //     `WeightSourceProbe` glob matcher). Packages stop hand-rolling the on-disk probe; a
+    //     half-materialized snapshot (a declared glob matching nothing) reads as MISSING rather
+    //     than silently degrading. Overriding is still supported — and still required for a
+    //     configuration with an explicit local-path escape hatch, which must be honored first.
+    //   • MS-4: disk governance to match memory governance — `ModelStore.remove(repo:)` (repo dir
+    //     + its `.locks` entries) and `ModelStore.usage(at:)` (`Usage` = deduped bytes + marker
+    //     count; an HF snapshot links into `blobs/`, so identity-dedup is what stops a 2×
+    //     over-report). The residency guard is engine-side: `MLXServeEngine.deleteWeights(repo:)`
+    //     → `EngineError.weightsInUse(repo:packageID:)`.
     //   • MS-5 (docs/comments only): the never-built `HubAssetSource` SHA256-verification claims
     //     are retired across both doc trees. Weight integrity is the hub client's responsibility
     //     (xet chunk hashes / ETag verification in swift-huggingface); the engine verifies

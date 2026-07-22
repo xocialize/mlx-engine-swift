@@ -134,3 +134,51 @@ private func mockConfig() -> StandardConfiguration { StandardConfiguration(weigh
     try await legacyEngine.register(PackageRegistration.of(MockLLMPackage.self), configuration: mockConfig())
     #expect(await legacyEngine.needsDownload(.llm) == false)
 }
+
+// MARK: - MS-4: guarded deletion
+
+@Test func deleteWeightsRefusesWhileResidentAndSucceedsAfterEvict() async throws {
+    let root = URL.temporaryDirectory.appending(path: "EngineDelete-\(UUID().uuidString)",
+                                                directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let store = ModelStore(root: root)
+    let repoDir = store.directory(for: "mock/mock")!
+    try FileManager.default.createDirectory(at: repoDir, withIntermediateDirectories: true)
+    try Data("x".utf8).write(to: repoDir.appending(path: "model.safetensors"))
+
+    let engine = MLXServeEngine()
+    await engine.useModelStore(store)
+    try await engine.register(PackageRegistration.of(MockLLMPackage.self), configuration: mockConfig())
+
+    // Registered but NOT resident → deletable by design (weights re-materialize on next prepare).
+    // Make it resident first so the guard has something to protect.
+    _ = try await engine.run(LLMRequest(prompt: "hi"))
+    do {
+        try await engine.deleteWeights(repo: "mock/mock")
+        Issue.record("expected EngineError.weightsInUse")
+    } catch let error as EngineError {
+        #expect(error == .weightsInUse(repo: "mock/mock", packageID: PackageID("mock-llm")))
+    }
+    #expect(FileManager.default.fileExists(atPath: repoDir.path))
+
+    await engine.evict(.llm)
+    try await engine.deleteWeights(repo: "mock/mock")
+    #expect(FileManager.default.fileExists(atPath: repoDir.path) == false)
+}
+
+@Test func deleteWeightsIgnoresUnrelatedResidentsAndUnmaterializedRepos() async throws {
+    let root = URL.temporaryDirectory.appending(path: "EngineDelete-\(UUID().uuidString)",
+                                                directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let engine = MLXServeEngine()
+    await engine.useModelStore(ModelStore(root: root))
+    try await engine.register(PackageRegistration.of(MockLLMPackage.self), configuration: mockConfig())
+    _ = try await engine.run(LLMRequest(prompt: "hi"))
+
+    // A resident package guards only ITS repo, and deleting nothing is not an error.
+    try await engine.deleteWeights(repo: "other/repo")
+}

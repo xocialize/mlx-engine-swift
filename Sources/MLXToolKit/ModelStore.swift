@@ -121,6 +121,83 @@ public struct ModelStore: Sendable, Equatable {
             // Best-effort marker — the weights still loaded; the panel just won't count this one.
         }
     }
+
+    /// What a store root currently costs on disk, and how many packages are installed in it.
+    public struct Usage: Sendable, Equatable {
+        /// On-disk allocated bytes, **each distinct file counted once** (see `usage(at:)`).
+        public let bytes: Int64
+        /// Number of `mlx-package.json` markers found — one per installed package.
+        public let installedPackages: Int
+
+        public init(bytes: Int64, installedPackages: Int) {
+            self.bytes = bytes
+            self.installedPackages = installedPackages
+        }
+    }
+
+    /// Walk a store root once, summing on-disk size and counting install markers (MS-4).
+    ///
+    /// **Deduped by file identity.** The store follows the HF cache convention, where a snapshot is
+    /// a tree of links into `blobs/`; counting a blob *and* its link (or two hard links to one
+    /// blob) would report double the real disk use, so each distinct `fileResourceIdentifierKey`
+    /// is summed once. Markers are counted per path — one per installed package, never linked.
+    ///
+    /// Static (root-taking) so the storage UI can call it for a folder the user is merely
+    /// previewing. The caller must hold security-scoped access to `root`.
+    public static func usage(at root: URL) -> Usage {
+        let keys: Set<URLResourceKey> = [
+            .isDirectoryKey, .isSymbolicLinkKey, .totalFileAllocatedSizeKey, .fileSizeKey,
+            .fileResourceIdentifierKey,
+        ]
+        guard let walker = FileManager.default.enumerator(
+            at: root, includingPropertiesForKeys: Array(keys), options: [], errorHandler: nil)
+        else { return Usage(bytes: 0, installedPackages: 0) }
+
+        var total: Int64 = 0
+        var markers = 0
+        var counted = Set<AnyHashable>()
+        for case let url as URL in walker {
+            guard let values = try? url.resourceValues(forKeys: keys),
+                  values.isDirectory != true else { continue }
+            if url.lastPathComponent == markerName { markers += 1 }
+
+            // A symlink carries no size of its own — resolve it to the blob it points at, then let
+            // the identity check decide whether that blob has already been summed.
+            let target = values.isSymbolicLink == true ? url.resolvingSymlinksInPath() : url
+            guard let resolved = try? target.resourceValues(forKeys: keys) else { continue }
+            if let identity = resolved.fileResourceIdentifier as? AnyHashable,
+               !counted.insert(identity).inserted { continue }
+            if let allocated = resolved.totalFileAllocatedSize {
+                total += Int64(allocated)
+            } else if let size = resolved.fileSize {
+                total += Int64(size)
+            }
+        }
+        return Usage(bytes: total, installedPackages: markers)
+    }
+
+    /// Delete a repo's materialized weights (MS-4): the whole `models--<org>--<name>/` directory
+    /// plus the hub client's sibling `.locks/models--<org>--<name>*` entries.
+    ///
+    /// A no-op when the repo isn't materialized (or there is no root); throws whatever
+    /// `FileManager` throws on a real failure, so a caller can surface it. **Unguarded** — the
+    /// residency guard lives on the engine (`MLXServeEngine.deleteWeights(repo:)`), which is the
+    /// only component that knows what is loaded. The caller must hold security-scoped access to
+    /// `root`.
+    public func remove(repo: String) throws {
+        guard let root, let dir = directory(for: repo) else { return }
+        let fm = FileManager.default
+        if fm.fileExists(atPath: dir.path) {
+            try fm.removeItem(at: dir)
+        }
+        // Locks are named after the repo folder, sometimes with a revision suffix.
+        let locks = root.appending(path: ".locks", directoryHint: .isDirectory)
+        let folder = Self.repoFolderName(for: repo)
+        for entry in (try? fm.contentsOfDirectory(atPath: locks.path)) ?? []
+        where entry == folder || entry.hasPrefix(folder) {
+            try fm.removeItem(at: locks.appending(path: entry))
+        }
+    }
 }
 
 /// A `PackageConfiguration` that can be redirected to the engine's `ModelStore` root.

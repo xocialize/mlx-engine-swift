@@ -8,6 +8,7 @@
 //  any consuming app's settings surface.
 //
 
+import MLXToolKit
 import SwiftUI
 #if canImport(AppKit)
 import AppKit
@@ -228,30 +229,13 @@ public final class ModelStorageModel {
     /// Manager exists, the UI should read its in-memory index instead of scanning disk.
     nonisolated public static let packageMarkerName = "mlx-package.json"
 
-    /// Walks `url` once, summing on-disk allocated size of regular files and counting installed
-    /// packages (files named `packageMarkerName`).
+    /// Walks `url` once for the panel's Disk Used + Models Installed readings.
+    ///
+    /// Delegates to `ModelStore.usage(at:)` — the store owns its own layout and accounting,
+    /// including the MS-4 symlink/hard-link dedup an HF cache tree requires.
     nonisolated private static func scanFolder(at url: URL) -> (bytes: Int64, models: Int) {
-        let keys: Set<URLResourceKey> = [.isRegularFileKey, .totalFileAllocatedSizeKey, .fileSizeKey]
-        guard let enumerator = FileManager.default.enumerator(
-            at: url,
-            includingPropertiesForKeys: Array(keys),
-            options: [],
-            errorHandler: nil
-        ) else { return (0, 0) }
-
-        var total: Int64 = 0
-        var models = 0
-        for case let fileURL as URL in enumerator {
-            guard let values = try? fileURL.resourceValues(forKeys: keys),
-                  values.isRegularFile == true else { continue }
-            if fileURL.lastPathComponent == packageMarkerName { models += 1 }
-            if let allocated = values.totalFileAllocatedSize {
-                total += Int64(allocated)
-            } else if let size = values.fileSize {
-                total += Int64(size)
-            }
-        }
-        return (total, models)
+        let usage = ModelStore.usage(at: url)
+        return (usage.bytes, usage.installedPackages)
     }
 
     /// Formats a byte count using the file-size convention (e.g. "12.4 GB").

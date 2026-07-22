@@ -18,6 +18,10 @@ public enum EngineError: Error, Sendable, Equatable {
     /// tolerates. `requeues` counts the preemptions suffered. The clear-error degradation of
     /// the requeue loop (V3) — the caller sees this, never a `CancellationError` it didn't cause.
     case preemptionRetryExhausted(requeues: Int)
+    /// `deleteWeights(repo:)` refused: a **resident** package is loaded from that repo (MS-4).
+    /// Evict it first. Registered-but-not-resident is deletable by design — the weights
+    /// re-materialize on the next prepare.
+    case weightsInUse(repo: String, packageID: PackageID)
 }
 
 /// Engine-side identity for a registered package — lets several packages back the SAME
@@ -768,6 +772,38 @@ public actor MLXServeEngine {
         let repo = entry.registration.manifest.provenance.sourceRepo
         guard modelStore.root != nil else { return true }
         return !modelStore.hasMarker(for: repo)
+    }
+
+    /// Delete a repo's weights from the model store (MS-4) — the disk-side sibling of `evict`.
+    ///
+    /// Refuses while a **resident** package draws on that repo (declared `WeightSource`, or its
+    /// manifest provenance for packages that don't declare sources): unloading is the caller's
+    /// decision, and pulling files out from under a loaded package is not the engine's to do.
+    /// Registered-but-not-resident IS deletable — the weights re-materialize on the next prepare,
+    /// which is the design, not a hazard.
+    ///
+    /// - Throws: `.weightsInUse` when a resident holds the repo; `FileManager`'s error on a real
+    ///   deletion failure. Deleting an unmaterialized repo is a no-op.
+    public func deleteWeights(repo: String) throws {
+        if let holder = residentHolder(of: repo) {
+            throw EngineError.weightsInUse(repo: repo, packageID: holder)
+        }
+        try modelStore.remove(repo: repo)
+    }
+
+    /// The first resident package drawing on `repo`, or nil. Declared `WeightSource`s first (the
+    /// precise signal — a multi-source package holds repos its provenance never names), then the
+    /// manifest's provenance repo for packages that declare no sources.
+    private func residentHolder(of repo: String) -> PackageID? {
+        for id in residents.keys {
+            guard let entry = packages[id] else { continue }
+            if let sourcing = entry.configuration as? WeightSourcing {
+                if sourcing.weightSources.contains(where: { $0.repo == repo }) { return id }
+            } else if entry.registration.manifest.provenance.sourceRepo == repo {
+                return id
+            }
+        }
+        return nil
     }
 
     /// Evict least-recently-used idle residents until the incoming model's accounting fits the budget.

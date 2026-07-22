@@ -15,6 +15,11 @@ engine does the coordination around them.
   through its own hub client, pointed at the engine's `ModelStore` root (HF cache layout,
   `<root>/models--<org>--<name>/`). Weight **integrity** is the hub client's responsibility (xet
   chunk hashes / ETag verification in swift-huggingface); the engine verifies presence, not content.
+- **Disk governance** — the store's counterpart to memory governance: `WeightSourcing.
+  missingWeightSources(storeRoot:)` ships a default probe over that layout,
+  `MLXServeEngine.deleteWeights(repo:)` deletes a repo's weights but **refuses while a resident
+  package draws on it** (`EngineError.weightsInUse`), and `ModelStore.usage(at:)` sizes a store root
+  with link dedup (a snapshot is a tree of links into `blobs/`).
 - **License gate** — two layers (weight + port-code), enforced at registration.
 
 ## Memory requirements
