@@ -13,8 +13,10 @@ import MLXToolKit
 // drives them. Still TODO here:
 //   - ToolRegistry (actor): indexes each surface in a manifest independently (one model, N
 //     surfaces) and resolves a capability call to the single constructed ModelPackage.
-//   - Admission: run the license gate on the manifest, SHA256-verify weights (HubAssetSource),
-//     then call PackageRegistration.makePackage to construct — never the package itself (C13).
+//   - Admission: run the license gate on the manifest, then call PackageRegistration.makePackage
+//     to construct — never the package itself (C13). Weight integrity is the hub client's
+//     responsibility (xet chunk hashes / ETag verification in swift-huggingface); the engine
+//     verifies presence, not content.
 //   - InferenceActor scheduling: serialize run(_:) onto the compute resources. LANDED (V3,
 //     run-lifecycle program): under memory pressure the governor cancels an in-flight run as a
 //     last resort and the engine REQUEUES the request (its own CancellationError is retried,

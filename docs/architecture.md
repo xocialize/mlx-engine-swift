@@ -11,7 +11,10 @@ engine does the coordination around them.
 - **Memory governance** — a `MemoryGovernor` watermark ladder drives load/evict (see **R-MEM-1**);
   placement uses `MemoryPool` (`.metalGPU` / `.coreMLANE` / `.coreMLCPU` / `.coreMLGPU`).
 - **Model residency** — lazy load, cooperative eviction. One model backs N surfaces.
-- **Asset sourcing** — `HubAssetSource` fetches weights with SHA256 integrity verification.
+- **Asset sourcing** — the engine ships **no weight-downloading code**: each package materializes
+  through its own hub client, pointed at the engine's `ModelStore` root (HF cache layout,
+  `<root>/models--<org>--<name>/`). Weight **integrity** is the hub client's responsibility (xet
+  chunk hashes / ETag verification in swift-huggingface); the engine verifies presence, not content.
 - **License gate** — two layers (weight + port-code), enforced at registration.
 
 ## Memory requirements

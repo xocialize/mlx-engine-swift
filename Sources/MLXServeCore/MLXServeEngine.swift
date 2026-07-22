@@ -66,9 +66,10 @@ public struct Admissibility: Sendable, Equatable {
 /// Admission enforces **C10 device eligibility** (`DeviceProfile`) at registration and
 /// **memory headroom** (`MemoryGovernor`) at load: when a new working set won't fit, idle residents
 /// are evicted **LRU** until it does; as a *last resort* the governor may preempt a running
-/// inference and requeue it (V3, `PreemptionPolicy` — see `run(_:package:)`). Still TODO and
-/// tracked elsewhere: `HubAssetSource` SHA256 verification, `MemoryPool` backend placement,
-/// `MCPBridge`.
+/// inference and requeue it (V3, `PreemptionPolicy` — see `run(_:package:)`). Weight **integrity**
+/// is the hub client's responsibility (xet chunk hashes / ETag verification in swift-huggingface);
+/// the engine verifies presence, not content. Still TODO and tracked elsewhere: `MemoryPool`
+/// backend placement, `MCPBridge`.
 public actor MLXServeEngine {
 
     /// A registered package, its init-time configuration, and the resolved memory footprint split:
@@ -765,8 +766,8 @@ public actor MLXServeEngine {
             }
         }
         let repo = entry.registration.manifest.provenance.sourceRepo
-        guard let dir = modelStore.directory(for: repo) else { return true }
-        return !FileManager.default.fileExists(atPath: dir.appending(path: ModelStore.markerName).path)
+        guard modelStore.root != nil else { return true }
+        return !modelStore.hasMarker(for: repo)
     }
 
     /// Evict least-recently-used idle residents until the incoming model's accounting fits the budget.

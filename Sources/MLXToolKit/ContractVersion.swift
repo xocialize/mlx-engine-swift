@@ -212,5 +212,21 @@ public enum ContractVersion {
     //     Same canonical output (`.mesh`), same Mode tiers — a request-level field, NOT a new
     //     surface. `nil`/empty = single-view, so every existing consumer is unchanged. Introduced
     //     by the TRELLIS.2 turnaround front door (klein + BiRefNet → 3 matted T-pose views).
-    public static let current = SemanticVersion(major: 1, minor: 21, patch: 0)
+    // 1.22.0 (2026-07-22, additive): canonical model-store layout (MS-1) —
+    //   • `ModelStore` adopts the **HF cache convention**: `directory(for:)` now computes
+    //     `<root>/models--<org>--<name>/` (was `<root>/<org>/<name>/`), which is where every
+    //     package's hub client actually materializes weights. The `mlx-package.json` marker is
+    //     written at the top of that repo dir (sibling of `refs/`), so the marker, the weights,
+    //     and `MLXServeEngine.needsDownload` finally agree on one directory.
+    //   • New: `ModelStore.repoFolderName(for:)`, `snapshotDirectory(for:revision:)` (resolves
+    //     `refs/<rev>` → `snapshots/<commit>/`, nil when nothing is materialized — the probe seam
+    //     MS-2 builds on), `markerURL(for:)` / `hasMarker(for:)`, and `legacyDirectory(for:)`.
+    //   • Legacy tolerance: marker READS fall back to the pre-MS-1 `<root>/<org>/<name>/` path for
+    //     one release (read-both, write-new). No data migration — markers regenerate on load().
+    //     REMOVE `legacyDirectory(for:)` + its fallback at the next minor.
+    //   • MS-5 (docs/comments only): the never-built `HubAssetSource` SHA256-verification claims
+    //     are retired across both doc trees. Weight integrity is the hub client's responsibility
+    //     (xet chunk hashes / ETag verification in swift-huggingface); the engine verifies
+    //     presence, not content. We do not build a parallel hasher.
+    public static let current = SemanticVersion(major: 1, minor: 22, patch: 0)
 }

@@ -222,7 +222,7 @@ public final class ModelStorageModel {
     }
 
     /// Filename of the per-package marker the engine/Model Manager writes at a package's
-    /// root once its weights are materialized and SHA256-verified. Counting markers (rather
+    /// root once its weights are materialized. Counting markers (rather
     /// than guessing at directory shapes) avoids over-counting multi-component pipelines and
     /// stays decoupled from Hugging Face cache internals. Interim: once `MLXServeCore`'s Model
     /// Manager exists, the UI should read its in-memory index instead of scanning disk.

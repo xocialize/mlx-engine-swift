@@ -26,7 +26,7 @@ Three lifecycle levels stay distinct:
 1. **Manifest** — registrable metadata (license, requirements, specialty, surfaces). Runs the
    license gate; pages no weights.
 2. **Instance** — constructed by the engine from a `PackageConfiguration`, after the gate passes
-   and weights are SHA256-verified on disk.
+   and the weights are present on disk.
 3. **Resident** — working set paged into compute memory (`load()` / `unload()`), governed by the
    `MemoryGovernor`.
 

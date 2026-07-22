@@ -28,8 +28,8 @@ public protocol ModelPackage: AnyObject, Sendable {
     /// instance exists — so it is `nonisolated`.
     nonisolated static var manifest: PackageManifest { get }
 
-    /// Cheap construction. Weights are SHA256-verified on disk but **not** paged into compute
-    /// memory yet — residency is `load()`'s job. Does no inference and grabs no compute (C13).
+    /// Cheap construction. Weights are on disk but **not** paged into compute memory yet —
+    /// residency is `load()`'s job. Does no inference and grabs no compute (C13).
     nonisolated init(configuration: Configuration)
 
     /// Page the working set into the placed `MemoryPool`. The engine calls this on admission;

@@ -1,8 +1,8 @@
 import Foundation
 
 /// Where a package's weights came from. Declared for the **process-level** provenance gate
-/// (PR review + `provenance-lint`), *not* a runtime invariant — the runtime gates are license
-/// (C7/C8) and SHA256 integrity. It travels with the manifest so it is introspectable, while
+/// (PR review + `provenance-lint`), *not* a runtime invariant — the runtime gate is the license
+/// gate (C7/C8). It travels with the manifest so it is introspectable, while
 /// staying out of the binary's admission path. The values should match what the
 /// `PackageConfiguration` actually loads (`weightsRepo` / `revision`).
 public struct Provenance: Sendable, Codable, Equatable {
@@ -75,9 +75,10 @@ public enum PackageError: Error, Sendable, Equatable {
     case unsupportedRequestFeature(String)
 }
 
-/// What the engine registers for a package: its static `manifest` plus a factory the engine
-/// calls — license-gated, and only after `HubAssetSource` SHA256-verifies the weights — to
-/// construct the instance. The license gate runs against `manifest.license` at registration;
+/// What the engine registers for a package: its static `manifest` plus a license-gated factory the
+/// engine calls to construct the instance. (Weight *integrity* is the hub client's responsibility —
+/// xet chunk hashes / ETag verification in swift-huggingface; the engine verifies presence, not
+/// content.) The license gate runs against `manifest.license` at registration;
 /// construction is lazy, on first admission, and is always the engine's move, never the
 /// package's (C13).
 public struct PackageRegistration: Sendable {

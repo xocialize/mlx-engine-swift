@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 import MLXToolKit
 @testable import MLXServeCore
@@ -93,4 +94,43 @@ private func mockConfig() -> StandardConfiguration { StandardConfiguration(weigh
     await engine.evict(.llm)
     let response = try await engine.run(LLMRequest(prompt: "two"))
     #expect((response as? LLMResponse)?.text == "mock")
+}
+
+// MARK: - MS-1: the download probe reads the canonical (HF-cache) store layout
+
+/// Before MS-1 `needsDownload` probed `<root>/<org>/<name>/` while the hub client materialized into
+/// `<root>/models--<org>--<name>/`, so the marker never landed where the probe looked.
+@Test func needsDownloadReadsTheHubCacheLayoutAndTheLegacyFallback() async throws {
+    let root = URL.temporaryDirectory.appending(path: "EngineStore-\(UUID().uuidString)",
+                                                directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let store = ModelStore(root: root)
+    let engine = MLXServeEngine()
+    await engine.useModelStore(store)
+    try await engine.register(PackageRegistration.of(MockLLMPackage.self), configuration: mockConfig())
+
+    // Fresh store → the weights still have to come from the network.
+    #expect(await engine.needsDownload(.llm))
+
+    // A marker in the canonical repo directory clears it.
+    store.writeMarker(repo: "mock/mock", revision: "main", capabilities: [.llm])
+    #expect(FileManager.default.fileExists(
+        atPath: root.appending(path: "models--mock--mock").appending(path: ModelStore.markerName).path))
+    #expect(await engine.needsDownload(.llm) == false)
+
+    // …and so does one left behind by a pre-MS-1 engine (read-both tolerance window).
+    let legacyRoot = URL.temporaryDirectory.appending(path: "EngineStoreLegacy-\(UUID().uuidString)",
+                                                      directoryHint: .isDirectory)
+    let legacyDir = legacyRoot.appending(path: "mock", directoryHint: .isDirectory)
+        .appending(path: "mock", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: legacyDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: legacyRoot) }
+    try Data("{}".utf8).write(to: legacyDir.appending(path: ModelStore.markerName))
+
+    let legacyEngine = MLXServeEngine()
+    await legacyEngine.useModelStore(ModelStore(root: legacyRoot))
+    try await legacyEngine.register(PackageRegistration.of(MockLLMPackage.self), configuration: mockConfig())
+    #expect(await legacyEngine.needsDownload(.llm) == false)
 }
