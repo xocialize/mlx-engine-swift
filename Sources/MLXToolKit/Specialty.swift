@@ -37,6 +37,52 @@ extension Specialty {
     /// Streaming-first, low-latency architecture that emits audio incrementally
     /// rather than only after whole-utterance synthesis (e.g. Gepard-1.0).
     public static let realtimeStreaming: Specialty = "realtimeStreaming"
+
+    // Style / domain ranking.
+    /// Anime-domain specialization (e.g. the AnimeGen T2V fine-tune). Promoted to core from a
+    /// package-side extension — exactly the drift `registeredVocabulary` exists to catch.
+    public static let anime: Specialty = "anime"
+
+    // 3D lane ranking. NOTE the kebab-case raw values: these terms shipped in package manifests
+    // before the vocabulary was registered, and the raw value is what a declaration carries, so
+    // they are grandfathered as-is. New terms use camelCase (see `registeredVocabulary`).
+    /// Generates 3D geometry (e.g. TRELLIS.2).
+    public static let threeDGeneration: Specialty = "3d-generation"
+    /// Produces a skeleton + skin weights for a mesh (e.g. SkinTokens `auto`).
+    public static let meshRigging: Specialty = "mesh-rigging"
+    /// Rigging specialized to humanoid characters (e.g. SkinTokens `skinOnly` on a VRM).
+    public static let characterRigging: Specialty = "character-rigging"
+}
+
+// MARK: - Vocabulary governance (C6)
+
+extension Specialty {
+
+    /// The **registered vocabulary** — every term the fleet declares today.
+    ///
+    /// `Specialty` is `ExpressibleByStringLiteral`, so without this the namespace drifts
+    /// (`"line-art"` vs `"lineart"` vs `"lineArt"` all "work" and none of them match each other,
+    /// which quietly breaks Model-Manager ranking). This mirrors `SPDXLicense.permissiveAllowlist`:
+    /// a core-owned, additive set that makes the vocabulary reviewable.
+    ///
+    /// **Enforcement is warn-only** at `MLXServeEngine.register()`: an unregistered specialty logs
+    /// a warning naming the term, and registration proceeds. Hard rejection would break unknown
+    /// third-party conformers with no deprecation window; promoting it to a rejection is a
+    /// next-major decision (tracked in the roadmap).
+    ///
+    /// **Convention for new terms:** camelCase (`poseDriven`, `voiceClone`). The kebab-case 3D
+    /// terms are grandfathered — their raw values are already declared in shipped manifests.
+    /// Adding a term = adding a `static let` above and an entry here, in the same change.
+    public static let registeredVocabulary: Set<Specialty> = [
+        .general, .coder, .researcher, .companion,
+        .poseless, .poseDriven,
+        .emotionControl, .durationControl, .voiceClone, .realtimeStreaming,
+        .anime,
+        .threeDGeneration, .meshRigging, .characterRigging,
+    ]
+
+    /// Whether this term is in the registered vocabulary.
+    public var isRegistered: Bool { Self.registeredVocabulary.contains(self) }
 }
 
 /// A specialty paired with a strength in 0...1. A model declares an array of these.

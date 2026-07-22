@@ -16,6 +16,24 @@ public enum Quant: String, Sendable, Codable, Hashable, CaseIterable {
     case int5
     case int4
     case mxfp4
+
+    /// Precision ordering, lowest first — the axis a per-surface `quantFloor` is compared on
+    /// (contract 1.23.0). Deliberately NOT `Comparable`: `fp16` and `bf16` are both 16-bit and
+    /// share a rank, so `<` would be a strict-weak-ordering violation on a Comparable conformance.
+    /// `mxfp4` ranks with `int4` (4 bits, richer per-block scaling — not a precision tier above it).
+    public var precisionRank: Int {
+        switch self {
+        case .int4, .mxfp4: 0
+        case .int5: 1
+        case .int6: 2
+        case .int8: 3
+        case .fp16, .bf16: 4
+        case .fp32: 5
+        }
+    }
+
+    /// Whether this quant meets a declared floor (same rank passes).
+    public func meets(floor: Quant) -> Bool { precisionRank >= floor.precisionRank }
 }
 
 /// Apple-silicon chip-tier floor a model requires.

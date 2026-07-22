@@ -37,16 +37,28 @@ public struct ToolDescriptor: Sendable, Codable, Equatable {
     public let summary: String
     public let parameters: [ParameterSchema]
     public let supportedModes: [Mode]
+    /// Minimum quantization this **surface** is usable at (contract 1.23.0, additive).
+    ///
+    /// Quant gating is otherwise per-package, but a model can be int4-fine for analysis and
+    /// int4-bad for generation — the same weights, different quality floors per surface. Declaring
+    /// a floor here lets a configuration below it stop backing *this* capability while still
+    /// backing the package's other surfaces (the engine's `register` skips it and
+    /// `admissibility(for:configuration:capability:)` reports
+    /// `.quantBelowSurfaceFloor`). `nil` = no per-surface constraint, which is every existing
+    /// conformer.
+    public let quantFloor: Quant?
 
     public init(name: String,
                 capability: Capability,
                 summary: String,
                 parameters: [ParameterSchema] = [],
-                supportedModes: [Mode] = []) {
+                supportedModes: [Mode] = [],
+                quantFloor: Quant? = nil) {
         self.name = name
         self.capability = capability
         self.summary = summary
         self.parameters = parameters
         self.supportedModes = supportedModes
+        self.quantFloor = quantFloor
     }
 }

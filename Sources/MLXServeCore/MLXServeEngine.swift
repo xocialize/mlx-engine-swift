@@ -183,6 +183,10 @@ public actor MLXServeEngine {
     /// The cap init actually wrote, or nil when the policy was `.unmanaged` OR the write
     /// failed because this process can't initialize MLX's Metal device (see init).
     public private(set) var appliedGPUCacheLimitBytes: UInt64?
+    /// Every unregistered `Specialty` seen at `register()` (C6 governance, warn-only). Diagnostic:
+    /// a host can surface it, and the fleet sweep reads it to know what to add to
+    /// `Specialty.registeredVocabulary`.
+    public private(set) var unregisteredSpecialties: Set<Specialty> = []
     /// `run`s (returned or thrown) since the last `trimEveryRuns` trim.
     private var runsSinceTrim = 0
     /// Engine-policy pool trims performed so far (`trimEveryRuns` / `trimAfterEvict` / cancel
@@ -256,6 +260,20 @@ public actor MLXServeEngine {
         let eligibility = deviceProfile.eligibility(for: registration.manifest.requirements)
         guard eligibility.isEligible else { throw EngineError.ineligible(eligibility) }
 
+        // C6 vocabulary governance (3.5): a `Specialty` is a string literal, so an unregistered
+        // term silently forks the namespace ("line-art" vs "lineart") and quietly breaks
+        // Model-Manager ranking. WARN, never reject — a hard rejection would break unknown
+        // third-party conformers with no deprecation window (promotion to rejection is a
+        // next-major decision).
+        let unregistered = registration.manifest.specialties.map(\.specialty).filter { !$0.isRegistered }
+        if !unregistered.isEmpty {
+            unregisteredSpecialties.formUnion(unregistered)
+            print("[Specialty] \(registration.manifest.provenance.sourceRepo) declares unregistered "
+                  + "specialt\(unregistered.count == 1 ? "y" : "ies"): "
+                  + unregistered.map(\.rawValue).sorted().joined(separator: ", ")
+                  + " — add to Specialty.registeredVocabulary or use an existing term.")
+        }
+
         // Stamp the download root onto the configuration so the package materializes weights in the
         // engine's model store rather than its default cache. Configs that don't opt in (don't
         // conform to `ModelStorable`) are left untouched.
@@ -281,6 +299,21 @@ public actor MLXServeEngine {
         // like BiRefNet fast/best) wins; else the `QuantConfigured` quant match (avoids the largest-
         // that-fits under-reserve of bf16 when bf16 > budget); else largest-that-fits. Transient defaults
         // to 0 when undeclared (the reactive R-MEM-1 trigger covers any overflow).
+        // Per-surface quant eligibility (3.2): a surface declaring a `quantFloor` above the
+        // configuration's selected quant is NOT backed by this registration — while the package's
+        // other surfaces still are. `nil` floor (every existing conformer) admits everything.
+        let selectedQuant = (configuration as? QuantConfigured)?.quant
+        let admittedCapabilities = registration.manifest.surfaces
+            .filter { Self.meetsSurfaceFloor($0, quant: selectedQuant) }
+            .map(\.capability)
+        guard !admittedCapabilities.isEmpty else {
+            let surface = registration.manifest.surfaces[0]
+            throw EngineError.ineligible(.quantBelowSurfaceFloor(
+                capability: surface.capability,
+                required: surface.quantFloor ?? .fp32,
+                selected: selectedQuant ?? .int4))
+        }
+
         let fc = configuration as? FootprintConfigured
         let split = governor.footprintSplit(
             for: registration.manifest.requirements,
@@ -291,7 +324,7 @@ public actor MLXServeEngine {
                                     configuration: configuration,
                                     persistent: split.persistent,
                                     transient: split.transient)
-        for capability in registration.manifest.capabilities {
+        for capability in admittedCapabilities {
             backing[capability, default: []].append(packageID)
             defaults[capability] = packageID
         }
@@ -375,6 +408,36 @@ public actor MLXServeEngine {
             fitsBudget: ownPeak <= governor.budgetBytes,
             fitsAvailable: required <= governor.budgetBytes
         )
+    }
+
+    /// Does a surface's declared `quantFloor` admit this configuration's quant? `nil` floor always
+    /// admits; a config with no declared quant (`QuantConfigured` not adopted) can't be judged, so
+    /// it admits too — the floor is a declaration-vs-declaration check, never a guess.
+    static func meetsSurfaceFloor(_ surface: ToolDescriptor, quant: Quant?) -> Bool {
+        guard let floor = surface.quantFloor, let quant else { return true }
+        return quant.meets(floor: floor)
+    }
+
+    /// Per-surface admissibility (3.2): the config-aware verdict for ONE capability of a package.
+    ///
+    /// Identical to `admissibility(for:configuration:)` except that a surface whose declared
+    /// `ToolDescriptor.quantFloor` outranks the configuration's quant reports
+    /// `.quantBelowSurfaceFloor` — the seam a Model Manager uses to see that an int4 config backs a
+    /// package's analysis surface but not its generation surface.
+    public func admissibility(for manifest: PackageManifest,
+                              configuration: any PackageConfiguration,
+                              capability: Capability) -> Admissibility {
+        let base = admissibility(for: manifest.requirements, configuration: configuration)
+        let quant = (configuration as? QuantConfigured)?.quant
+        guard let surface = manifest.surfaces.first(where: { $0.capability == capability }),
+              let floor = surface.quantFloor, let quant, !quant.meets(floor: floor)
+        else { return base }
+        return Admissibility(
+            eligibility: .quantBelowSurfaceFloor(capability: capability, required: floor,
+                                                 selected: quant),
+            footprint: base.footprint,
+            fitsBudget: base.fitsBudget,
+            fitsAvailable: base.fitsAvailable)
     }
 
     /// Config-aware admissibility: evaluate exactly the variant a given configuration would load,

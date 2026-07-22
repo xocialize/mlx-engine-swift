@@ -244,5 +244,25 @@ public enum ContractVersion {
     //     are retired across both doc trees. Weight integrity is the hub client's responsibility
     //     (xet chunk hashes / ETag verification in swift-huggingface); the engine verifies
     //     presence, not content. We do not build a parallel hasher.
-    public static let current = SemanticVersion(major: 1, minor: 22, patch: 0)
+    // 1.23.0 (2026-07-22, additive): contract hardening (Phase 4 of the 2026-07 execution plan) —
+    //   • 3.5 **Specialty vocabulary governance (C6).** `Specialty.registeredVocabulary` (+
+    //     `isRegistered`) mirrors `SPDXLicense.permissiveAllowlist`: a core-owned, additive set of
+    //     every term the fleet declares, so the namespace can't quietly fork ("line-art" vs
+    //     "lineart"). Seeded from the fleet sweep — the tts/animation/3D terms plus `anime`
+    //     (promoted from a package-side extension) and the grandfathered kebab-case 3D terms
+    //     (`3d-generation`, `mesh-rigging`, `character-rigging` — their raw values already ship in
+    //     manifests; new terms use camelCase). **Enforcement is warn-only** at
+    //     `MLXServeEngine.register()` (logs + records `engine.unregisteredSpecialties`); hard
+    //     rejection would break unknown third-party conformers with no deprecation window, so it
+    //     is a next-major decision.
+    //   • 3.2 **Per-surface quant eligibility.** `ToolDescriptor.quantFloor: Quant?` (nil = no
+    //     constraint = every existing conformer) — a model can be int4-fine for analysis and
+    //     int4-bad for generation, and quant gating was per-PACKAGE. Engine consumption: a surface
+    //     whose floor outranks the configuration's `QuantConfigured` quant stops backing THAT
+    //     capability while the package's other surfaces still do, and
+    //     `admissibility(for:configuration:capability:)` reports the new
+    //     `DeviceEligibility.quantBelowSurfaceFloor(capability:required:selected:)`. Comparison
+    //     rides `Quant.precisionRank` / `meets(floor:)` — deliberately not `Comparable`, since
+    //     fp16 and bf16 share a rank (and mxfp4 ranks with int4).
+    public static let current = SemanticVersion(major: 1, minor: 23, patch: 0)
 }

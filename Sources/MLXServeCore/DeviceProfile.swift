@@ -54,6 +54,10 @@ public enum DeviceEligibility: Sendable, Equatable {
     case missingBackend(Backend)
     case chipBelowFloor(required: ChipTier, have: ChipTier)
     case osBelowMinimum(required: SemanticVersion, have: SemanticVersion)
+    /// The configuration's selected quant is below the **surface's** declared floor (3.2): the
+    /// package is fine, but not for THIS capability at THIS quant (`ToolDescriptor.quantFloor`).
+    /// Its other surfaces are unaffected.
+    case quantBelowSurfaceFloor(capability: Capability, required: Quant, selected: Quant)
 
     public var isEligible: Bool {
         if case .eligible = self { return true }
