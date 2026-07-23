@@ -264,5 +264,16 @@ public enum ContractVersion {
     //     `DeviceEligibility.quantBelowSurfaceFloor(capability:required:selected:)`. Comparison
     //     rides `Quant.precisionRank` / `meets(floor:)` — deliberately not `Comparable`, since
     //     fp16 and bf16 share a rank (and mxfp4 ranks with int4).
+    // MS-6 (2026-07-23, engine-side behavior — no contract type change, recorded here for the
+    // MS program's history): variant-aware install markers. `MLXServeEngine` now stamps one
+    // `mlx-package.json` per declared `WeightSource` repo after load() (provenance.sourceRepo only
+    // for configurations that declare no sources; a source's pinned revision rides its marker,
+    // nil pin → "main"), and `needsDownload` probes the declared sources via the MS-2 missing-set
+    // instead of the provenance marker. Closes the variant-multiplexing gap (Mage turbo/base/edit,
+    // Klein base tier): the marker used to land under the STATIC family-primary repo while the
+    // weights materialized under the variant's repos, so storage-panel counts credited the wrong
+    // row and MaterializationBench read a false marker=NO. TestKit's bench now verifies markers
+    // against the configuration's declared sources (caller-passed sourceRepo = fallback only).
+    // Stale family-primary markers are harmless residue, deletable via the storage panel.
     public static let current = SemanticVersion(major: 1, minor: 23, patch: 0)
 }

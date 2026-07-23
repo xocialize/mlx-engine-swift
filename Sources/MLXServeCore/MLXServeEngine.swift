@@ -800,11 +800,22 @@ public actor MLXServeEngine {
                 try await instance.load()
             }
 
-            // Weights are now materialized under the store root — stamp the marker the storage UI
-            // counts (one per package). No-op when no store root is set.
-            modelStore.writeMarker(repo: manifest.provenance.sourceRepo,
-                                   revision: manifest.provenance.revision,
-                                   capabilities: manifest.capabilities)
+            // Weights are now materialized under the store root — stamp the marker(s) the storage
+            // UI counts. Declared `WeightSource`s first (the precise signal — a variant-multiplexed
+            // package materializes under repos its static provenance never names, so a provenance
+            // marker would credit the wrong row), then the manifest's provenance repo for packages
+            // that declare no sources. Mirrors `residentHolder(of:)`. No-op when no store root is set.
+            if let sourcing = configuration as? WeightSourcing, !sourcing.weightSources.isEmpty {
+                for source in sourcing.weightSources {
+                    modelStore.writeMarker(repo: source.repo,
+                                           revision: source.revision ?? "main",
+                                           capabilities: manifest.capabilities)
+                }
+            } else {
+                modelStore.writeMarker(repo: manifest.provenance.sourceRepo,
+                                       revision: manifest.provenance.revision,
+                                       capabilities: manifest.capabilities)
+            }
             residents[id] = instance
             residentFootprint[id] = persistent
             residentTransient[id] = transient
@@ -832,7 +843,10 @@ public actor MLXServeEngine {
     /// Bundled-only packages (`BundledWeightSourcing`, no `WeightSourcing`) read `false` as soon as
     /// their vendored sources resolve — they can never need the network. Otherwise, heuristic: if the
     /// configuration declares local weight paths (`WeightPrewarming`) and they all exist → no
-    /// download. Otherwise → needs download when the per-package install marker is absent under the
+    /// download. If it declares its network sources (`WeightSourcing`) → the MS-2 missing-set probe
+    /// decides (the precise signal — a variant-multiplexed package materializes under repos its
+    /// static provenance never names, and this is the same set the install markers are stamped
+    /// for). Otherwise → needs download when the per-package install marker is absent under the
     /// current store root (the same signal the storage UI counts).
     public func needsDownload(_ capability: Capability, package: PackageID? = nil) -> Bool {
         guard let id = try? resolve(capability, package), let entry = packages[id] else { return false }
@@ -851,6 +865,11 @@ public actor MLXServeEngine {
                paths.allSatisfy({ FileManager.default.fileExists(atPath: $0.path) }) {
                 return false
             }
+        }
+        // Declared sources beat the provenance marker: probe them directly (an override honoring
+        // an explicit local-path escape hatch can clear this even without a store root).
+        if let sourcing = entry.configuration as? WeightSourcing, !sourcing.weightSources.isEmpty {
+            return !sourcing.missingWeightSources(storeRoot: modelStore.root).isEmpty
         }
         let repo = entry.registration.manifest.provenance.sourceRepo
         guard modelStore.root != nil else { return true }

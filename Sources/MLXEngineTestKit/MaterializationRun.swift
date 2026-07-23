@@ -56,7 +56,8 @@ public enum MaterializationBench {
     ///     already called with `root` (the bench never mutates engine state beyond `prepare`).
     ///   - configuration: the SAME configuration the package was registered with (for source
     ///     attribution + marker lookup).
-    ///   - sourceRepo: the manifest's provenance repo (marker location).
+    ///   - sourceRepo: the manifest's provenance repo — the marker location only for a
+    ///     configuration that declares no `WeightSourcing` (declared sources win otherwise).
     @MainActor
     public static func run(engine: MLXServeEngine,
                            capability: Capability,
@@ -112,9 +113,17 @@ public enum MaterializationBench {
             }
         }
         result.totalBytes = directoryBytes(root)
-        result.markerPresent = store.directory(for: sourceRepo)
-            .map { FileManager.default.fileExists(atPath: $0.appending(path: ModelStore.markerName).path) }
-            ?? false
+        // Markers land where the engine stamps them: one per declared `WeightSource` repo (ALL must
+        // be present), falling back to the caller-passed provenance repo for non-declaring configs.
+        // Checking the caller's repo alone false-negatives variant-multiplexed packages, whose
+        // weights (and markers) live under repos the static provenance never names.
+        let markerRepos: [String]
+        if let sourcing = configuration as? WeightSourcing, !sourcing.weightSources.isEmpty {
+            markerRepos = sourcing.weightSources.map(\.repo)
+        } else {
+            markerRepos = [sourceRepo]
+        }
+        result.markerPresent = markerRepos.allSatisfy(store.hasMarker(for:))
         return result
     }
 

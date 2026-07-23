@@ -51,6 +51,30 @@ private final class MockGPLPackage: ModelPackage {
 
 private func mockConfig() -> StandardConfiguration { StandardConfiguration(weightsRepo: "mock/mock") }
 
+/// A variant-multiplexed configuration: the manifest's provenance names the family primary
+/// (`mock/mock`), but the selected variant's weights live under repos of their own.
+private struct MockVariantConfiguration: PackageConfiguration, WeightSourcing {
+    var variantRepo = "mock/mock-turbo"
+    var weightSources: [WeightSource] {
+        [WeightSource(role: "components", repo: variantRepo),
+         WeightSource(role: "mlx-artifacts", repo: "mock/mock-turbo-mlx", revision: "abc123")]
+    }
+}
+
+@InferenceActor
+private final class MockVariantPackage: ModelPackage {
+    typealias Configuration = MockVariantConfiguration
+    nonisolated static var manifest: PackageManifest { mockManifest(weightLicense: .apache2) }
+    private var loaded = false
+    nonisolated init(configuration: MockVariantConfiguration) {}
+    func load() async throws { loaded = true }
+    func unload() async { loaded = false }
+    func run(_ request: any CapabilityRequest) async throws -> any CapabilityResponse {
+        guard loaded else { throw PackageError.notLoaded }
+        return LLMResponse(text: "mock", finishReason: .stop)
+    }
+}
+
 // MARK: - Tests
 
 @Test func registerThenRunRoutesToPackage() async throws {
@@ -133,6 +157,67 @@ private func mockConfig() -> StandardConfiguration { StandardConfiguration(weigh
     await legacyEngine.useModelStore(ModelStore(root: legacyRoot))
     try await legacyEngine.register(PackageRegistration.of(MockLLMPackage.self), configuration: mockConfig())
     #expect(await legacyEngine.needsDownload(.llm) == false)
+}
+
+// MARK: - Variant-aware markers: declared WeightSources beat the static provenance repo
+
+/// A variant-multiplexed package (one class, several checkpoints selected by configuration) used
+/// to get its marker stamped under `manifest.provenance.sourceRepo` — the family primary — while
+/// the weights materialized under the variant's repos. The storage panel then credited the wrong
+/// row and MaterializationBench read a false marker=NO. The engine now stamps one marker per
+/// declared `WeightSource` repo instead.
+@Test func markerLandsUnderDeclaredWeightSourceReposNotProvenance() async throws {
+    let root = URL.temporaryDirectory.appending(path: "EngineVariant-\(UUID().uuidString)",
+                                                directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let store = ModelStore(root: root)
+    let engine = MLXServeEngine()
+    await engine.useModelStore(store)
+    try await engine.register(PackageRegistration.of(MockVariantPackage.self),
+                              configuration: MockVariantConfiguration())
+    try await engine.prepare(.llm)
+
+    // One marker per declared source repo — and none under the family-primary provenance repo.
+    #expect(store.hasMarker(for: "mock/mock-turbo"))
+    #expect(store.hasMarker(for: "mock/mock-turbo-mlx"))
+    #expect(store.hasMarker(for: "mock/mock") == false)
+
+    // The pinned source's revision rides its marker (nil pin → "main").
+    let marker = try #require(store.markerURL(for: "mock/mock-turbo-mlx"))
+    let payload = try JSONSerialization.jsonObject(with: Data(contentsOf: marker)) as? [String: Any]
+    #expect(payload?["revision"] as? String == "abc123")
+}
+
+/// `needsDownload` for a `WeightSourcing` configuration probes the DECLARED sources (MS-2), not
+/// the provenance marker — a marker under the family primary must not mask missing variant weights.
+@Test func needsDownloadProbesDeclaredSourcesForWeightSourcingConfigs() async throws {
+    let root = URL.temporaryDirectory.appending(path: "EngineVariantProbe-\(UUID().uuidString)",
+                                                directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let store = ModelStore(root: root)
+    let engine = MLXServeEngine()
+    await engine.useModelStore(store)
+    try await engine.register(PackageRegistration.of(MockVariantPackage.self),
+                              configuration: MockVariantConfiguration())
+
+    // Fresh store → download needed; a stale family-primary marker must not clear it.
+    #expect(await engine.needsDownload(.llm))
+    store.writeMarker(repo: "mock/mock", revision: "main", capabilities: [.llm])
+    #expect(await engine.needsDownload(.llm))
+
+    // Materialize both variant snapshots (marker-less — the probe reads the weights, not markers).
+    for (repo, rev) in [("mock/mock-turbo", "main"), ("mock/mock-turbo-mlx", "abc123")] {
+        let snapshot = store.directory(for: repo)!
+            .appending(path: "snapshots", directoryHint: .isDirectory)
+            .appending(path: rev, directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: snapshot, withIntermediateDirectories: true)
+        try Data("x".utf8).write(to: snapshot.appending(path: "model.safetensors"))
+    }
+    #expect(await engine.needsDownload(.llm) == false)
 }
 
 // MARK: - MS-4: guarded deletion

@@ -35,7 +35,9 @@ public struct ModelStore: Sendable, Equatable {
     /// marker is written (the storage panel simply won't track those models).
     public let root: URL?
 
-    /// Filename of the per-package marker the storage UI counts (one per installed package).
+    /// Filename of the install marker the storage UI counts. The engine stamps one per declared
+    /// `WeightSource` repo (falling back to the manifest's provenance repo for configurations that
+    /// declare no sources), so a multi-source package carries one marker per repo it materialized.
     public static let markerName = "mlx-package.json"
 
     public init(root: URL? = nil) {
@@ -126,7 +128,8 @@ public struct ModelStore: Sendable, Equatable {
     public struct Usage: Sendable, Equatable {
         /// On-disk allocated bytes, **each distinct file counted once** (see `usage(at:)`).
         public let bytes: Int64
-        /// Number of `mlx-package.json` markers found — one per installed package.
+        /// Number of `mlx-package.json` markers found — one per materialized source repo (a
+        /// multi-source package stamps one marker per declared `WeightSource` repo).
         public let installedPackages: Int
 
         public init(bytes: Int64, installedPackages: Int) {
