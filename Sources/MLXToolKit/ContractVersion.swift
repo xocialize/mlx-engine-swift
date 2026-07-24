@@ -331,5 +331,39 @@ public enum ContractVersion {
     //     + live STR-4..7 in the package CLI lane (sequence integrity, aggregation parity,
     //     task-context emission, mid-stream cancel). Latency is a TestKit bench
     //     (`StreamingBench`, the `[STR]` line), not a gate.
-    public static let current = SemanticVersion(major: 1, minor: 25, patch: 0)
+    // 1.26.0 (2026-07-24, additive): MEASURED LLM USAGE (ENGINE-NEEDS) — `LLMResponse` carried
+    //   no token counts and, unlike `LLMRequest`, no `metaData` channel either, so a package had
+    //   literally nowhere to put them. Every throughput consumer therefore FAKED it: the Liquid
+    //   LFM 2.5 Demo's metrics harness computed `chars / 4 / runSeconds` and printed a caveat
+    //   saying so. Meanwhile the real numbers were already arriving and being discarded —
+    //   mlx-swift-lm's `GenerateCompletionInfo` rides the `Generation` stream as `.info`, and
+    //   every package's `switch` swallowed it under `default: break`.
+    //   • `LLMUsage` (LLM.swift): promptTokens / generationTokens / promptSeconds /
+    //     generateSeconds, + derived `generationTokensPerSecond` / `promptTokensPerSecond`
+    //     (Optional, nil rather than 0 when the phase was too short to time — a 0 would read as
+    //     "measured slow"). Seconds are `Double`, not `TimeInterval`, so LLM.swift stays
+    //     Foundation-free.
+    //   • `LLMResponse.usage: LLMUsage?` — defaulted `nil` in the initializer, so all 31 existing
+    //     construction sites (6 in packages, 25 engine test mocks) compile untouched. `nil` means
+    //     "package doesn't report usage" and is NOT zero; consumers must not substitute an
+    //     estimate for it — that substitution is the gap being closed.
+    //   • MEASURED-NEVER-ESTIMATED is the contract: a package populates `usage` only from counts
+    //     its runtime actually reported (the `.info` event, or its own token loop on a
+    //     constrained-decoding path). Deriving them from the text is a contract violation.
+    //   • Cross-package caveat, documented ON the field: `promptTokens` is not comparable
+    //     between packages that differ in KV-cache reuse — a package holding a `ChatSession`
+    //     across turns (qwen v0.3.0 prompt caching) prefills only the new suffix, while one
+    //     building a fresh session per turn (lfm) re-counts the conversation. `generationTokens`
+    //     / `generateSeconds` — decode throughput — is the comparable axis, and is the number a
+    //     model bake-off should quote.
+    //   • Ride-along fidelity fix: `GenerateCompletionInfo.stopReason` (`GenerateStopReason`,
+    //     .stop/.length/.cancelled) maps 1:1 onto `FinishReason`, so capturing `.info` also
+    //     retires the hardcoded `finishReason: .stop` on the freeform paths — a `maxTokens`
+    //     truncation previously reported as a natural stop. Same code site, no new surface.
+    //   • First adopter: mlx-lfm-llm-swift (both paths — `.info` capture on the freeform
+    //     `streamDetails` drive; self-counted on the structured `TokenIterator` drive).
+    //     qwen/gemma adopt incrementally: their freeform paths sit on `ChatSession.respond`
+    //     (string plane), which does NOT surface `.info` — adoption there is a `streamDetails`
+    //     migration, scoped separately.
+    public static let current = SemanticVersion(major: 1, minor: 26, patch: 0)
 }

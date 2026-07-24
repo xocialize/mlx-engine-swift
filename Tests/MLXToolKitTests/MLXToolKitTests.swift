@@ -303,6 +303,41 @@ final class MLXToolKitTests: XCTestCase {
         XCTAssertEqual(rejection, .unsupportedRequestFeature("responseFormat"))
     }
 
+    // 1.26.0 additive: LLMResponse.usage — measured token counts + timing (ENGINE-NEEDS).
+    func testLLMResponseUsage() throws {
+        // Back-compatibility is the whole point of the defaulted parameter: every pre-1.26.0
+        // construction site keeps compiling and reports nil usage.
+        let legacy = LLMResponse(text: "hi", finishReason: .stop)
+        XCTAssertNil(legacy.usage)
+
+        // nil means "not reported" and must stay distinguishable from a measured zero — a
+        // consumer that collapses the two is back to quoting estimates as measurements.
+        let silent = LLMResponse(text: "hi")
+        XCTAssertNil(silent.usage?.generationTokens)
+
+        let usage = LLMUsage(promptTokens: 128, generationTokens: 512,
+                             promptSeconds: 0.25, generateSeconds: 8.0)
+        let measured = LLMResponse(text: "hi", finishReason: .length, usage: usage)
+        XCTAssertEqual(measured.usage?.promptTokens, 128)
+        XCTAssertEqual(measured.usage?.generationTokens, 512)
+        XCTAssertEqual(measured.finishReason, .length)
+
+        // Derived throughput — the axis a bake-off quotes.
+        XCTAssertEqual(try XCTUnwrap(usage.generationTokensPerSecond), 64.0, accuracy: 0.0001)
+        XCTAssertEqual(try XCTUnwrap(usage.promptTokensPerSecond), 512.0, accuracy: 0.0001)
+
+        // A phase too short to time reports nil, NOT 0 — a 0 would read as "measured slow"
+        // rather than "not measurable", which is the same lie in the other direction.
+        let untimed = LLMUsage(promptTokens: 4, generationTokens: 1,
+                               promptSeconds: 0, generateSeconds: 0)
+        XCTAssertNil(untimed.generationTokensPerSecond)
+        XCTAssertNil(untimed.promptTokensPerSecond)
+
+        // Codable — usage rides serialized response envelopes like the rest of the contract.
+        let decoded = try JSONDecoder().decode(LLMUsage.self, from: JSONEncoder().encode(usage))
+        XCTAssertEqual(decoded, usage)
+    }
+
     func testEmbedContractAndIO() {
         // Defaults: document-side, no instruction, native width.
         let doc = EmbedRequest(texts: ["stored summary"])

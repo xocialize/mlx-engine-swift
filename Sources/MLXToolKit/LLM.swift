@@ -114,13 +114,59 @@ public enum FinishReason: String, Sendable, Codable {
     case cancelled     // preempted (e.g. governor eviction)
 }
 
+/// Measured cost of one generation (contract 1.26.0). **Measured, never estimated** — a package
+/// populates this only from counts its runtime actually reported (mlx-swift-lm's
+/// `GenerateCompletionInfo`, or its own token loop); it never derives them from the text.
+/// `nil` on the response means "this package doesn't report usage", which a consumer must
+/// distinguish from zero — a character-count estimate dressed up as a measurement is exactly
+/// the gap this type closes.
+///
+/// Seconds are `Double` (not `TimeInterval`) to keep this file Foundation-free.
+public struct LLMUsage: Sendable, Codable, Equatable {
+    /// Tokens in the templated prompt this run actually processed. **Not comparable across
+    /// packages that differ in KV-cache reuse**: a package holding a session across turns
+    /// (prompt caching) processes only the new suffix, so this counts less than the full
+    /// conversation. `generationTokens` carries no such caveat.
+    public let promptTokens: Int
+    /// Tokens the model generated. The comparable axis for decode throughput.
+    public let generationTokens: Int
+    /// Wall time processing the prompt (prefill).
+    public let promptSeconds: Double
+    /// Wall time generating `generationTokens` (decode).
+    public let generateSeconds: Double
+
+    public init(promptTokens: Int, generationTokens: Int,
+                promptSeconds: Double, generateSeconds: Double) {
+        self.promptTokens = promptTokens
+        self.generationTokens = generationTokens
+        self.promptSeconds = promptSeconds
+        self.generateSeconds = generateSeconds
+    }
+
+    /// Decode throughput — the number to quote when comparing models. `nil` when the run was
+    /// too short to have measurable decode time (never 0, which would read as "measured slow").
+    public var generationTokensPerSecond: Double? {
+        generateSeconds > 0 ? Double(generationTokens) / generateSeconds : nil
+    }
+
+    /// Prefill throughput. Same nil-vs-zero rule as `generationTokensPerSecond`.
+    public var promptTokensPerSecond: Double? {
+        promptSeconds > 0 ? Double(promptTokens) / promptSeconds : nil
+    }
+}
+
 /// Canonical LLM response. The canonical artifact is text.
 public struct LLMResponse: CapabilityResponse {
     public let text: String
     public let finishReason: FinishReason?
-    public init(text: String, finishReason: FinishReason? = nil) {
+    /// Measured token counts + timing, when the package reports them (contract 1.26.0).
+    /// `nil` = not reported; consumers MUST NOT substitute an estimate.
+    public let usage: LLMUsage?
+
+    public init(text: String, finishReason: FinishReason? = nil, usage: LLMUsage? = nil) {
         self.text = text
         self.finishReason = finishReason
+        self.usage = usage
     }
 }
 
