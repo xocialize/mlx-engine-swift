@@ -56,10 +56,34 @@ public struct TTSResponse: CapabilityResponse {
     public init(audio: Audio) { self.audio = audio }
 }
 
+/// One PCM slice of an in-flight TTS synthesis (contract 1.25.0, ENGINE-NEEDS N2).
+///
+/// Deliberately NOT an `Audio` artifact: a per-chunk .wav container would be waste and a lie
+/// (no valid standalone header semantics). The canonical artifact contract is untouched — the
+/// aggregated response a streaming run also returns is still always `.wav`. No timing field:
+/// timing is observability and rides `RunProgress` (the observability plane), not the data plane.
+public struct TTSStreamChunk: Sendable, Codable, Equatable {
+    /// Mono PCM samples, normalized to [-1, 1].
+    public let samples: [Float]
+    public let sampleRate: Int
+    /// 0-based chunk ordinal; strictly monotonic, no gaps.
+    public let index: Int
+    /// Exactly one chunk carries `true`, and it is the last.
+    public let isFinal: Bool
+
+    public init(samples: [Float], sampleRate: Int, index: Int, isFinal: Bool) {
+        self.samples = samples
+        self.sampleRate = sampleRate
+        self.index = index
+        self.isFinal = isFinal
+    }
+}
+
 /// The canonical descriptor shape for a TTS tool. A package fills in `name`/`summary` and
 /// may extend `supportedModes`; the parameter schema is the canonical TTS surface.
 public enum TTSContract {
-    public static func descriptor(name: String, summary: String, modes: [Mode] = []) -> ToolDescriptor {
+    public static func descriptor(name: String, summary: String, modes: [Mode] = [],
+                                  streaming: StreamGranularity? = nil) -> ToolDescriptor {
         ToolDescriptor(
             name: name,
             capability: .tts,
@@ -72,7 +96,8 @@ public enum TTSContract {
                 ParameterSchema(name: "referenceTranscript", kind: .string, required: false,
                                 summary: "Transcript of the referenceAudio clip (ICL-grade cloning)."),
             ],
-            supportedModes: modes
+            supportedModes: modes,
+            streaming: streaming
         )
     }
 }

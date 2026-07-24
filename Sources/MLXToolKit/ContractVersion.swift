@@ -300,5 +300,36 @@ public enum ContractVersion {
     //     executor (tests run the pre-load hook offline; default = live `WeightMaterializer`
     //     sharing the engine's `hubMetadata` listing — enumeration stays one public tree GET,
     //     still no hub-client dependency in the engine).
-    public static let current = SemanticVersion(major: 1, minor: 24, patch: 0)
+    // 1.25.0 (2026-07-24, additive): STREAMING TTS OUTPUT (ENGINE-NEEDS N2) — the token-
+    //   streaming question RunPhase deliberately deferred (1.18.0), answered for audio first.
+    //   • `TTSStreamChunk` (TTS.swift): mono normalized PCM `samples` + `sampleRate` + strictly
+    //     monotonic `index` + exactly-once-last `isFinal`. NOT an `Audio` artifact — a per-chunk
+    //     .wav container has no standalone semantics; the canonical artifact contract is
+    //     untouched (the aggregated response is still always `.wav`). No timing field — timing
+    //     rides `RunProgress`, the observability plane.
+    //   • `StreamEmitting` (Streaming.swift, opt-in, `as?`-detected like `SelfMaterializing`):
+    //     `runStream(_:emit:)` on `@InferenceActor` — the package calls a plain @Sendable
+    //     closure SYNCHRONOUSLY from its run loop (so the `RunProgress.$sink` task-local
+    //     binding and cancellation checkpoints hold — the WeightMaterializer task-context
+    //     lesson, made structural) and still returns the aggregated canonical response, so the
+    //     engine's run-handle machinery is reused unchanged. First realization: GepardPackage
+    //     (causal NanoCodec decode every K frames, exact by causality).
+    //   • `ToolDescriptor.streaming: StreamGranularity?` (nil = batch-only = every existing
+    //     conformer; v1 vocabulary: `.audioChunk`). `TTSContract.descriptor` passes it through.
+    //     Inert on the MCP wire in V1 (no streaming transport — mcp-wire-fidelity-spike.md).
+    //   • Engine seam (MLXServeCore, recorded here for the program's history):
+    //     `MLXServeEngine.stream(_:package:bufferingPolicy:)` → `TTSStreamHandle` (chunk stream
+    //     + aggregated-response task). Streams are NON-requeueable: once chunks are delivered a
+    //     from-scratch requeue would replay audio, so a governor preemption surfaces as the new
+    //     `EngineError.streamPreempted` — a caller-distinguishable failure, never a
+    //     `CancellationError` the caller didn't cause (the V3 invariant, preserved). An
+    //     abandoned chunk stream cancels the run (no orphan GPU work); completion-only callers
+    //     use `run()`. Buffering default `.unbounded` — dropping audio is corruption
+    //     (~176 KB/s worst case, bounded by utterance length).
+    //   • STR gate (MLXServeConformance/StreamingConformance.swift): offline STR-1..3
+    //     (advertisement⇔conformance coherence, pre-cancelled runStream, posture declaration)
+    //     + live STR-4..7 in the package CLI lane (sequence integrity, aggregation parity,
+    //     task-context emission, mid-stream cancel). Latency is a TestKit bench
+    //     (`StreamingBench`, the `[STR]` line), not a gate.
+    public static let current = SemanticVersion(major: 1, minor: 25, patch: 0)
 }

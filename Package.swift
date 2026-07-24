@@ -61,7 +61,7 @@ let package = Package(
 
         // Reusable testing/validation harness for category testing apps. SwiftUI + engine targets
         // only (no third-party frameworks); kept lean + composable — apps extend it per package.
-        .target(name: "MLXEngineTestKit", dependencies: ["MLXServeCore", "MLXToolKit"]),
+        .target(name: "MLXEngineTestKit", dependencies: ["MLXServeCore", "MLXToolKit", "MLXServeConformance"]),
 
         // Web-retrieval contracts (Foundation-only seams + DTOs + profile). No MLX, no network.
         .target(name: "MLXRetrievalKitContracts"),

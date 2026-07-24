@@ -27,6 +27,15 @@ public enum EngineError: Error, Sendable, Equatable {
     /// **before** materialization rather than failing mid-write, gigabytes in. Only raised when a
     /// size preview was actually obtainable — an unreachable hub never blocks a load.
     case insufficientDisk(required: UInt64, free: UInt64)
+    /// `stream()` resolved to a package that doesn't conform to `StreamEmitting` (1.25.0).
+    /// Use `run()` for batch-only packages; check `ToolDescriptor.streaming` before offering
+    /// a streaming UI.
+    case streamingUnsupported(PackageID)
+    /// The governor preempted an in-flight STREAM (1.25.0). Streams are non-requeueable — once
+    /// chunks are delivered a from-scratch requeue would replay audio — so preemption surfaces
+    /// as this caller-distinguishable failure, never a `CancellationError` the caller didn't
+    /// cause (the V3 invariant, preserved). Retryable: re-issue the stream.
+    case streamPreempted(PackageID)
 }
 
 /// Engine-side identity for a registered package — lets several packages back the SAME
@@ -601,6 +610,139 @@ public actor MLXServeEngine {
                     return .preempted
                 }
             }
+            throw error
+        }
+    }
+
+    // MARK: - Streaming (contract 1.25.0, ENGINE-NEEDS N2)
+
+    /// Admit + stream one TTS request through a `StreamEmitting` package (contract 1.25.0).
+    ///
+    /// Returns immediately; admission (residency, license/eligibility raised at register-time,
+    /// memory) runs inside the spawned run task, and **every** failure — admission errors,
+    /// run errors, the caller's own cancellation, governor preemption — surfaces as the chunk
+    /// stream's terminal throw (the single error channel). `completion` resolves to the same
+    /// aggregated `.wav` response `run()` would have produced, after the last chunk.
+    ///
+    /// Semantics (see `ContractVersion` 1.25.0):
+    /// - **Consume the stream.** An abandoned stream (dropped handle / cancelled iteration)
+    ///   cancels the underlying run — no orphan GPU work. Completion-only callers use `run()`.
+    /// - **Non-requeueable:** governor preemption surfaces as `EngineError.streamPreempted`
+    ///   (retryable), never a `CancellationError` the caller didn't cause.
+    /// - Buffering defaults to `.unbounded`: dropping audio is corruption; the bound is
+    ///   ~176 KB/s of float PCM, capped by utterance length.
+    public nonisolated func stream(
+        _ request: TTSRequest,
+        package: PackageID? = nil,
+        bufferingPolicy: AsyncThrowingStream<TTSStreamChunk, Error>.Continuation.BufferingPolicy = .unbounded
+    ) -> TTSStreamHandle {
+        let (chunks, continuation) = AsyncThrowingStream.makeStream(
+            of: TTSStreamChunk.self, bufferingPolicy: bufferingPolicy)
+        let runTask = Task {
+            try await self.streamAttempt(request, package: package, continuation: continuation)
+        }
+        continuation.onTermination = { @Sendable reason in
+            // Consumer stopped iterating / dropped the stream → cancel the run. `.finished`
+            // (engine-side finish) must NOT cancel — the completion task may still be awaited.
+            if case .cancelled = reason { runTask.cancel() }
+        }
+        let completion = Task { () throws -> TTSResponse in
+            guard let response = try await runTask.value as? TTSResponse else {
+                // A StreamEmitting TTS package that returns a non-TTS response is a package
+                // bug; surface it legibly rather than trapping.
+                throw PackageError.unsupportedCapability(request.capability)
+            }
+            return response
+        }
+        return TTSStreamHandle(chunks: chunks, completion: completion,
+                               onCancel: { runTask.cancel() })
+    }
+
+    /// One admission + streaming execution (no requeue loop — streams are non-requeueable).
+    /// Mirrors `runAttempt`: admission gate → resident → sink binding → run-handle →
+    /// cancellation handler → LRU touch + pool hygiene → classification; finishes the consumer
+    /// stream on every exit.
+    private func streamAttempt(
+        _ request: any CapabilityRequest,
+        package: PackageID?,
+        continuation: AsyncThrowingStream<TTSStreamChunk, Error>.Continuation
+    ) async throws -> any CapabilityResponse {
+        let capability = request.capability
+        do {
+            try Task.checkCancellation()   // entry boundary (caller may cancel pre-admission)
+            let id = try resolve(capability, package)
+
+            await lockAdmission()
+            let instance: any ModelPackage
+            do {
+                instance = try await resident(
+                    id, conduct: preemption.enabled ? .preempting : .idleOnly)
+            } catch {
+                unlockAdmission()
+                throw error
+            }
+            guard let streamer = instance as? any StreamEmitting else {
+                unlockAdmission()
+                throw EngineError.streamingUnsupported(id)
+            }
+
+            let pkg = id.description
+            runTokenClock &+= 1
+            let token = runTokenClock
+            let sink: RunProgress.Sink = { [runProgress] report in
+                Task { @MainActor in
+                    runProgress.update(capability, package: pkg, to: report)
+                }
+                Task { await self.noteRunProgress(token: token, report: report) }
+            }
+            let task = Task {
+                try await RunProgress.$sink.withValue(sink) {
+                    try await streamer.runStream(request) { chunk in
+                        continuation.yield(chunk)
+                    }
+                }
+            }
+            activeRuns[token] = ActiveRun(id: id, task: task,
+                                          transientBytes: residentTransient[id] ?? 0)
+            unlockAdmission()
+
+            defer {
+                activeRuns[token] = nil
+                Task { @MainActor [runProgress] in
+                    runProgress.clear(capability, package: pkg)
+                }
+            }
+            do {
+                let response = try await withTaskCancellationHandler {
+                    try await task.value
+                } onCancel: {
+                    task.cancel() // user lane: caller / onTermination cancel → the run-handle
+                }
+                touch(id)
+                noteRunForTrimPolicy()
+                continuation.finish()
+                return response
+            } catch {
+                touch(id) // hot weights + likely retry — keep most-recently-used
+                noteRunForTrimPolicy()
+                var surfaced = error
+                if error is CancellationError {
+                    noteCancelledRun(transientBytes: activeRuns[token]?.transientBytes ?? 0)
+                    // Governor preemption (marked before its cancel) with the caller still
+                    // interested → the distinguishable, retryable streamPreempted. If the
+                    // caller cancelled too, the user lane wins and CancellationError surfaces.
+                    if activeRuns[token]?.preempted == true, !Task.isCancelled {
+                        surfaced = EngineError.streamPreempted(id)
+                    }
+                }
+                continuation.finish(throwing: surfaced)
+                throw surfaced
+            }
+        } catch {
+            // Admission-path failures (resolve/resident/unsupported/pre-admission cancel):
+            // route through the stream too — the single error channel. finish() after a
+            // finish(throwing:) inside the inner path is a no-op, so this is safe on all exits.
+            continuation.finish(throwing: error)
             throw error
         }
     }

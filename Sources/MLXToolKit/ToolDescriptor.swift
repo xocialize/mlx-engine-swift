@@ -38,6 +38,16 @@ public struct ParameterSchema: Sendable, Codable, Equatable {
     }
 }
 
+/// What a surface can stream mid-run (contract 1.25.0, additive — the `quantFloor` precedent).
+///
+/// An enum, not a Bool: granularity is the axis that generalizes (future `.token` for LLM
+/// surfaces, `.frame` for video) without another field. `nil` on the descriptor = batch-only,
+/// which is every pre-1.25 conformer.
+public enum StreamGranularity: String, Sendable, Codable {
+    /// PCM audio chunks (`TTSStreamChunk`) via the `StreamEmitting` opt-in.
+    case audioChunk
+}
+
 /// Self-description a package publishes so the registry and MCPBridge can expose the tool
 /// as a discrete, introspectable, intent-named surface (capability-as-tool).
 public struct ToolDescriptor: Sendable, Codable, Equatable {
@@ -56,18 +66,25 @@ public struct ToolDescriptor: Sendable, Codable, Equatable {
     /// `.quantBelowSurfaceFloor`). `nil` = no per-surface constraint, which is every existing
     /// conformer.
     public let quantFloor: Quant?
+    /// Mid-run streaming this surface offers (contract 1.25.0, additive). Non-nil requires the
+    /// package to conform to `StreamEmitting` (STR-1 coherence). `nil` = batch-only = every
+    /// existing conformer. NOTE: inert on the MCP wire in V1 (no streaming transport — see
+    /// mcp-wire-fidelity-spike.md).
+    public let streaming: StreamGranularity?
 
     public init(name: String,
                 capability: Capability,
                 summary: String,
                 parameters: [ParameterSchema] = [],
                 supportedModes: [Mode] = [],
-                quantFloor: Quant? = nil) {
+                quantFloor: Quant? = nil,
+                streaming: StreamGranularity? = nil) {
         self.name = name
         self.capability = capability
         self.summary = summary
         self.parameters = parameters
         self.supportedModes = supportedModes
         self.quantFloor = quantFloor
+        self.streaming = streaming
     }
 }
