@@ -61,6 +61,12 @@ private struct MockVariantConfiguration: PackageConfiguration, WeightSourcing {
     }
 }
 
+/// Marker/probe tests below drive `prepare()` with sources that stay missing on purpose —
+/// stub the 1.24 executor so nothing tries a real download.
+private struct InertMaterializer: WeightMaterializing {
+    func materialize(_ sources: [WeightSource], into root: URL) async throws {}
+}
+
 @InferenceActor
 private final class MockVariantPackage: ModelPackage {
     typealias Configuration = MockVariantConfiguration
@@ -173,7 +179,7 @@ private final class MockVariantPackage: ModelPackage {
     defer { try? FileManager.default.removeItem(at: root) }
 
     let store = ModelStore(root: root)
-    let engine = MLXServeEngine()
+    let engine = MLXServeEngine(materializer: InertMaterializer())
     await engine.useModelStore(store)
     try await engine.register(PackageRegistration.of(MockVariantPackage.self),
                               configuration: MockVariantConfiguration())

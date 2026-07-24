@@ -30,9 +30,10 @@ conformant package:
 
 ## First run: how much will this download?
 
-The engine downloads no weights itself — each package materializes through its own hub client into
-the engine's `ModelStore` root. Two seams let an app show a first-run affordance before any package
-code runs:
+Since contract 1.24 the engine executes first-run downloads itself: `prepare()` materializes a
+`WeightSourcing` configuration's missing sources into the engine's `ModelStore` root before the
+package loads (packages with their own downloader opt out via `SelfMaterializing`). Two seams let
+an app show a first-run affordance before any package code runs:
 
 ```swift
 await engine.useModelStore(ModelStore(root: chosenFolder))

@@ -11,10 +11,13 @@ engine does the coordination around them.
 - **Memory governance** — a `MemoryGovernor` watermark ladder drives load/evict (see **R-MEM-1**);
   placement uses `MemoryPool` (`.metalGPU` / `.coreMLANE` / `.coreMLCPU` / `.coreMLGPU`).
 - **Model residency** — lazy load, cooperative eviction. One model backs N surfaces.
-- **Asset sourcing** — the engine ships **no weight-downloading code**: each package materializes
-  through its own hub client, pointed at the engine's `ModelStore` root (HF cache layout,
-  `<root>/models--<org>--<name>/`). Weight **integrity** is the hub client's responsibility (xet
-  chunk hashes / ETag verification in swift-huggingface); the engine verifies presence, not content.
+- **Asset sourcing** — since contract 1.24 the **engine executes** first-run materialization:
+  `resident()` downloads a `WeightSourcing` configuration's missing sources into the `ModelStore`
+  root before `load()` (`WeightMaterializer` — plain URLSession, no hub-client dependency; files
+  land flat under `<root>/models--<org>--<name>/`). `SelfMaterializing` opts a package out
+  (non-HF hosts, wrappers that fetch internally); those packages keep downloading through their
+  own client, pointed at the same root. The engine's executor verifies per-file **size**; deeper
+  integrity (xet chunk hashes / ETags) remains a hub client's domain.
 - **Disk governance** — the store's counterpart to memory governance: `WeightSourcing.
   missingWeightSources(storeRoot:)` ships a default probe over that layout,
   `MLXServeEngine.deleteWeights(repo:)` deletes a repo's weights but **refuses while a resident

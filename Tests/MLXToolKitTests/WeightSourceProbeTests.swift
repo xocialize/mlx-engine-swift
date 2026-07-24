@@ -167,6 +167,42 @@ final class WeightSourceProbeTests: XCTestCase {
         XCTAssertGreaterThan(usage.bytes, Int64(markerBytes))
     }
 
+    // MARK: - The engine-executed flat layout (contract 1.24)
+
+    func testFlatLayoutSatisfiesTheDefaultProbe() throws {
+        // The engine's own materializer lands files directly under the repo directory — no
+        // snapshots/ indirection. The default probe must accept that layout too.
+        let fm = FileManager.default
+        let dir = root.appending(path: ModelStore.repoFolderName(for: "org/flat"),
+                                 directoryHint: .isDirectory)
+        try fm.createDirectory(at: dir.appending(path: "voices"), withIntermediateDirectories: true)
+        try Data("x".utf8).write(to: dir.appending(path: "model.safetensors"))
+        try Data("x".utf8).write(to: dir.appending(path: "voices/af.safetensors"))
+
+        let config = ProbeConfig(sources: [
+            WeightSource(role: "main", repo: "org/flat",
+                         matching: ["*.safetensors", "voices/*.safetensors"]),
+        ])
+        XCTAssertTrue(config.missingWeightSources(storeRoot: root).isEmpty)
+    }
+
+    func testFlatProbeIgnoresHubCacheBookkeepingAndTheMarker() throws {
+        // A repo directory holding ONLY hub-cache bookkeeping (a snapshot without a usable ref)
+        // and the engine's install marker must NOT read as a satisfied flat layout — each layout
+        // is judged by its own files.
+        let fm = FileManager.default
+        let dir = root.appending(path: ModelStore.repoFolderName(for: "org/husk"),
+                                 directoryHint: .isDirectory)
+        let orphan = dir.appending(path: "snapshots", directoryHint: .isDirectory)
+            .appending(path: "deadbeef", directoryHint: .isDirectory)
+        try fm.createDirectory(at: orphan, withIntermediateDirectories: true)
+        try Data("x".utf8).write(to: orphan.appending(path: "model.safetensors"))
+        ModelStore(root: root).writeMarker(repo: "org/husk", revision: "main", capabilities: [.llm])
+
+        let config = ProbeConfig(sources: [WeightSource(role: "main", repo: "org/husk")])
+        XCTAssertEqual(config.missingWeightSources(storeRoot: root).map(\.role), ["main"])
+    }
+
     // MARK: - Fixtures
 
     /// A minimal `WeightSourcing` configuration that takes the MS-2 default probe.

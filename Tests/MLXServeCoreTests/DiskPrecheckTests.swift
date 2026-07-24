@@ -65,6 +65,12 @@ private func makeStoreRoot() throws -> URL {
     return root
 }
 
+/// These tests are about the MS-3 precheck, not the 1.24 executor — stub the executor out so a
+/// `prepare()` that passes the precheck doesn't proceed into a real download.
+private struct NoopMaterializer: WeightMaterializing {
+    func materialize(_ sources: [WeightSource], into root: URL) async throws {}
+}
+
 // MARK: - MS-3
 
 @Test func previewSizesTheMissingSourcesAgainstTheStoreVolume() async throws {
@@ -118,7 +124,8 @@ private func makeStoreRoot() throws -> URL {
     defer { try? FileManager.default.removeItem(at: root) }
 
     // Unknown size must never block a materialization that would have succeeded.
-    let engine = MLXServeEngine(hubMetadata: FixedSizeHub(bytes: .max / 2, reachable: false))
+    let engine = MLXServeEngine(hubMetadata: FixedSizeHub(bytes: .max / 2, reachable: false),
+                                materializer: NoopMaterializer())
     await engine.useModelStore(ModelStore(root: root))
     try await engine.register(PackageRegistration.of(SourcedPackage.self),
                               configuration: SourcedConfiguration())
@@ -131,6 +138,7 @@ private func makeStoreRoot() throws -> URL {
     defer { try? FileManager.default.removeItem(at: root) }
 
     let engine = MLXServeEngine(hubMetadata: FixedSizeHub(bytes: .max / 2),
+                                materializer: NoopMaterializer(),
                                 diskPrecheckEnabled: false)
     await engine.useModelStore(ModelStore(root: root))
     try await engine.register(PackageRegistration.of(SourcedPackage.self),

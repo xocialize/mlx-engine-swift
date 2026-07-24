@@ -30,10 +30,14 @@ public struct WeightSource: Sendable, Equatable, Codable {
 
 /// A `PackageConfiguration` that declares its weight sources.
 ///
-/// Complements `ModelStorable` (where weights go) with WHAT would be fetched: the package's
-/// `load()` remains the executor (native downloader, `WeightDownloadProgress` forwarding), but
-/// the declaration lets the engine, conformance suite, and measurement harness reason about
-/// first-run behavior generically — this is the seam behind the per-package materialization gate.
+/// Complements `ModelStorable` (where weights go) with WHAT would be fetched. Since contract
+/// 1.24 the ENGINE executes first-run materialization from this declaration (before `load()`,
+/// with `WeightDownloadProgress` bound so the download phase is observable) — `load()` just
+/// loads. A package that must keep executing its own downloads opts out via
+/// `SelfMaterializing`; a package that still self-materializes defensively stays correct,
+/// because its own missing-check runs after the engine's executor and finds nothing left.
+/// The declaration also lets the conformance suite and measurement harness reason about
+/// first-run behavior generically — the seam behind the per-package materialization gate.
 public protocol WeightSourcing {
     /// Every source this configuration needs on a fresh machine (fixed by the configuration —
     /// e.g. the quant selects which transformer repo appears).
@@ -53,19 +57,25 @@ public protocol WeightSourcing {
 
 public extension WeightSourcing {
 
-    /// Default probe (MS-2): a source is present when its snapshot is materialized under the store
-    /// and satisfies the source's declaration.
+    /// Default probe (MS-2): a source is present when its materialized files under the store
+    /// satisfy the source's declaration.
     ///
-    /// Per source, via `ModelStore.snapshotDirectory(for:revision:)`:
-    /// - no store root, or no snapshot directory → **missing** (fresh-machine posture, MAT-4);
-    /// - `matching` globs declared → **every** glob must match at least one file in the snapshot
-    ///   (a half-materialized snapshot reads as missing rather than silently degrading);
-    /// - no globs → the snapshot must carry at least one weight file (`*.safetensors`, `*.gguf`,
+    /// Two layouts are accepted per source, either one satisfies:
+    /// - the hub-client snapshot, via `ModelStore.snapshotDirectory(for:revision:)`
+    ///   (`snapshots/<commit>/…` behind `refs/`);
+    /// - the engine-executed flat layout (contract 1.24), files directly under
+    ///   `ModelStore.directory(for:)` — where `MLXServeEngine`'s own materializer lands them.
+    ///
+    /// The satisfaction rule is the same for both:
+    /// - no store root, or no materialized directory → **missing** (fresh-machine posture, MAT-4);
+    /// - `matching` globs declared → **every** glob must match at least one file
+    ///   (a half-materialized source reads as missing rather than silently degrading);
+    /// - no globs → the directory must carry at least one weight file (`*.safetensors`, `*.gguf`,
     ///   `*.npz`, `*.bin`) or a model index/config (`model.safetensors.index.json`, `config.json`,
     ///   `model_index.json`) — a bare directory is not a materialized model.
     ///
-    /// Presence, not integrity: content verification is the hub client's job (xet chunk hashes /
-    /// ETags in swift-huggingface).
+    /// Presence, not integrity: content verification is the downloader's job (size check in the
+    /// engine's materializer; xet chunk hashes / ETags in swift-huggingface).
     func missingWeightSources(storeRoot: URL?) -> [WeightSource] {
         defaultMissingWeightSources(storeRoot: storeRoot)
     }
@@ -76,12 +86,26 @@ public extension WeightSourcing {
         guard storeRoot != nil else { return weightSources }
         let store = ModelStore(root: storeRoot)
         return weightSources.filter { source in
-            guard let snapshot = store.snapshotDirectory(for: source.repo, revision: source.revision)
-            else { return true }
-            return !WeightSourceProbe.snapshot(snapshot, satisfies: source.matching)
+            if let snapshot = store.snapshotDirectory(for: source.repo, revision: source.revision),
+               WeightSourceProbe.snapshot(snapshot, satisfies: source.matching) { return false }
+            if let flat = store.directory(for: source.repo),
+               WeightSourceProbe.flatDirectory(flat, satisfies: source.matching) { return false }
+            return true
         }
     }
 }
+
+/// A `WeightSourcing` configuration whose PACKAGE executes first-run materialization itself —
+/// the opt-out from the engine-executed default (contract 1.24).
+///
+/// Conform when the engine's generic executor cannot do the job: weights served from a non-HF
+/// host, or a Path-A wrapper whose wrapped runtime downloads internally as part of its own
+/// startup. The engine then skips its pre-`load()` materialization pass and the package's
+/// `load()` remains responsible for fetching everything `missingWeightSources(storeRoot:)`
+/// reports (forwarding `WeightDownloadProgress` so the download phase stays observable).
+/// Detected by `as?` like `ModelStorable` — a marker, no requirements. Bundled-only packages
+/// don't need it: their missing-set is empty by construction.
+public protocol SelfMaterializing {}
 
 /// The file-level half of the MS-2 default probe, factored out so it is testable on its own and
 /// reusable by a package that overrides `missingWeightSources` for a non-store layout.
@@ -96,7 +120,23 @@ public enum WeightSourceProbe {
     /// Does `snapshot` satisfy a source's `matching` declaration? See
     /// `WeightSourcing.missingWeightSources(storeRoot:)` for the rule.
     public static func snapshot(_ snapshot: URL, satisfies matching: [String]?) -> Bool {
-        let files = relativeFiles(in: snapshot)
+        satisfies(files: relativeFiles(in: snapshot), matching: matching)
+    }
+
+    /// Does a repo directory in the engine-executed FLAT layout (contract 1.24 — files directly
+    /// under `ModelStore.directory(for:)`, no `snapshots/` indirection) satisfy a source's
+    /// declaration? Hub-cache bookkeeping subtrees (`snapshots/`, `refs/`, `blobs/`) and the
+    /// engine's install marker are excluded, so a half-materialized hub-client layout can never
+    /// read as a satisfied flat one — each layout is judged by its own files.
+    public static func flatDirectory(_ directory: URL, satisfies matching: [String]?) -> Bool {
+        let hubCache = ["snapshots/", "refs/", "blobs/"]
+        let files = relativeFiles(in: directory).filter { path in
+            path != ModelStore.markerName && !hubCache.contains { path.hasPrefix($0) }
+        }
+        return satisfies(files: files, matching: matching)
+    }
+
+    private static func satisfies(files: [String], matching: [String]?) -> Bool {
         guard !files.isEmpty else { return false }
 
         if let globs = matching, !globs.isEmpty {

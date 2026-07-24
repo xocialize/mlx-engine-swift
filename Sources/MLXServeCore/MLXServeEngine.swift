@@ -161,6 +161,11 @@ public actor MLXServeEngine {
     /// Metadata-only hub client used to size a pending materialization (MS-3). Injectable so tests
     /// (and offline consumers) never touch the network.
     private let hubMetadata: any HubMetadataProviding
+    /// The engine-executed materializer (contract 1.24): downloads a `WeightSourcing`
+    /// configuration's missing sources into the store before `load()`. Injectable so tests
+    /// exercise the pre-load hook without a network; defaults to the live `WeightMaterializer`
+    /// sharing `hubMetadata` for enumeration.
+    private let materializer: any WeightMaterializing
     /// Whether `resident()` refuses a load whose pending download can't fit the store volume.
     /// On by default; the escape hatch exists for hosts that manage disk themselves.
     public var diskPrecheckEnabled: Bool
@@ -202,6 +207,7 @@ public actor MLXServeEngine {
                 preemption: PreemptionPolicy = PreemptionPolicy(),
                 physFootprint: @Sendable @escaping () -> UInt64? = HostMemory.physFootprint,
                 hubMetadata: any HubMetadataProviding = HubMetadataClient(),
+                materializer: (any WeightMaterializing)? = nil,
                 diskPrecheckEnabled: Bool = true) {
         self.policy = policy
         self.deviceProfile = device
@@ -210,6 +216,7 @@ public actor MLXServeEngine {
         self.preemption = preemption
         self.physFootprint = physFootprint
         self.hubMetadata = hubMetadata
+        self.materializer = materializer ?? WeightMaterializer(listing: hubMetadata)
         self.diskPrecheckEnabled = diskPrecheckEnabled
         // Bound MLX's process-global buffer-recycling pool NOW (before any package loads or
         // runs) so interactive consumers stop ratcheting phys_footprint by GBs per turn
@@ -770,6 +777,37 @@ public actor MLXServeEngine {
             // gigabytes into the write. Skipped silently whenever the size isn't knowable.
             try await assertDiskFits(entry)
 
+            // Ambient download-progress sink: bound around the engine's own materialization pass
+            // below AND around load(), so both the engine executor and a package that forwards its
+            // native downloader's progress surface a real `.downloading` fraction.
+            let sink: WeightDownloadProgress.Sink = { [preparation] fraction, bps in
+                Task { @MainActor in
+                    for cap in caps {
+                        preparation.update(cap, package: pkg,
+                                           to: .downloading(fraction: fraction, bytesPerSecond: bps))
+                    }
+                }
+            }
+
+            // Engine-executed materialization (contract 1.24): download the declared-but-missing
+            // sources into the store BEFORE the package is constructed, so `load()` just loads.
+            // `SelfMaterializing` configurations keep executing their own downloads (non-HF hosts,
+            // wrappers whose runtime fetches internally); packages that still self-materialize
+            // defensively stay correct — their own missing-check finds nothing left. No store
+            // root ⇒ nothing the engine can execute into; the package falls back to its cache.
+            if let root = modelStore.root,
+               let sourcing = configuration as? WeightSourcing,
+               !(configuration is SelfMaterializing) {
+                let missing = sourcing.missingWeightSources(storeRoot: root)
+                if !missing.isEmpty {
+                    await updatePhase(.downloading(fraction: 0, bytesPerSecond: nil),
+                                      caps: caps, package: pkg)
+                    try await WeightDownloadProgress.$sink.withValue(sink) {
+                        try await materializer.materialize(missing, into: root)
+                    }
+                }
+            }
+
             let instance = try entry.registration.makePackage(configuration)
             // Cold-start watchdog mitigation: page the package's declared weight files into the OS cache
             // before load() issues GPU evals, so file-I/O latency never stalls a live Metal command
@@ -785,17 +823,9 @@ public actor MLXServeEngine {
                 await WeightPrewarmer.prewarm(prewarming.prewarmPaths, label: pkg, onProgress: onPrewarm)
             }
 
-            // Bind the ambient download-progress sink around load() so a package that forwards its
-            // downloader's progress (WeightDownloadProgress.report) surfaces a real download fraction.
+            // Keep the sink bound around load() too: a `SelfMaterializing` package (or one still
+            // shipping its own executor) forwards its downloader's progress from inside load().
             await updatePhase(.loading, caps: caps, package: pkg)
-            let sink: WeightDownloadProgress.Sink = { [preparation] fraction, bps in
-                Task { @MainActor in
-                    for cap in caps {
-                        preparation.update(cap, package: pkg,
-                                           to: .downloading(fraction: fraction, bytesPerSecond: bps))
-                    }
-                }
-            }
             try await WeightDownloadProgress.$sink.withValue(sink) {
                 try await instance.load()
             }

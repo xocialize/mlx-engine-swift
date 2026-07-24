@@ -62,7 +62,9 @@ timed cancel-latency probe; Xcode-app harness only).
 > `MLXServeConformance.MaterializationConformance.check(…)`. v0.24.0 extended its vocabulary so
 > **bundled-weights** packages (checkpoints vendored in the SPM bundle, nothing to download) are
 > first-class: network sources must be *missing* on a fresh machine, bundled sources must be
-> *present*. None of that is written up in this shipped `docs/` set yet.
+> *present*. Contract 1.24 then flipped the EXECUTION side: the engine now downloads the missing
+> sources itself before `load()` (`SelfMaterializing` opts a package out) — the declarations the
+> gate checks are unchanged. None of that is written up in this shipped `docs/` set yet.
 >
 > Until someone gives these placeholder docs a pass, the ground truth is:
 > - `Sources/MLXToolKit/WeightSources.swift` + `Sources/MLXToolKit/BundledWeightSources.swift`

@@ -275,5 +275,30 @@ public enum ContractVersion {
     // row and MaterializationBench read a false marker=NO. TestKit's bench now verifies markers
     // against the configuration's declared sources (caller-passed sourceRepo = fallback only).
     // Stale family-primary markers are harmless residue, deletable via the storage panel.
-    public static let current = SemanticVersion(major: 1, minor: 23, patch: 0)
+    // 1.24.0 (2026-07-23, additive): ENGINE-EXECUTED materialization — the executor moves
+    //   engine-side; `load()` just loads.
+    //   • `MLXServeEngine.resident()` now downloads a `WeightSourcing` configuration's missing
+    //     sources into the store BEFORE constructing the package (`WeightMaterializer` in
+    //     MLXServeCore: chunk-delegate streaming, 8-way ranged chunks for xet-backed files
+    //     ≥ 64 MB, byte-accurate `WeightDownloadProgress` via an AsyncStream task-context
+    //     bridge — lifted from the mage-flow reference executor, commits cf45682/6faa4cb).
+    //     Every package gains first-run download for free; the per-package WeightMaterializer
+    //     copies (MLXLTX2/MLXKlein/MLXZImage/MLXMageFlow) become deletable, and a package that
+    //     still self-materializes stays correct — its own missing-check runs after the
+    //     engine's pass and finds nothing left.
+    //   • `SelfMaterializing` (marker protocol, this file's sibling in WeightSources.swift):
+    //     the opt-out for packages whose downloads the generic executor can't do (non-HF
+    //     hosts, wrappers whose runtime fetches internally). Bundled-only packages need
+    //     nothing — their missing-set is empty.
+    //   • MS-2 default probe extension: `defaultMissingWeightSources` accepts the
+    //     engine-executed FLAT layout (files directly under `ModelStore.directory(for:)` — the
+    //     fleet convention the per-package executors established) alongside the hub-client
+    //     snapshot layout; `WeightSourceProbe.flatDirectory(_:satisfies:)` excludes hub-cache
+    //     bookkeeping (`snapshots/`, `refs/`, `blobs/`) and the install marker so a
+    //     half-materialized hub layout can't read as a satisfied flat one.
+    //   • Engine seam: `MLXServeEngine.init(materializer:)` injects a `WeightMaterializing`
+    //     executor (tests run the pre-load hook offline; default = live `WeightMaterializer`
+    //     sharing the engine's `hubMetadata` listing — enumeration stays one public tree GET,
+    //     still no hub-client dependency in the engine).
+    public static let current = SemanticVersion(major: 1, minor: 24, patch: 0)
 }

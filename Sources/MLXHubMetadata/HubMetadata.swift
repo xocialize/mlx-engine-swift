@@ -1,9 +1,8 @@
 // MLXHubMetadata — **metadata-only** Hugging Face access for the engine (MS-3).
 //
-// Placement decision (2026-07, recorded in architecture.md): the engine deliberately ships no
-// weight-downloading HTTP code — every package materializes through its own hub client. But
-// answering "this will need 34 GB, you have 41 GB free" *before* any package code runs needs a
-// listing of file sizes, which is HTTP. So it lives here, in its own tiny target:
+// Placement decision (2026-07, recorded in architecture.md): answering "this will need 34 GB,
+// you have 41 GB free" *before* any package code runs needs a listing of file sizes, which is
+// HTTP. So it lives here, in its own tiny target:
 //
 //   • `MLXToolKit` stays Foundation-only, network-free, and dependency-free (the contract every
 //     package builds against offline).
@@ -12,6 +11,11 @@
 //     purpose of a *preview*.
 //   • Everything is behind `HubMetadataProviding`, so tests (and offline consumers) inject a mock
 //     and no network is touched.
+//
+// Since contract 1.24 the engine ALSO executes first-run downloads itself
+// (`MLXServeCore.WeightMaterializer`) — but through plain URLSession against the public resolve
+// endpoint, reusing this target's `HubMetadataProviding` for enumeration. The original half of
+// the placement decision still holds: no hub-client dependency anywhere in the engine.
 
 import Foundation
 import MLXToolKit
