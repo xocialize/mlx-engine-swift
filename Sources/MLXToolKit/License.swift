@@ -106,10 +106,25 @@ extension SPDXLicense {
     /// (NemotronSTTPackage); NVIDIA adopted OpenMDW across the Nemotron/Cosmos/GR00T families.
     public static let openMDW1_1: SPDXLicense = "OpenMDW-1.1"
 
+    /// Liquid AI's LFM Open License v1.0 (liquid.ai/lfm-license; the LICENSE file on the
+    /// LiquidAI HF repos). Non-SPDX, referenced via the `LicenseRef-` convention. Reviewed
+    /// against the license text (2026-07-24): **Apache-2.0-derived** — broad, royalty-free,
+    /// perpetual rights to use, modify, and distribute the models and Derivatives, commercial
+    /// use included; no field-of-use restriction, no non-compete, no eval-only clause, no
+    /// output claims. The single carve-out is a **revenue gate**: once an entity's annual
+    /// revenue exceeds $10M USD its commercial-use rights under the free license end and a
+    /// commercial license from Liquid AI is required (research use stays free). That is the
+    /// same shape as the allowlisted `ltx2Community` (revenue gate + non-compete + derivative
+    /// terms) MINUS the non-compete — strictly less restrictive — so this project **permits**
+    /// it under the same rationale. The pass is CONDITIONAL on the $10M threshold: record it
+    /// wherever LFM weights ship and revisit at crossing (a conditional-pass C7, not a clean
+    /// one). Used by the LFM2.5-8B-A1B `llm` package (LFMLLMPackage).
+    public static let lfmOpen1: SPDXLicense = "LicenseRef-LFM-Open-1.0"
+
     /// The permissive allowlist used by `.permissiveOnly`. Curated; extend deliberately.
     public static let permissiveAllowlist: Set<SPDXLicense> = [
         .mit, .apache2, .bsd2, .bsd3, .isc, .unlicense, .funasrModel, .ccBy4, .ltx2Community, .dinov3,
-        .gemmaTerms, .nvidiaOpenModel, .openMDW1_1,
+        .gemmaTerms, .nvidiaOpenModel, .openMDW1_1, .lfmOpen1,
     ]
 
     /// Non-permissive licenses explicitly acknowledged for **eval/research** use only. These are
