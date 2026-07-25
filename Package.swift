@@ -16,6 +16,10 @@ let package = Package(
         .library(name: "MLXToolKit", targets: ["MLXToolKit"]),
         .library(name: "MLXServeCore", targets: ["MLXServeCore"]),
         .library(name: "MLXServeConformance", targets: ["MLXServeConformance"]),
+        // The MLXNN-dependent half of the INF gate (C14). Split from MLXServeConformance so that
+        // target stays MLX-free — mlx-audio-polish-swift (the non-MLX capability seam) consumes
+        // the suite, and a functional port declaring `.notApplicable` needs no MLXNN either.
+        .library(name: "MLXServeConformanceNN", targets: ["MLXServeConformanceNN"]),
         // Metadata-only hub access (file listings + sizes) behind an injectable seam. NOT a
         // downloader — it exists so the engine can preview download size / disk fit (MS-3).
         .library(name: "MLXHubMetadata", targets: ["MLXHubMetadata"]),
@@ -52,8 +56,16 @@ let package = Package(
         // MLXToolKit network-free while letting the engine size a materialization before it runs.
         .target(name: "MLXHubMetadata", dependencies: ["MLXToolKit"]),
 
-        // C0–C13 self-check harness (placeholder this phase).
+        // C0–C14 self-check harness (placeholder this phase). Deliberately MLX-free.
         .target(name: "MLXServeConformance", dependencies: ["MLXToolKit"]),
+
+        // INF gate (C14), MLXNN half: the shared `Module` → training-flag walk. A package with an
+        // MLXNN model graph adds this product alongside MLXServeConformance; one without (a
+        // functional port, or a non-MLX package) needs only MLXServeConformance.
+        .target(name: "MLXServeConformanceNN", dependencies: [
+            "MLXServeConformance",
+            .product(name: "MLXNN", package: "mlx-swift"),
+        ]),
 
         // Shared SwiftUI surface delivered to consuming apps. Carries the Marquee
         // design tokens and reusable settings panels (model storage, etc.).
@@ -77,6 +89,12 @@ let package = Package(
             .product(name: "MLX", package: "mlx-swift"),
         ]),
         .testTarget(name: "MLXServeConformanceTests", dependencies: ["MLXServeConformance", "MLXToolKit"]),
+        // Exercises the INF walk against real MLXNN module graphs (no weights, no kernels — the
+        // flags are set by `train(_:)`, which touches no arrays).
+        .testTarget(name: "MLXServeConformanceNNTests", dependencies: [
+            "MLXServeConformanceNN", "MLXServeConformance",
+            .product(name: "MLXNN", package: "mlx-swift"),
+        ]),
         .testTarget(name: "MLXRetrievalKitTests", dependencies: ["MLXRetrievalKit", "MLXRetrievalKitContracts"]),
     ]
 )

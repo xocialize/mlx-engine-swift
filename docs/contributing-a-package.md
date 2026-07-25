@@ -17,7 +17,7 @@ A contribution is one `ModelPackage` (the engine-owned model unit) declaring a
 7. Write the package's `Configuration` (a `PackageConfiguration`) — init-time, distinct from the
    request envelope. `StandardConfiguration` covers the common knobs.
 8. Publish with `PackageRegistration.of(MyPackage.self)`.
-9. Run the `MLXServeConformance` harness; walk [C0–C13](conformance-c0-c13.md). Every box or a
+9. Run the `MLXServeConformance` harness; walk [C0–C14](conformance-c0-c13.md). Every box or a
    documented waiver.
 
 ## License (two layers — both must be permissive)

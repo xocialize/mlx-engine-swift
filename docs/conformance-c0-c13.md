@@ -1,7 +1,10 @@
-# Conformance — C0–C13
+# Conformance — C0–C14
 
 The contributor gate. Each item is a reviewable pass/fail; a reviewer points at the C-level,
 not an opinion. Most declarative items are made once on the `PackageManifest`.
+
+*(Filename kept at `conformance-c0-c13.md` when C14 landed — it is linked from three other repos'
+docs. Rename it only in a pass that fixes those links too.)*
 
 | # | Item |
 |---|---|
@@ -19,6 +22,7 @@ not an opinion. Most declarative items are made once on the `PackageManifest`.
 | C11 | MCPBridge introspection (each surface exposes a valid introspectable schema) |
 | C12 | Forward-compat discipline (`@unknown default` on capability switches) |
 | C13 | Runtime governance cooperation (engine-owned lifecycle; `@InferenceActor`-isolated; cancellation-honoring; cooperatively evictable; no private queue) |
+| C14 | Inference mode (the loaded model graph reports `training == false`; a package with no module graph declares the exemption) |
 
 **C11 is scoped to introspectability, not MCP wire compatibility** (decided 2026-07-22). A surface
 satisfies C11 by publishing a complete, honest `ToolDescriptor` — a bridge can enumerate the tool,
@@ -49,6 +53,49 @@ cancelled-not-failed in the capability's canonical shape (the error rethrown unw
 (per step / chunk / token / frame / layer, per `RunPhase`; per-step `RunProgress` reporting is
 accepted evidence). The live counterpart is `MLXEngineTestKit.CancellationBench` (the `[CAN]`
 timed cancel-latency probe; Xcode-app harness only).
+
+**C14 — inference mode** (added 2026-07-25, contract 1.27.0). `MLXNN.Module.training` defaults to
+**`true`**. In that state `BatchNorm.callAsFunction` normalizes by the *current batch's* statistics
+and **overwrites** the checkpoint's `running_mean`/`running_var` on every forward
+(mlx-swift `Source/MLXNN/Normalization.swift`) — so inference runs on per-input statistics, the
+trained statistics are never read, and repeated calls on one loaded instance drift. `Dropout` is the
+same hazard class and is **not** identity-safe: it short-circuits only at `p == 0` or `!training`,
+so a port carrying its upstream `p` randomly zeroes activations at inference. Norms without running
+statistics (`LayerNorm`, `RMSNorm`, `GroupNorm`) never read `training` and are unaffected.
+
+Neither failure is visible to eyeball validation, and none of C0–C13 asked. The motivating defect
+(mlx-birefnet-swift, 2026-07-25): the matte still *looked* like a matte while the PROD fast tier
+over-segmented by 68 % (foreground fraction 0.42 vs the PyTorch oracle's 0.25) and end-to-end logits
+cosine against the oracle was **0.264**; one `model.train(false)` at the pipeline construction choke
+point took it to **0.99999**.
+
+C14 has an **executable adjunct**, the **INF gate**
+(`MLXServeConformance.InferenceModeConformance`):
+- **INF-1 inference mode** — every `Module` reachable from the package's **loaded** graph reports
+  `training == false`. Any module in training mode fails, inert ones included: `train(_:)` is
+  recursive, so a stray `Linear` proves the call never covered that subtree. An *empty* graph fails
+  too, so "I ran the gate before `load()`" cannot read as a pass.
+- **INF-2 posture declaration** — a package with no module graph (a functional port whose norms read
+  `running_mean`/`running_var` straight out of the weight dict — DDColor, LaMa, EdgeTAM, the FLUX.2
+  VAE — or a non-MLX package) declares `.notApplicable(reason:)`. The exemption is falsifiable: it
+  fails if the walk observed modules anyway.
+
+Because INF-1 needs the loaded graph, this gate is **not weight-free** — unlike MAT and CAN-1 it runs
+in the package's live gate lane (post-`load()`), where STR-4..7 run. The package conforms to
+`InferenceModeInspectable` in one line (only it knows where its models live), using the shared
+`Module` walk from the **`MLXServeConformanceNN`** product — split out so `MLXServeConformance`
+stays MLX-free for `mlx-audio-polish-swift` (the non-MLX capability seam) and for functional ports.
+
+**Presence of inference mode on the real graph is the criterion.** Not output plausibility — a port
+can look fine purely because its weights make batch statistics ≈ running statistics, which is luck.
+And not the presence of `.train(false)` in source — the call may sit on a path this configuration
+never takes.
+
+The live counterpart is **INF-3 idempotence** (`MLXEngineTestKit.InferenceModeBench`, the `[INF]`
+line): two `run()` calls on ONE loaded instance must produce identical output. INF-3 catches the
+failure *class* rather than the known mechanism — statistic drift, live `Dropout`, and anything
+training-mode-sensitive not yet met — and is what would have caught BiRefNet without anyone knowing
+`BatchNorm` was the mechanism.
 
 *The authoritative checklist (pass/fail criteria, failure modes) lives in the `mlx-swift-integration` skill.*
 

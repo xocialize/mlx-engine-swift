@@ -365,5 +365,40 @@ public enum ContractVersion {
     //     qwen/gemma adopt incrementally: their freeform paths sit on `ChatSession.respond`
     //     (string plane), which does NOT surface `.info` — adoption there is a `streamDetails`
     //     migration, scoped separately.
-    public static let current = SemanticVersion(major: 1, minor: 26, patch: 0)
+    // 1.27.0 (2026-07-25, additive): INFERENCE MODE — the C14 conformance item + its INF gate.
+    //   No contract TYPE changes: C14 is a checklist item and a test-facing seam, so every
+    //   existing manifest is unchanged and no package is retroactively non-conformant. Recorded
+    //   here because the conformance surface is what the version tracks.
+    //   • Motivating defect (mlx-birefnet-swift, 2026-07-25): `MLXNN.Module.training` defaults to
+    //     **true**, and in that state `BatchNorm.callAsFunction` normalizes by the CURRENT batch's
+    //     statistics and OVERWRITES the checkpoint's `running_mean`/`running_var` every forward
+    //     (mlx-swift `Source/MLXNN/Normalization.swift`). The trained statistics were never read
+    //     and repeated calls on one instance drifted. Invisible to eyeball validation — the matte
+    //     still looked like a matte while the PROD fast tier over-segmented by 68 % (foreground
+    //     fraction 0.42 vs the PyTorch oracle's 0.25) and e2e logits cosine was 0.264. One
+    //     `model.train(false)` at the pipeline construction choke point → 0.99999.
+    //   • `Dropout` is the SAME hazard class and is NOT identity-safe: it short-circuits only at
+    //     `p == 0` or `!training` (`Source/MLXNN/Dropout.swift`), so a port carrying its upstream
+    //     `p` randomly zeroes activations at inference. Fleet sweep (2026-07-25) found exactly one
+    //     live instantiation — kokoro-mlx-swift's Albert (`p` = hidden_dropout_prob, default 0.1)
+    //     — whose `train(false)` is therefore load-bearing, not hygiene. Norms with no running
+    //     statistics (LayerNorm/RMSNorm/GroupNorm) never read `training` and are unaffected.
+    //   • INF gate (`MLXServeConformance/InferenceModeConformance.swift`): INF-1 every module in
+    //     the LOADED graph reports `training == false` (an empty graph fails rather than passing
+    //     vacuously — the "ran it before load()" trap); INF-2 a package with no module graph (a
+    //     functional port reading running statistics straight from the weight dict, or a non-MLX
+    //     package) declares `.notApplicable(reason:)`, an exemption that FAILS if the walk
+    //     observed modules anyway. Presence of inference mode on the real graph is the criterion —
+    //     never output plausibility (weights can make batch stats ≈ running stats by luck), and
+    //     never the presence of `.train(false)` in source (it may sit on an untaken path).
+    //   • `InferenceModeInspectable` (test-facing seam) — the package exposes its loaded graph's
+    //     flags; only it knows where its models live. The shared `Module` walk ships in the NEW
+    //     `MLXServeConformanceNN` product, split out so `MLXServeConformance` stays MLX-free
+    //     (`mlx-audio-polish-swift`, the non-MLX capability seam, consumes the suite).
+    //   • INF-3 idempotence is a TestKit bench (`InferenceModeBench`, the `[INF]` line), not a
+    //     gate: two `run()` calls on ONE loaded instance must produce identical output. It catches
+    //     the failure CLASS rather than the known mechanism — statistic drift, live Dropout, and
+    //     anything training-mode-sensitive not yet met — which is what would have caught BiRefNet
+    //     without anyone knowing BatchNorm was the mechanism.
+    public static let current = SemanticVersion(major: 1, minor: 27, patch: 0)
 }
