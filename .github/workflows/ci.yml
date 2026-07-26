@@ -7,6 +7,16 @@ name: ci
 # Intended floor: macOS 26.2+ / Apple silicon. If the GitHub-hosted image lacks the macOS 26 SDK
 # or the Metal/ANE paths once real MLX code lands, switch `runs-on` to a self-hosted runner:
 #   runs-on: [self-hosted, macOS, ARM64]
+#
+# BUILD SYSTEM (must stay pinned): MLXServeCore links MLX, and MLX loads its Metal kernels from a
+# `default.metallib` compiled from Cmlx's 49 `.metal` sources into a resource bundle colocated
+# with the test binary. Only the `swiftbuild` build system compiles those sources; the deprecated
+# `native` one silently ships no metallib, so the first allocator call in the xctest process hits
+# mlx-swift's aborting error handler and kills the whole run (signal 5) — which is exactly what
+# CI did while the runner toolchain still defaulted to `native`. Pinning `swiftbuild` keeps CI on
+# the same footing as `swift test` on a current toolchain and as Xcode. The GPU-touching tests
+# additionally self-skip on a runner with no usable Metal device, so a hosted image that loses the
+# Metal toolchain degrades to visible skips rather than a red run.
 
 on:
   push:
@@ -23,8 +33,12 @@ jobs:
         with:
           xcode-version: latest-stable
       - name: Toolchain
-        run: swift --version
-      - name: Build (all three targets)
-        run: swift build -v
+        run: |
+          swift --version
+          # Informational: the metallib compile needs this component. Not a gate — the GPU tests
+          # skip themselves if it is missing, and the log should say why.
+          xcodebuild -showComponent MetalToolchain || echo "MetalToolchain component not reported"
+      - name: Build (all products)
+        run: swift build --build-system swiftbuild -v
       - name: Test
-        run: swift test
+        run: swift test --build-system swiftbuild

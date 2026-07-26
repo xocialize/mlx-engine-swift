@@ -117,11 +117,21 @@ The engine owns the GPU and the budget, so the pool policy lives beside the gove
   init and never re-asserts, so a host writing later overrides it, and a host that bounded the
   pool *before* constructing the engine gets superseded (pass `.unmanaged` to keep a pre-set value).
 - **Best-effort by design:** the first allocator call initializes MLX's Metal device, which can
-  fail in processes that can't load the bundled metallib (the SPM `swift test` runner gap — every
-  package's offline admissibility tests construct engines). All engine MLX touches are scoped
-  through `MLX.withError`; on failure the engine degrades to unmanaged (recorded in
+  fail in processes that can't load the bundled metallib — every package's offline admissibility
+  tests construct engines. The concrete cause is the **build system**: MLX's kernels are compiled
+  from Cmlx's `.metal` sources into a `default.metallib` in a resource bundle colocated with the
+  binary, and only SwiftPM's `swiftbuild` build system (and Xcode) does that compile. Under the
+  deprecated `native` one there is no metallib at all, and mlx-swift's *default* error handler
+  **aborts the process** rather than throwing. So all engine MLX touches are scoped through
+  `MLX.withError`; on failure the engine degrades to unmanaged (recorded in
   `appliedGPUCacheLimitBytes`) instead of aborting. A process where the write fails cannot run GPU
   work anyway, so the degradation is exact, not lossy.
+  - Two consequences for test code. **One:** any test that calls MLX directly must scope it the
+    same way — an unscoped call takes down the whole xctest process, every later suite included.
+    **Two:** `Memory.cacheLimit`'s getter cannot be used to probe availability. mlx-swift's setter
+    stores a Swift-side shadow (`Memory._cacheLimit`) *before* calling `mlx_set_cache_limit`, and
+    the getter returns that shadow, so a read hands back a value the allocator never applied.
+    Probe with a write (`GPUCachePolicyTests.requireMLXAllocator`).
 - **Trim hooks:** `trimCaches()` drops the pool on demand (the "after a burst" hook — what
   `MLXEngineTestKit.ValidationRun` does between measurement phases); optional knobs
   `trimAfterEvict` / `trimEveryRuns` (both default off) automate it around the lifecycle.

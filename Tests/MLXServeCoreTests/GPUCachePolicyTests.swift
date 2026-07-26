@@ -16,11 +16,22 @@ final class GPUCachePolicyTests: XCTestCase {
             totalMemoryBytes: totalGB * 1_000_000_000)
     }
 
-    /// The allocator getters initialize MLX's Metal device; in a runner process that can't
+    /// The allocator calls initialize MLX's Metal device; in a runner process that can't
     /// load the bundled metallib the engine degrades to unmanaged (by design), so the
     /// tests asserting APPLIED limits skip rather than fail there.
+    ///
+    /// The probe must be a WRITE. `Memory.cacheLimit`'s getter returns mlx-swift's Swift-side
+    /// shadow (`Memory._cacheLimit`) as soon as anything has written it — and the setter stores
+    /// that shadow BEFORE calling `mlx_set_cache_limit`. So in a process where every allocator
+    /// write fails, a read still hands back the value that was never applied, the probe passes,
+    /// and the test proceeds to assert (or to abort on the first unwrapped write). Setting the
+    /// limit to its current value is inert and goes all the way to `mlx_set_cache_limit`, which
+    /// is the call that actually fails (mlx-c `memory.cpp`).
     private func requireMLXAllocator() throws {
-        guard (try? MLX.withError { _ = Memory.cacheLimit }) != nil else {
+        let ok = (try? MLX.withError {
+            Memory.cacheLimit = Memory.cacheLimit
+        }) != nil
+        guard ok else {
             throw XCTSkip("MLX Metal device unavailable in this test runner process")
         }
     }

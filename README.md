@@ -2,9 +2,10 @@
 
 > ## Status — usable, evolving
 >
-> MLXEngine is **published and consumable**: tagged **v0.30.0** (capability contract **1.20.0**),
-> and already serving a roster of ~50 conformant model packages across **41 capabilities** — LLM,
-> TTS, **speech-to-text**, text→image / text→video (+ image/video editing), image→3D, text
+> MLXEngine is **published and consumable**: tagged **v0.36.0** (capability contract **1.27.0**),
+> and already serving **41 published model packages** (55 tracked, incl. WIP + research — see
+> [the model registry](docs/model-registry.md)) that back **30 of the contract's 31 capabilities** —
+> LLM, TTS, **speech-to-text**, text→image / text→video (+ image/video editing), image→3D, text
 > embedding, audio separation / codec / polish, sound effects, speech emotion, image quality /
 > restore / upscale / colorize / inpaint, matting & promptable segmentation, video upscale,
 > frame interpolation, optical flow, character animation, talking-head, mesh rigging, and more.
@@ -33,12 +34,18 @@ cross-model work is uniform from a programming standpoint.
   LRU eviction of idle residents) and multi-package-per-capability routing (select by PackageID).
   Since 0.21.0 the engine also owns the **MLX GPU buffer-pool policy** — a bounded `cacheLimit`
   derived from the governor budget by default (opt out via `GPUCacheConfiguration.unmanaged`),
-  `trimCaches()`, and `gpuPoolSnapshot()` telemetry (`docs/architecture.md` R-MEM-2).
-  Some advanced facilities (mid-run eviction-under-pressure + requeue, `MCPBridge`, Hub SHA256
-  verification) are still in progress.
-- **MLXServeConformance** — the C0–C13 self-check harness, plus the offline **MAT** (weight
+  `trimCaches()`, and `gpuPoolSnapshot()` telemetry (`docs/architecture.md` R-MEM-2). Since 0.26.0
+  it also does **mid-run governor preemption + requeue** on top of idle-LRU eviction
+  (`docs/run-lifecycle.md`). `MCPBridge` and Hub SHA256 verification are still in progress — the
+  materialization executor verifies per-file size only.
+- **MLXServeConformance** — the C0–C14 self-check harness, plus the offline **MAT** (weight
   auto-materialization) and **CAN** (cooperative-cancellation cadence) gates each package runs in
-  its own test suite.
+  its own test suite. **MLXServeConformanceNN** carries the MLXNN half of the C14 **INF** gate
+  (the `Module` training-flag walk), split out so `MLXServeConformance` itself stays MLX-free.
+- **MLXHubMetadata** — metadata-only hub access (file listings + sizes) behind an injectable seam,
+  so the engine can size a download before it starts. Not a downloader.
+- **MLXEngineTestKit** — the opt-in validation harness category testing apps share (memory split
+  readout, admissibility tiers, phase-tagged trace, and the `[CAN]` / `[INF]` live benches).
 - **MLXEngineUI** — reusable SwiftUI for engine management (model-storage + web-search settings,
   and `ModelStateView` — the live "downloading weights / first load is heavy / ready" strip bound to
   `MLXServeEngine.preparation`) plus the Marquee design tokens, so consuming apps share one look.
@@ -60,9 +67,21 @@ back to `~/Documents/huggingface`, which the sandbox blocks). Route the user to 
 (A non-sandboxed app needs no entitlements and may read weights directly.)
 
 ## Build
-Build with Xcode / `xcodebuild` (macOS 26.2+). `Package.swift` is the authoritative manifest;
-this repo contains only the package — not the XCLWorkspace.
+Build with Xcode / `xcodebuild` (macOS 26.2+), or with SwiftPM. `Package.swift` is the
+authoritative manifest; this repo contains only the package — not the XCLWorkspace.
+
+```bash
+swift build
+swift test
+```
+
+**On a toolchain whose SwiftPM still defaults to the deprecated `native` build system, pass
+`--build-system swiftbuild`.** `MLXServeCore` links MLX, and MLX loads its Metal kernels from a
+`default.metallib` compiled from Cmlx's `.metal` sources into a colocated resource bundle — only
+`swiftbuild` (and Xcode) produces it. Under `native` there is no metallib, so the first allocator
+call aborts the test process. The engine itself degrades safely (see R-MEM-2), and the GPU-touching
+tests self-skip, but no GPU work can run in such a process. CI pins `swiftbuild`.
 
 ## Contributing
-A contribution is a package that registers one or more capabilities and passes the C0–C13
+A contribution is a package that registers one or more capabilities and passes the C0–C14
 conformance gate. See `CONTRIBUTING.md`.

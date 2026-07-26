@@ -21,8 +21,9 @@ jobs:
         with:
           xcode-version: latest-stable
       - name: Build conformance harness
-        run: swift build --target MLXServeConformance
-      - name: C0–C13 checks (placeholder)
+        # Same build system as ci.yml — see the note there on why `native` is not an option.
+        run: swift build --build-system swiftbuild --target MLXServeConformance
+      - name: C0–C14 checks (placeholder)
         run: |
-          echo "MLXServeConformance is scaffolding — no executable C0–C13 checks yet."
+          echo "MLXServeConformance is scaffolding — no executable C0–C14 checks yet."
           echo "TODO: run the harness against the changed package and fail on any unmet gate."

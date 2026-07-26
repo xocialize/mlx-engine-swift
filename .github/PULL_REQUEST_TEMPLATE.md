@@ -14,7 +14,7 @@
 - **Port-code license (SPDX):**
 - [ ] Both pass `.permissiveOnly`
 
-## Conformance (C0–C13)
+## Conformance (C0–C14)
 - [ ] Ran the `MLXServeConformance` harness locally
 - [ ] C0 contract version declared
 - [ ] C1 capability registration (each surface independent)
@@ -29,6 +29,12 @@
 - [ ] C11 MCPBridge introspection
 - [ ] C12 `@unknown default` forward-compat
 - [ ] C13 runtime governance cooperation (accepts engine instantiation/ownership; runs only in scheduled InferenceActor calls; cooperatively evictable; no private queue/pinned compute)
+- [ ] C14 inference mode (loaded graph reports `training == false`, or `.notApplicable(reason:)` declared for a package with no module graph)
+
+## Executable adjunct gates (run in your own test suite)
+- [ ] MAT-1..5 — `MaterializationConformance` (first-run weight materialization declarations)
+- [ ] CAN-1..3 — `CancellationConformance` (cooperative-cancellation cadence)
+- [ ] INF-1..2 — `InferenceModeConformance` (needs `MLXServeConformanceNN` if you have a `Module` graph)
 
 ## Notes for reviewers
 <!-- Anything that needed a judgment call, especially metaData vs schema decisions. -->

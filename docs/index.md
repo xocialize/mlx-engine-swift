@@ -13,6 +13,8 @@ cannot destabilize the pipeline.
 - [Run lifecycle](run-lifecycle.md) — cancellation semantics (the sanctioned user-cancel seam),
   governor preemption + requeue, and what a package must honor
 - [Contributing a package](contributing-a-package.md)
+- [Model registry](model-registry.md) — the living index of every package the engine can serve,
+  with availability / validation / efficiency state per row
 - [Conformance (C0–C14)](conformance-c0-c13.md) — ⚠ does not yet cover the executable **MAT gate**
   (first-run weight materialization, MAT-1..5; bundled-weights vocabulary since v0.24.0); see the
   handoff note at the bottom of that page for ground-truth pointers

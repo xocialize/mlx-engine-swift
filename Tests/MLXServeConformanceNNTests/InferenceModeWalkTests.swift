@@ -1,4 +1,5 @@
 import XCTest
+import MLX
 import MLXNN
 import MLXServeConformance
 import MLXServeConformanceNN
@@ -38,6 +39,22 @@ private final class TinyNet: Module {
 }
 
 final class InferenceModeWalkTests: XCTestCase {
+
+    /// Building the graph is where MLX first touches the GPU: `Linear`/`Conv2d` seed their weights
+    /// through `MLXRandom`, which asks for the default GPU stream. In a process that can't load
+    /// MLX's bundled metallib that call hits mlx-swift's DEFAULT error handler and aborts the
+    /// whole xctest process — every later suite included. Probe it once, under `withError`, so
+    /// such a runner skips this class instead of taking the run down with it.
+    ///
+    /// The metallib is missing exactly when the package was built by the deprecated `native`
+    /// build system, which does not compile Cmlx's `.metal` sources into a colocated resource
+    /// bundle. `swift test` (default `swiftbuild`) and Xcode both produce it, so this suite runs
+    /// for real in normal development and in CI.
+    override func setUpWithError() throws {
+        guard (try? MLX.withError { _ = Linear(2, 2) }) != nil else {
+            throw XCTSkip("MLX Metal device unavailable in this test runner process")
+        }
+    }
 
     // MARK: - The walk
 
