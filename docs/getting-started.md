@@ -5,8 +5,11 @@
 MLXEngine is consumed via **Swift Package Manager only**.
 
 ```swift
-.package(url: "https://github.com/xocialize/mlx-engine-swift.git", from: "1.0.0")
+.package(url: "https://github.com/xocialize/mlx-engine-swift.git", from: "0.36.0")
 ```
+
+The contract is pre-1.0 and additive; **pin a tag** for production use (there is no `1.0.0` to
+resolve against yet).
 
 Conform a package against the **contract** product; you do not need the runtime to build a
 conformant package:
@@ -22,11 +25,19 @@ conformant package:
 - **MLXToolKit** — contracts only (capabilities, canonical schemas, artifacts, license types,
   `PackageConfiguration`, `ModelPackage` + `PackageManifest`, `InferenceActor`). Depend on this
   to build a package.
-- **MLXServeCore** — the runtime coordinator (in progress).
-- **MLXServeConformance** — the C0–C13 self-check harness (in progress).
+- **MLXServeCore** — the runtime coordinator: registration, the two-layer license gate,
+  admission + `MemoryGovernor`, residency, the GPU buffer-pool policy, run lifecycle. Links MLX
+  (allocator API only).
+- **MLXServeConformance** — the C0–C14 self-check harness, plus the offline MAT and CAN gates.
+  MLX-free. **MLXServeConformanceNN** adds the MLXNN half of the C14 INF gate; take it only if
+  your package has a `Module` graph.
 - **MLXHubMetadata** — metadata-only hub access (file listings + sizes) behind
   `HubMetadataProviding`. Not a downloader; it exists so the engine can size a download before it
   starts.
+- **MLXEngineUI** — reusable SwiftUI for engine management (model storage, `ModelStateView`) plus
+  the Marquee design tokens. Needs the sandbox entitlements listed in the README.
+- **MLXEngineTestKit** — the opt-in validation harness for category testing apps.
+- **MLXRetrievalKit** (+ **MLXRetrievalKitContracts**) — MLX-free Brave-backed web retrieval.
 
 ## First run: how much will this download?
 
@@ -62,5 +73,10 @@ Requires macOS 26.2+ and a recent Swift toolchain.
 swift build
 swift test
 ```
+
+On a toolchain whose SwiftPM still defaults to the deprecated `native` build system, add
+`--build-system swiftbuild` to both. `native` does not compile MLX's `.metal` sources into a
+colocated `default.metallib`, so the first MLX allocator call in the test process aborts it. CI
+pins `swiftbuild` for the same reason; see the README build section.
 
 See [Contributing a package](contributing-a-package.md) for the conformance workflow.

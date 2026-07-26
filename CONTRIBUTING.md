@@ -2,17 +2,18 @@
 
 > ## 🚧 Not accepting contributions yet
 >
-> MLXEngine is **work in progress** and developing in the open. **Pull requests are not being
-> accepted at this stage and will be closed.** The conformance gate below is the intended
-> contributor agreement, documented now so it's visible — but the contract is still moving and
-> the runtime is unbuilt. This notice will be lifted once the contract stabilizes against the
-> first real port.
+> MLXEngine develops in the open, but **pull requests are not being accepted at this stage and
+> will be closed.** The conformance gate below is the intended contributor agreement, documented
+> now so it's visible. The runtime itself is shipped and consumable (v0.36.0, contract 1.27.0,
+> 41 published packages) — what is still moving is the *contract*, which takes additive minor
+> bumps as capabilities and conformance levels land (C14 and its INF gate arrived in 1.27.0).
+> This notice will be lifted once the contract settles.
 >
 > *(Stub. TODO: expand each section before opening the repo to contributors.)*
 
 MLXEngine is community-released and built to be extended. A contribution is a
 **package** — a `ModelPackage` declaring a `PackageManifest` — that registers one or
-more capabilities. The bar for merging is the **C0–C13 conformance checklist** — a
+more capabilities. The bar for merging is the **C0–C14 conformance checklist** — a
 reviewable pass/fail, not a taste call.
 
 ## Before you start
@@ -20,16 +21,19 @@ reviewable pass/fail, not a taste call.
   reference). Parity is the porting process's job, not conformance.
 - Read [Concepts](docs/concepts.md) and [Contributing a Package](docs/contributing-a-package.md).
 
-## The conformance gate (C0–C13)
-TODO: link the authoritative checklist. Run the `MLXServeConformance` harness to
-self-check before submitting. Reviewers will reference C-levels directly.
+## The conformance gate (C0–C14)
+The checklist lives at [docs/conformance-c0-c13.md](docs/conformance-c0-c13.md) (filename kept
+at `c0-c13` because other repos link it). Run the `MLXServeConformance` harness — plus the
+offline MAT / CAN gates and, if your package has an `MLXNN.Module` graph, the C14 INF gate from
+`MLXServeConformanceNN` — to self-check before submitting. Reviewers reference C-levels directly.
 
 ## Weight origin requirement (process, not code)
 - Weights should originate from **HF mlx-community** for Tier 1/2 (single-stack
   LLM/VLM/audio) ports. Record **source repo + pinned revision** in your PR.
 - This is a *contribution requirement*, enforced by review + the
-  `provenance-lint` check — **not** a runtime gate. The engine's runtime gates
-  are license (C7/C8) and SHA256 integrity only.
+  `provenance-lint` check — **not** a runtime gate. The engine's runtime gates are the two
+  license layers (C7/C8), device eligibility (C10), and per-file **size** verification on
+  materialized weights. Hash-level (SHA256) integrity is not implemented yet.
 - **Tier-3 pipelines** (T2V/T2I/3D): TODO — state the carve-out [CONFIRM].
 
 ## License (two layers — both must be permissive)

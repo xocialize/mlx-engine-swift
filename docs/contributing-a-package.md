@@ -2,7 +2,7 @@
 
 A contribution is one `ModelPackage` (the engine-owned model unit) declaring a
 `PackageManifest`, registering one or more capability surfaces. The merge bar is the
-**C0–C13 conformance checklist** — a reviewable pass/fail, not a taste call.
+**C0–C14 conformance checklist** — a reviewable pass/fail, not a taste call.
 
 ## Workflow
 
