@@ -166,6 +166,63 @@ public enum LicensePolicy: Sendable, Equatable {
     }
 }
 
+/// Whether a non-admitted license *blocks* registration or is merely reported.
+///
+/// **Default is `.advisory` since contract 1.28.0** (decided 2026-07-26). C7/C8 began life as hard
+/// blockers to stop early, careless mistakes while the fleet was small and the reviewer was learning
+/// which model licenses were shippable. That job is done — 41 published packages later, each license
+/// in `permissiveAllowlist` carries a reviewed rationale — and the blocker now costs more than it
+/// buys: it turns a *documentation* problem (an unreviewed license) into a *runtime* failure, in the
+/// one component every package depends on.
+///
+/// So the requirement changes shape, not substance: **both layers must still be declared** (that is
+/// what C7/C8 assert, and a reviewer still checks them), and the engine still *classifies* every
+/// declaration against the policy and reports what it finds — it just no longer refuses to run.
+/// Nothing about license diligence is relaxed; the enforcement point moves from load-time to review.
+///
+/// Opt back in with `.blocking` when a build genuinely must not load non-permissive weights — a
+/// commercial distribution, or a CI job asserting the fleet stays clean. The mechanism is unchanged
+/// and fully tested; only the default flipped.
+public enum LicenseEnforcement: Sendable, Equatable {
+    /// Register anyway; record the finding on `MLXServeEngine.licenseAdvisories` and log it.
+    case advisory
+    /// Throw `EngineError.licenseRejected`, naming the failing layer (the pre-1.28.0 behavior).
+    case blocking
+}
+
+/// A license finding the engine recorded but did not act on (`.advisory` enforcement).
+///
+/// Consuming apps can surface these — "these weights are non-commercial" is exactly the kind of
+/// thing a user should see in a model list, and it is more useful shown than thrown.
+public struct LicenseAdvisory: Sendable, Equatable {
+    /// Which layer of the two-layer declaration was not admitted.
+    public enum Layer: String, Sendable, Equatable, Codable {
+        case weight, portCode
+    }
+
+    /// The source repo of the package that declared it (`provenance.sourceRepo`).
+    public let repo: String
+    /// The layer that fell outside the policy.
+    public let layer: Layer
+    /// The license that layer declared.
+    public let license: SPDXLicense
+    /// The policy it was judged against, so a reader knows what "not admitted" meant here.
+    public let policy: LicensePolicy
+
+    public init(repo: String, layer: Layer, license: SPDXLicense, policy: LicensePolicy) {
+        self.repo = repo
+        self.layer = layer
+        self.license = license
+        self.policy = policy
+    }
+
+    /// One-line, reviewer-legible summary.
+    public var summary: String {
+        "\(repo): \(layer == .weight ? "weight" : "port-code") license \(license) is outside "
+            + "\(policy) — declared and allowed to load (advisory enforcement)."
+    }
+}
+
 /// The two-layer license declaration every package makes: the checkpoint's license (C7)
 /// and the contribution's own license (C8). Constantly conflated; kept explicit here.
 public struct LicenseDeclaration: Sendable, Codable, Equatable {
@@ -178,6 +235,10 @@ public struct LicenseDeclaration: Sendable, Codable, Equatable {
 }
 
 /// The result of the gate, designed to name *which layer* failed (the C8 legibility rule).
+///
+/// Under `.advisory` enforcement a `rejected…` result is **not** a refusal — it is a classification
+/// the engine records as a `LicenseAdvisory`. The case names predate the enforcement split and are
+/// kept for source compatibility.
 public enum LicenseGateResult: Sendable, Equatable {
     case admitted
     case rejectedWeight(SPDXLicense)
@@ -186,6 +247,18 @@ public enum LicenseGateResult: Sendable, Equatable {
     public var isAdmitted: Bool {
         if case .admitted = self { return true }
         return false
+    }
+
+    /// The finding as an advisory, or `nil` when the declaration was admitted.
+    public func advisory(repo: String, policy: LicensePolicy) -> LicenseAdvisory? {
+        switch self {
+        case .admitted:
+            return nil
+        case .rejectedWeight(let license):
+            return LicenseAdvisory(repo: repo, layer: .weight, license: license, policy: policy)
+        case .rejectedPortCode(let license):
+            return LicenseAdvisory(repo: repo, layer: .portCode, license: license, policy: policy)
+        }
     }
 }
 

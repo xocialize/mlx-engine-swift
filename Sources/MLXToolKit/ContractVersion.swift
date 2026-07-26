@@ -400,5 +400,32 @@ public enum ContractVersion {
     //     the failure CLASS rather than the known mechanism — statistic drift, live Dropout, and
     //     anything training-mode-sensitive not yet met — which is what would have caught BiRefNet
     //     without anyone knowing BatchNorm was the mechanism.
-    public static let current = SemanticVersion(major: 1, minor: 27, patch: 0)
+    // 1.28.0 (2026-07-26, additive API / CHANGED DEFAULT): C7/C8 BECOME DECLARATION REQUIREMENTS,
+    //   not load-time blockers. The two-layer license declaration is unchanged and still mandatory;
+    //   what changes is what the ENGINE does when a declared license falls outside the policy.
+    //   • Rationale: the gate existed to stop early, careless mistakes while the fleet was small and
+    //     it was still being learned which model licenses are shippable. That job is done — 41
+    //     published packages, and every entry on `permissiveAllowlist` carries a written, reviewed
+    //     rationale. The blocker now costs more than it buys: it converts a DOCUMENTATION problem
+    //     (an unreviewed license) into a RUNTIME failure, inside the one package every other package
+    //     depends on. License diligence is not relaxed — its enforcement point moves from load time
+    //     to review time, where the judgment actually happens.
+    //   • New `LicenseEnforcement` { .advisory, .blocking }, and `MLXServeEngine.init` takes
+    //     `licenseEnforcement: = .advisory`. NO case was added to `LicensePolicy` — separating "what
+    //     counts as permissive" (policy) from "does it block" (enforcement) keeps every existing
+    //     exhaustive switch source-compatible. `.permissiveOnly` remains the default POLICY, so the
+    //     classifier is unchanged; only the consequence flipped.
+    //   • New `LicenseAdvisory` (repo, layer, license, policy, `summary`) + `LicenseGateResult
+    //     .advisory(repo:policy:)`, surfaced on `MLXServeEngine.licenseAdvisories` (deduped).
+    //     Deliberately user-facing, not just diagnostic: "these weights are non-commercial" is more
+    //     useful shown in a model list than thrown at load. Mirrors the C6 specialty-vocabulary
+    //     precedent (warn + record at `register()`, contract 1.23.0).
+    //   • BEHAVIOR CHANGE to be aware of when pinning: a package whose weight or port-code license
+    //     is outside `.permissiveOnly` now REGISTERS on a default engine where it previously threw
+    //     `EngineError.licenseRejected`. Hosts that must not load such weights (commercial
+    //     distribution, or a CI job asserting the fleet stays clean) pass
+    //     `licenseEnforcement: .blocking` and get the pre-1.28.0 behavior exactly, layer-naming
+    //     included. `evalAcknowledgedAllowlist` / `.permissiveOrAcknowledged` are untouched and
+    //     still meaningful — they now describe classification rather than admission.
+    public static let current = SemanticVersion(major: 1, minor: 28, patch: 0)
 }

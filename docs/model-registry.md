@@ -21,6 +21,14 @@ current.
   ✅ adopted · 🔵 in progress · 🟡 brief written · ⬜ not started · ➖ n/a (trivial/single-component low-peak).
 - **Eng** — the engine **contract version the package was validated/adopted against** (its resolved build), blank = backfill. NOT the SPM `from:` floor in `Package.swift` — that floor is a resolve-**forward** minimum (`from: "0.3.0"` resolves to the latest 0.x, i.e. 0.17.0), so a low floor is usually fine, not drift. Only bump a floor when the package's code actually needs a newer contract API (e.g. `peakActivationBytes`/`QuantConfigured`/`BudgetAware` ⇒ needs ≥0.14) and you're touching the package anyway; a floor-only bump across the library is churn we deliberately skip (see the Kokoro note).
 
+> **Reading the C7/C8 notes below (changed 2026-07-26, contract 1.28.0).** Row notes recording a
+> license verdict — "rejectedWeight under `.permissiveOnly`", "admitted via
+> `.permissiveOrAcknowledged`", "NC weights" — are accurate as **classifications** and remain the
+> record of the review. They no longer mean "the engine refuses to load it": C7/C8 are declaration
+> requirements, and a default engine registers such a package while recording a `LicenseAdvisory`.
+> A host that must refuse passes `licenseEnforcement: .blocking`. So these notes now answer "what is
+> this license and is it shippable?" — a product/legal question — not "will it run?".
+
 _Seeded 2026-06-30. Val/Eff/Eng are best-effort at seed time — **backfill per package as it's revisited.**_
 
 ---

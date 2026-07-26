@@ -25,7 +25,10 @@ engine does the coordination around them.
   `MLXServeEngine.deleteWeights(repo:)` deletes a repo's weights but **refuses while a resident
   package draws on it** (`EngineError.weightsInUse`), and `ModelStore.usage(at:)` sizes a store root
   with link dedup (a snapshot is a tree of links into `blobs/`).
-- **License gate** — two layers (weight + port-code), enforced at registration.
+- **License classification** — two layers (weight + port-code), evaluated at registration. Since
+  contract 1.28.0 a license outside the policy is **recorded** (`licenseAdvisories`) rather than
+  rejected; `licenseEnforcement: .blocking` restores the hard gate. C7/C8 are declaration
+  requirements — see `docs/conformance-c0-c13.md`.
 
 ## Memory requirements
 

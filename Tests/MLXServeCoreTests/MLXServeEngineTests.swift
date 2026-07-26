@@ -105,16 +105,59 @@ private final class MockVariantPackage: ModelPackage {
     }
 }
 
-@Test func registerRejectsNonPermissiveLicense() async {
+/// Contract 1.28.0: C7/C8 are declaration requirements, not load-time blockers. The DEFAULT engine
+/// registers a non-permissive package and records what it found — the license is still classified and
+/// reported, it just no longer takes the pipeline down.
+@Test func registerRecordsNonPermissiveLicenseAsAdvisoryByDefault() async throws {
     let engine = MLXServeEngine()
+    try await engine.register(PackageRegistration.of(MockGPLPackage.self), configuration: mockConfig())
+
+    // It registered and routes — the whole point of the change.
+    #expect(await engine.registeredCapabilities.contains(.llm))
+
+    let advisories = await engine.licenseAdvisories
+    #expect(advisories.count == 1)
+    let advisory = try #require(advisories.first)
+    #expect(advisory.layer == .weight)
+    #expect(advisory.license == SPDXLicense("GPL-3.0"))
+    #expect(advisory.policy == .permissiveOnly)
+    // The summary is what a host surfaces, so it must name the layer and the license.
+    #expect(advisory.summary.contains("GPL-3.0"))
+    #expect(advisory.summary.contains("weight"))
+}
+
+/// Re-registering must not pile up duplicate advisories for the same finding.
+@Test func advisoriesAreDedupedAcrossRepeatedRegistration() async throws {
+    let engine = MLXServeEngine()
+    for _ in 0..<3 {
+        try await engine.register(PackageRegistration.of(MockGPLPackage.self), configuration: mockConfig())
+    }
+    #expect(await engine.licenseAdvisories.count == 1)
+}
+
+/// The blocker is preserved, not deleted — a host that must not load non-permissive weights opts in
+/// and gets exactly the pre-1.28.0 behavior, including naming the failing layer.
+@Test func blockingEnforcementStillRejectsNonPermissiveLicense() async {
+    let engine = MLXServeEngine(licenseEnforcement: .blocking)
     do {
         try await engine.register(PackageRegistration.of(MockGPLPackage.self), configuration: mockConfig())
         Issue.record("expected EngineError.licenseRejected")
     } catch let error as EngineError {
         #expect(error == .licenseRejected(.rejectedWeight(SPDXLicense("GPL-3.0"))))
+        // Nothing registered, so nothing to advise about.
+        #expect(await engine.licenseAdvisories.isEmpty)
+        #expect(await engine.registeredCapabilities.isEmpty)
     } catch {
         Issue.record("unexpected error: \(error)")
     }
+}
+
+/// A permissive package produces no advisory at all — the record is a finding, not a log of every
+/// registration.
+@Test func permissivePackageProducesNoAdvisory() async throws {
+    let engine = MLXServeEngine()
+    try await engine.register(PackageRegistration.of(MockLLMPackage.self), configuration: mockConfig())
+    #expect(await engine.licenseAdvisories.isEmpty)
 }
 
 @Test func evictThenRunReloads() async throws {

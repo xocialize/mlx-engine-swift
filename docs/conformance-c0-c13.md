@@ -15,8 +15,8 @@ docs. Rename it only in a pass that fixes those links too.)*
 | C4 | Mode-as-parameter (modes ride the envelope, never separate surfaces) |
 | C5 | metaData hygiene (package-specific only; no should-be-canonical params smuggled) |
 | C6 | Specialty declaration (governed vocabulary, multi-valued + strength; never a surface) |
-| C7 | Weight license gate (`manifest.license.weightLicense`, passes `.permissiveOnly`) |
-| C8 | Port-code license gate (`manifest.license.portCodeLicense`; distinct from C7) |
+| C7 | Weight license **declared** (`manifest.license.weightLicense`) — accurate for the checkpoint |
+| C8 | Port-code license **declared** (`manifest.license.portCodeLicense`) — distinct from C7 |
 | C9 | PackageConfiguration (init-time, Codable; distinct from request params) |
 | C10 | Requirements manifest (footprint per quant, backends, OS, chip floor) |
 | C11 | Surface introspectability (each surface publishes a complete, honest `ToolDescriptor`) |
@@ -34,6 +34,26 @@ the binary artifact kinds** (`image`/`audio`/`video`/`mesh`). Closing that gap i
 is done **at integration time, when a real non-LLM tool consumer exists** — so nothing is reserved
 for it in the contract. The `llm` surface is unaffected: its structured output and tool-use ride
 FoundationModels' `GenerationSchema`, which is full JSON Schema.
+
+**C7/C8 are declaration requirements, not load-time blockers** (changed 2026-07-26, contract 1.28.0).
+Both layers must still be declared and accurate — that is what a reviewer checks, and it is the whole
+of C7/C8. What changed is the *engine's* response to a license outside its policy: it now **classifies
+and reports** instead of refusing. A finding lands on `MLXServeEngine.licenseAdvisories` (repo, layer,
+license, policy, plus a one-line `summary`) and is logged, exactly as an unregistered `Specialty` is
+under C6.
+
+Why: the gate existed to stop early, careless mistakes while the fleet was small and it was still
+being learned which model licenses are shippable. That job is done — every entry on
+`permissiveAllowlist` now carries a written, reviewed rationale — and a blocker converts a
+*documentation* problem into a *runtime* failure inside the package everything else depends on.
+Diligence isn't relaxed; its enforcement point moves to review, where the judgment actually happens.
+
+Advisories are deliberately **user-facing**, not merely diagnostic: "these weights are
+non-commercial" belongs in a model list, not in a thrown error. A host that genuinely must not load
+non-permissive weights — a commercial distribution, or a CI job asserting the fleet stays clean —
+passes `licenseEnforcement: .blocking` to `MLXServeEngine.init` and gets the pre-1.28.0 behavior
+exactly, including naming which layer failed. `LicensePolicy` is unchanged (`.permissiveOnly` is
+still the default *classifier*), so nothing that switched over it breaks.
 
 **Tool-protocol exposure is out of scope for the engine** (decided 2026-07-26). An MCP bridge is an
 **external utility app** that consumes MLXEngine, not an engine component: it enumerates surfaces

@@ -21,12 +21,17 @@ A contribution is one `ModelPackage` (the engine-owned model unit) declaring a
 9. Run the `MLXServeConformance` harness; walk [C0–C14](conformance-c0-c13.md). Every box or a
    documented waiver.
 
-## License (two layers — both must be permissive)
+## License (two layers — both must be declared)
 
 - **Weight license** (C7): the checkpoint (`weightLicense`).
 - **Port-code license** (C8): your contribution (`portCodeLicense`).
 
-A rejection names which layer failed and which SPDX id tripped it.
+Declaring both, accurately, is the requirement. Since contract 1.28.0 the engine does **not** refuse
+to load a license outside its policy by default — it records a `LicenseAdvisory` (naming the layer and
+the SPDX id) that a host can surface. Whether a non-permissive license is *acceptable* is a review
+decision, so state the license honestly and say in your PR why it is shippable. A host running
+`licenseEnforcement: .blocking` will still reject it outright, which is the behavior to assume if you
+want your package usable everywhere.
 
 ## Weight provenance (process requirement)
 

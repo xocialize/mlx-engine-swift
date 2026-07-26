@@ -31,15 +31,21 @@ offline MAT / CAN gates and, if your package has an `MLXNN.Module` graph, the C1
 - Weights should originate from **HF mlx-community** for Tier 1/2 (single-stack
   LLM/VLM/audio) ports. Record **source repo + pinned revision** in your PR.
 - This is a *contribution requirement*, enforced by review + the
-  `provenance-lint` check — **not** a runtime gate. The engine's runtime gates are the two
-  license layers (C7/C8), device eligibility (C10), and per-file **size** verification on
-  materialized weights. Hash-level (SHA256) integrity is not implemented yet.
+  `provenance-lint` check — **not** a runtime gate. The engine's remaining runtime gates are device
+  eligibility (C10) and per-file **size** verification on materialized weights; licenses (C7/C8) are
+  classified and reported, and only block under opt-in `.blocking` enforcement. Hash-level (SHA256)
+  integrity is not implemented yet.
 - **Tier-3 pipelines** (T2V/T2I/3D): TODO — state the carve-out [CONFIRM].
 
-## License (two layers — both must be permissive)
-- **Weight license** (C7): the checkpoint, `weightLicense: SPDXLicense`, `.permissiveOnly`.
-- **Port-code license** (C8): your contribution itself.
-- A rejection will name which layer and which license failed.
+## License (two layers — both must be declared)
+- **Weight license** (C7): the checkpoint, `weightLicense: SPDXLicense`.
+- **Port-code license** (C8): your contribution itself, `portCodeLicense` — distinct from C7.
+- **Declaration is the requirement** (contract 1.28.0). A license outside the engine's policy no
+  longer blocks loading by default; it is recorded as a `LicenseAdvisory` naming the layer and SPDX
+  id, which a host can surface to users. Whether it is *acceptable* is a review call — declare
+  honestly and justify it in the PR.
+- A host may opt into `licenseEnforcement: .blocking`, which rejects outright and names the failing
+  layer. Assume that stricter posture if you want the package usable everywhere.
 
 ## Contract versioning
 - The capability enum and C-levels are **additive-only** at minor versions;

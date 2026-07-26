@@ -12,7 +12,8 @@
 ## License (both layers)
 - **Weight license (SPDX):**
 - **Port-code license (SPDX):**
-- [ ] Both pass `.permissiveOnly`
+- [ ] Both **declared** accurately (declaration is the requirement; a non-permissive
+      license is recorded as an advisory, not blocked — justify it below)
 
 ## Conformance (C0–C14)
 - [ ] Ran the `MLXServeConformance` harness locally
@@ -23,7 +24,7 @@
 - [ ] C4 modes are request parameters, not surfaces
 - [ ] C5 metaData hygiene (no should-be-canonical params smuggled)
 - [ ] C6 specialty from governed vocabulary
-- [ ] C7 / C8 license gates pass
+- [ ] C7 / C8 both license layers declared and accurate
 - [ ] C9 PackageConfiguration (init-time, distinct from request params)
 - [ ] C10 requirements manifest
 - [ ] C11 surface introspectability (complete, honest `ToolDescriptor` per surface)

@@ -156,6 +156,8 @@ public actor MLXServeEngine {
     private var admissionWaiters: [CheckedContinuation<Void, Never>] = []
 
     private let policy: LicensePolicy
+    /// Whether a non-admitted license blocks registration or is only recorded (contract 1.28.0).
+    private let licenseEnforcement: LicenseEnforcement
     /// The host profile used for the C10 eligibility check.
     public nonisolated let deviceProfile: DeviceProfile
     /// Memory budgeting + watermark policy.
@@ -203,6 +205,11 @@ public actor MLXServeEngine {
     /// a host can surface it, and the fleet sweep reads it to know what to add to
     /// `Specialty.registeredVocabulary`.
     public private(set) var unregisteredSpecialties: Set<Specialty> = []
+    /// Every license finding recorded at `register()` under `.advisory` enforcement (C7/C8, contract
+    /// 1.28.0 — declaration is the requirement, the allowlist is now a classifier). Diagnostic and
+    /// **user-facing**: an app can badge a model whose weights are non-commercial. Empty under
+    /// `.blocking`, where such a package never registers at all.
+    public private(set) var licenseAdvisories: [LicenseAdvisory] = []
     /// `run`s (returned or thrown) since the last `trimEveryRuns` trim.
     private var runsSinceTrim = 0
     /// Engine-policy pool trims performed so far (`trimEveryRuns` / `trimAfterEvict` / cancel
@@ -212,6 +219,7 @@ public actor MLXServeEngine {
     private(set) var policyTrimCount = 0
 
     public init(policy: LicensePolicy = .permissiveOnly,
+                licenseEnforcement: LicenseEnforcement = .advisory,
                 device: DeviceProfile = .current(),
                 governor: MemoryGovernor? = nil,
                 gpuCache: GPUCacheConfiguration = GPUCacheConfiguration(),
@@ -221,6 +229,7 @@ public actor MLXServeEngine {
                 materializer: (any WeightMaterializing)? = nil,
                 diskPrecheckEnabled: Bool = true) {
         self.policy = policy
+        self.licenseEnforcement = licenseEnforcement
         self.deviceProfile = device
         self.governor = governor ?? .forDevice(device)
         self.gpuCache = gpuCache
@@ -267,13 +276,42 @@ public actor MLXServeEngine {
     ///
     /// - Parameter id: engine-side identity; defaults to the manifest's first surface name
     ///   (falling back to `provenance.sourceRepo`).
-    /// - Throws: `.licenseRejected` (failing layer) or `.ineligible` (failing device dimension).
+    /// - Throws: `.ineligible` (failing device dimension), or `.licenseRejected` (failing layer)
+    ///   **only** under `.blocking` license enforcement — the default `.advisory` records the finding
+    ///   on `licenseAdvisories` and registers the package (contract 1.28.0).
+    /// Classify a manifest's two license layers against `policy`, then act per `licenseEnforcement`.
+    ///
+    /// C7/C8 assert the declaration exists and is honest — a reviewer's job, and the reason this is
+    /// no longer a runtime blocker by default. The engine's remaining role is to *classify and
+    /// report*: under `.advisory` a non-admitted layer becomes a `LicenseAdvisory` (deduped, so
+    /// re-registering the same package doesn't pile up duplicates) and a log line; under `.blocking`
+    /// it throws `EngineError.licenseRejected`, naming the failing layer exactly as before.
+    ///
+    /// - Parameter recordAdvisory: `false` at the defensive construction-time re-check, so one
+    ///   package cannot accumulate an advisory per load.
+    private func noteLicense(_ manifest: PackageManifest, recordAdvisory: Bool = true) throws {
+        let gate = policy.evaluate(manifest.license)
+        guard !gate.isAdmitted else { return }
+        guard licenseEnforcement == .advisory else {
+            throw EngineError.licenseRejected(gate)
+        }
+        guard recordAdvisory,
+              let advisory = gate.advisory(repo: manifest.provenance.sourceRepo, policy: policy)
+        else { return }
+        if !licenseAdvisories.contains(advisory) {
+            licenseAdvisories.append(advisory)
+            print("[License] \(advisory.summary)")
+        }
+    }
+
     @discardableResult
     public func register(_ registration: PackageRegistration,
                          configuration: any PackageConfiguration,
                          id: PackageID? = nil) async throws -> PackageID {
-        let gate = policy.evaluate(registration.manifest.license)
-        guard gate.isAdmitted else { throw EngineError.licenseRejected(gate) }
+        // C7/C8: both layers must be DECLARED (the contract requirement). Whether a declaration
+        // outside `policy` also *blocks* is the host's call — `.advisory` since contract 1.28.0, so
+        // the finding is recorded and logged like an unregistered specialty rather than thrown.
+        try noteLicense(registration.manifest)
 
         let eligibility = deviceProfile.eligibility(for: registration.manifest.requirements)
         guard eligibility.isEligible else { throw EngineError.ineligible(eligibility) }
@@ -889,9 +927,10 @@ public actor MLXServeEngine {
         do {
             await updatePhase(.registering, caps: caps, package: pkg)
 
-            // Defensive re-gate — the engine constructs, never the package (C13).
-            let gate = policy.evaluate(manifest.license)
-            guard gate.isAdmitted else { throw EngineError.licenseRejected(gate) }
+            // Defensive re-check — the engine constructs, never the package (C13). Under `.advisory`
+            // this is a no-op for admission; under `.blocking` it is the second line of defence
+            // against a package that somehow reached construction with a barred license.
+            try noteLicense(manifest, recordAdvisory: false)
 
             // Memory admission (serialized-inference reserve): residency = Σ persistent weights, plus a
             // single transient activation reserve (only one model runs at a time). The model's own peak

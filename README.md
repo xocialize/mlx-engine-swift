@@ -21,15 +21,19 @@ destabilize the pipeline. It also presents one common way to engage every model,
 cross-model work is uniform from a programming standpoint.
 
 > MIT licensed — the engine code is open to build on. This is **separate** from the two-layer
-> weight/port-code license gate that governs which model weights the engine will load and serve.
+> weight/port-code license **declaration** every package makes (C7/C8). Since contract 1.28.0 that
+> declaration is an information requirement, not a load-time gate: the engine classifies each license
+> against its policy and reports findings on `licenseAdvisories` rather than refusing. Pass
+> `licenseEnforcement: .blocking` to restore hard rejection.
 
 ## Packages
 - **MLXToolKit** — the contract surface every package conforms to (capabilities, canonical
   schemas, artifacts, license types, `PackageConfiguration`, the `ModelPackage` protocol +
   `PackageManifest`, and the `InferenceActor` isolation domain). Depend on this to build a
   conformant package; it does not pull in the runtime.
-- **MLXServeCore** — the runtime coordinator. `MLXServeEngine` registers packages, runs the
-  two-layer license gate + device-eligibility (C10) admission, and lazily constructs / loads /
+- **MLXServeCore** — the runtime coordinator. `MLXServeEngine` registers packages, classifies their
+  two-layer license declaration (advisory by default) + enforces device-eligibility (C10) admission,
+  and lazily constructs / loads /
   routes / evicts each `ModelPackage` by capability, backed by a `MemoryGovernor` (budget +
   LRU eviction of idle residents) and multi-package-per-capability routing (select by PackageID).
   Since 0.21.0 the engine also owns the **MLX GPU buffer-pool policy** — a bounded `cacheLimit`
