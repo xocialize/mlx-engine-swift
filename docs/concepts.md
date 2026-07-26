@@ -19,7 +19,11 @@
 ## The package model
 
 A contribution is one **`ModelPackage`** — the engine-owned model unit — that declares a
-**`PackageManifest`** and backs **N capability surfaces** from one loaded model (Lance → four).
+**`PackageManifest`** and backs **N capability surfaces** from one loaded model — e.g.
+`flux2-klein-swift` backs both `textToImage` and `imageEdit`, and `mlx-edgetam-swift` backs
+`promptSegment` and `trackObject`. "One model, N surfaces" holds **per checkpoint**: a family that
+ships separate image and video checkpoints is two packages sharing one core, each declaring only
+the surfaces its checkpoint actually backs.
 
 Three lifecycle levels stay distinct:
 

@@ -8,8 +8,10 @@ engine does the coordination around them.
 - **Admission & queuing** — requests are admitted against current residency and memory headroom.
 - **Execution serialization** — the `InferenceActor` global actor serializes inference onto the
   compute resources; `ModelPackage` lifecycle methods are isolated to it.
-- **Memory governance** — a `MemoryGovernor` watermark ladder drives load/evict (see **R-MEM-1**);
-  placement uses `MemoryPool` (`.metalGPU` / `.coreMLANE` / `.coreMLCPU` / `.coreMLGPU`).
+- **Memory governance** — a `MemoryGovernor` watermark ladder drives load/evict (see **R-MEM-1**).
+  A package declares which `Backend`s it needs (`.metalGPU` / `.coreMLANE` / `.coreMLCPU` /
+  `.coreMLGPU`) and the engine gates admission on device eligibility (C10). It does **not** model
+  *placement* — where weights physically land is the substrate's call, not the coordinator's.
 - **Model residency** — lazy load, cooperative eviction. One model backs N surfaces.
 - **Asset sourcing** — since contract 1.24 the **engine executes** first-run materialization:
   `resident()` downloads a `WeightSourcing` configuration's missing sources into the `ModelStore`

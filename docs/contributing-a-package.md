@@ -7,7 +7,8 @@ A contribution is one `ModelPackage` (the engine-owned model unit) declaring a
 ## Workflow
 
 1. Confirm the port is **parity-locked** (that's the `mlx-porting` job, not conformance).
-2. Enumerate capabilities → which canonical surfaces does the model expose? (Lance → 4)
+2. Enumerate capabilities → which canonical surfaces does the model expose?
+   (`flux2-klein-swift` → `textToImage` + `imageEdit`; one checkpoint, two surfaces)
 3. Map each surface to its canonical schema.
 4. Identify modes → per-request `Mode` tags; confirm none are masquerading as surfaces.
 5. Conform a `ModelPackage`: `nonisolated init(configuration:)`, `@InferenceActor`
