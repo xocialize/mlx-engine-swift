@@ -1,4 +1,4 @@
-/// A minimal, introspectable parameter schema so MCPBridge can describe a tool without
+/// A minimal, introspectable parameter schema so a tool client can describe a surface without
 /// reverse-engineering it (C11).
 ///
 /// **Deliberately an MCP-*like* subset, not JSON Schema** (decided 2026-07-22; C11 asserts
@@ -48,8 +48,14 @@ public enum StreamGranularity: String, Sendable, Codable {
     case audioChunk
 }
 
-/// Self-description a package publishes so the registry and MCPBridge can expose the tool
-/// as a discrete, introspectable, intent-named surface (capability-as-tool).
+/// Self-description a package publishes so the registry — and any out-of-process tool client, such
+/// as an external MCP bridge app — can expose the surface as a discrete, introspectable,
+/// intent-named tool (capability-as-tool).
+///
+/// **Tool exposure is deliberately NOT an engine component** (decided 2026-07-26). This type plus
+/// `MLXServeEngine.registeredCapabilities` / `packages(for:)` / `manifest(for:)` / `run(_:package:)`
+/// is the complete seam a bridge needs; it is `Codable`, so a client owns its own wire format. The
+/// engine coordinates models, it does not serve protocols.
 public struct ToolDescriptor: Sendable, Codable, Equatable {
     public let name: String
     public let capability: Capability

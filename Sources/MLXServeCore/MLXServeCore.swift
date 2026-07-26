@@ -23,8 +23,12 @@ import MLXToolKit
 //     bounded by PreemptionPolicy.maxRequeues; a user cancel — cancelling the Task wrapping
 //     engine.run() — surfaces as .cancelled; genuine errors propagate to the caller).
 //   - MemoryGovernor (watermark ladder) + MemoryPool placement; load()/unload() drive residency.
-//   - MCPBridge (capability-as-tool exposure) over each manifest surface.
 //   - Model Manager + DeviceProfile (manifest.requirements ⊆ device.capabilities).
+//
+// NOT an engine component (decided 2026-07-26): capability-as-tool protocol exposure. An MCP
+// bridge is an external utility APP that consumes this engine — it enumerates surfaces via
+// registeredCapabilities / packages(for:) / manifest(for:) and invokes run(_:package:). Keeping it
+// out keeps the engine protocol-agnostic and its dependency surface small.
 //
 // It is intentionally minimal until MLXToolKit is locked.
 public enum MLXServeCore {

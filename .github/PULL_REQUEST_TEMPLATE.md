@@ -26,7 +26,7 @@
 - [ ] C7 / C8 license gates pass
 - [ ] C9 PackageConfiguration (init-time, distinct from request params)
 - [ ] C10 requirements manifest
-- [ ] C11 MCPBridge introspection
+- [ ] C11 surface introspectability (complete, honest `ToolDescriptor` per surface)
 - [ ] C12 `@unknown default` forward-compat
 - [ ] C13 runtime governance cooperation (accepts engine instantiation/ownership; runs only in scheduled InferenceActor calls; cooperatively evictable; no private queue/pinned compute)
 - [ ] C14 inference mode (loaded graph reports `training == false`, or `.notApplicable(reason:)` declared for a package with no module graph)

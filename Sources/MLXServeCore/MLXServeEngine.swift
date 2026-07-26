@@ -87,7 +87,9 @@ public struct Admissibility: Sendable, Equatable {
 /// inference and requeue it (V3, `PreemptionPolicy` — see `run(_:package:)`). Weight **integrity**
 /// is the hub client's responsibility (xet chunk hashes / ETag verification in swift-huggingface);
 /// the engine verifies presence, not content. Still TODO and tracked elsewhere: `MemoryPool`
-/// backend placement, `MCPBridge`.
+/// backend placement. Tool-protocol exposure (MCP) is **out of scope by design** — that is an
+/// external app consuming `registeredCapabilities` / `packages(for:)` / `manifest(for:)` /
+/// `run(_:package:)`, not an engine component.
 public actor MLXServeEngine {
 
     /// A registered package, its init-time configuration, and the resolved memory footprint split:

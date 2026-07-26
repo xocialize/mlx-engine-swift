@@ -36,8 +36,14 @@ cross-model work is uniform from a programming standpoint.
   derived from the governor budget by default (opt out via `GPUCacheConfiguration.unmanaged`),
   `trimCaches()`, and `gpuPoolSnapshot()` telemetry (`docs/architecture.md` R-MEM-2). Since 0.26.0
   it also does **mid-run governor preemption + requeue** on top of idle-LRU eviction
-  (`docs/run-lifecycle.md`). `MCPBridge` and Hub SHA256 verification are still in progress — the
-  materialization executor verifies per-file size only.
+  (`docs/run-lifecycle.md`). Hub SHA256 verification is still in progress — the materialization
+  executor verifies per-file size only.
+
+> **Tool-protocol exposure (MCP) is deliberately not part of the engine.** A bridge belongs in an
+> external utility app that consumes MLXEngine: enumerate surfaces via `registeredCapabilities` →
+> `packages(for:)` → `manifest(for:)` → `surfaces`, then invoke `run(_:package:)`. Those types are
+> public and `Codable`, so the bridge owns its wire format while the engine stays protocol-agnostic.
+> C0–C14's C11 exists to make that client possible.
 - **MLXServeConformance** — the C0–C14 self-check harness, plus the offline **MAT** (weight
   auto-materialization) and **CAN** (cooperative-cancellation cadence) gates each package runs in
   its own test suite. **MLXServeConformanceNN** carries the MLXNN half of the C14 **INF** gate

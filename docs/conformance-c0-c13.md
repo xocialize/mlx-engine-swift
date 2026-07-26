@@ -19,20 +19,29 @@ docs. Rename it only in a pass that fixes those links too.)*
 | C8 | Port-code license gate (`manifest.license.portCodeLicense`; distinct from C7) |
 | C9 | PackageConfiguration (init-time, Codable; distinct from request params) |
 | C10 | Requirements manifest (footprint per quant, backends, OS, chip floor) |
-| C11 | MCPBridge introspection (each surface exposes a valid introspectable schema) |
+| C11 | Surface introspectability (each surface publishes a complete, honest `ToolDescriptor`) |
 | C12 | Forward-compat discipline (`@unknown default` on capability switches) |
 | C13 | Runtime governance cooperation (engine-owned lifecycle; `@InferenceActor`-isolated; cancellation-honoring; cooperatively evictable; no private queue) |
 | C14 | Inference mode (the loaded model graph reports `training == false`; a package with no module graph declares the exemption) |
 
-**C11 is scoped to introspectability, not MCP wire compatibility** (decided 2026-07-22). A surface
-satisfies C11 by publishing a complete, honest `ToolDescriptor` — a bridge can enumerate the tool,
-its parameters and kinds, and its I/O types from the manifest alone. `ParameterSchema` is an
-MCP-*like* subset: no value constraints (`minimum`/`maximum`/`enum`/`default`), opaque
-`object`/`array`, and **no declared JSON encoding for the binary artifact kinds**
-(`image`/`audio`/`video`/`mesh`). Closing that gap is purely additive and is done **at integration
-time, when a non-LLM MCP consumer actually exists** (in practice alongside `MCPBridge`, whose schema
-layer it is) — so nothing is reserved for it in the contract. The `llm` surface is unaffected: its
-structured output and tool-use ride FoundationModels' `GenerationSchema`, which is full JSON Schema.
+**C11 is scoped to introspectability, not MCP wire compatibility** (decided 2026-07-22; renamed from
+"MCPBridge introspection" 2026-07-26 — same number, same criterion, no longer naming a component the
+engine does not ship). A surface satisfies C11 by publishing a complete, honest `ToolDescriptor` — a
+client can enumerate the tool, its parameters and kinds, and its I/O types from the manifest alone.
+`ParameterSchema` is an MCP-*like* subset: no value constraints
+(`minimum`/`maximum`/`enum`/`default`), opaque `object`/`array`, and **no declared JSON encoding for
+the binary artifact kinds** (`image`/`audio`/`video`/`mesh`). Closing that gap is purely additive and
+is done **at integration time, when a real non-LLM tool consumer exists** — so nothing is reserved
+for it in the contract. The `llm` surface is unaffected: its structured output and tool-use ride
+FoundationModels' `GenerationSchema`, which is full JSON Schema.
+
+**Tool-protocol exposure is out of scope for the engine** (decided 2026-07-26). An MCP bridge is an
+**external utility app** that consumes MLXEngine, not an engine component: it enumerates surfaces
+through `MLXServeEngine.registeredCapabilities` → `packages(for:)` → `manifest(for:)` → `surfaces`
+and invokes them through `run(_:package:)`. Everything that seam needs is already public and
+`Codable`, so the bridge owns its own wire format and version cadence, and the engine stays
+protocol-agnostic with no MCP dependency. C11 is what makes such a client *possible* — it does not
+promise the engine will be one.
 
 C13's "runs only in the serialization domain / no private queue" is **compiler-enforced** by
 `ModelPackage`'s `@InferenceActor` isolation; its eviction/cancellation behavior needs runtime

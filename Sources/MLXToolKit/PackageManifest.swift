@@ -37,8 +37,10 @@ public struct PackageManifest: Sendable, Codable, Equatable {
     public let requirements: RequirementsManifest
     /// Model-level selection metadata (C6). Multi-valued with strength; never a surface.
     public let specialties: [SpecialtyWeight]
-    /// The N capability surfaces this one model exposes (C1). Each is independently registered
-    /// and introspectable through MCPBridge (C11). Lance → four entries, one loaded model.
+    /// The N capability surfaces this one model exposes (C1). Each is independently registered and
+    /// independently introspectable (C11) — an out-of-process tool client (e.g. an MCP bridge app)
+    /// enumerates them from here. "One model, N surfaces" holds per CHECKPOINT: `flux2-klein-swift`
+    /// declares `textToImage` + `imageEdit` from one loaded model.
     public let surfaces: [ToolDescriptor]
 
     public init(contractVersion: SemanticVersion = ContractVersion.current,
