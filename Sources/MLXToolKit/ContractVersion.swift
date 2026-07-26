@@ -253,8 +253,9 @@ public enum ContractVersion {
     //     (`3d-generation`, `mesh-rigging`, `character-rigging` — their raw values already ship in
     //     manifests; new terms use camelCase). **Enforcement is warn-only** at
     //     `MLXServeEngine.register()` (logs + records `engine.unregisteredSpecialties`); hard
-    //     rejection would break unknown third-party conformers with no deprecation window, so it
-    //     is a next-major decision.
+    //     rejection would break unknown third-party conformers with no deprecation window.
+    //     (Carried as a next-major question until 2026-07-26, then CLOSED as warn-only-permanently —
+    //     1.28.0's license change set the uniform rule: report declaration problems, never refuse.)
     //   • 3.2 **Per-surface quant eligibility.** `ToolDescriptor.quantFloor: Quant?` (nil = no
     //     constraint = every existing conformer) — a model can be int4-fine for analysis and
     //     int4-bad for generation, and quant gating was per-PACKAGE. Engine consumption: a surface

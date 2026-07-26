@@ -67,8 +67,18 @@ extension Specialty {
     ///
     /// **Enforcement is warn-only** at `MLXServeEngine.register()`: an unregistered specialty logs
     /// a warning naming the term, and registration proceeds. Hard rejection would break unknown
-    /// third-party conformers with no deprecation window; promoting it to a rejection is a
-    /// next-major decision (tracked in the roadmap).
+    /// third-party conformers with no deprecation window.
+    ///
+    /// **This stays warn-only — decided 2026-07-26, the question is closed.** It was carried as a
+    /// "next-major decision" for a while; contract 1.28.0 settled the house rule by moving C7/C8 the
+    /// other way (license blocker → advisory), on the reasoning that a runtime refusal turns a
+    /// *declaration* problem into a load failure inside the package everything depends on. That
+    /// applies with more force here: a mistyped specialty degrades Model-Manager **ranking**, which is
+    /// strictly less consequential than serving weights under an unreviewed license. Rejecting here
+    /// while merely reporting there would leave the engine strictest about its least important
+    /// declaration. The rule is uniform: **the engine reports declaration problems, it does not refuse
+    /// to run.** If the drift ever needs more teeth, make it more *visible* (surface
+    /// `engine.unregisteredSpecialties` in the host UI, as `licenseAdvisories` can be) — not fatal.
     ///
     /// **Convention for new terms:** camelCase (`poseDriven`, `voiceClone`). The kebab-case 3D
     /// terms are grandfathered — their raw values are already declared in shipped manifests.

@@ -319,8 +319,9 @@ public actor MLXServeEngine {
         // C6 vocabulary governance (3.5): a `Specialty` is a string literal, so an unregistered
         // term silently forks the namespace ("line-art" vs "lineart") and quietly breaks
         // Model-Manager ranking. WARN, never reject — a hard rejection would break unknown
-        // third-party conformers with no deprecation window (promotion to rejection is a
-        // next-major decision).
+        // third-party conformers with no deprecation window. Staying warn-only is DECIDED
+        // (2026-07-26), not deferred: same rule as the 1.28.0 license change — the engine reports
+        // declaration problems, it does not refuse to run. See `Specialty.registeredVocabulary`.
         let unregistered = registration.manifest.specialties.map(\.specialty).filter { !$0.isRegistered }
         if !unregistered.isEmpty {
             unregisteredSpecialties.formUnion(unregistered)
