@@ -58,9 +58,27 @@ public struct ModelStore: Sendable, Equatable {
 
     /// The pre-MS-1 per-repo directory, `<root>/<org>/<name>/`.
     ///
-    /// Read-only compatibility: markers written by an older engine still count. **Remove after the
-    /// next minor release** (MS-1 legacy tolerance window).
-    public func legacyDirectory(for repo: String) -> URL? {
+    /// Read-only compatibility for markers written by a pre-1.22.0 engine.
+    ///
+    /// **Why this can't just be deleted, and when it can (revised 2026-07-26).** The original note
+    /// said "remove after the next minor" — a bad criterion: five minors elapsed in four days while
+    /// real installs were still days old. What matters is not the version count but whether a
+    /// legacy marker can still be *load-bearing*, and it can: MS-1 moved the **marker**, never the
+    /// **weights** (`HubClient` always wrote `models--<org>--<name>/`). So a legacy marker is a
+    /// truthful "this repo is installed" signal, and dropping the fallback would make
+    /// `needsDownload` report `true` for weights that are present — a spurious multi-GB
+    /// re-download.
+    ///
+    /// The window is now **self-closing per repo** instead of open-ended: `writeMarker` migrates a
+    /// legacy marker to the canonical path (and deletes the old one) on the next successful load, so
+    /// the fallback stops being consulted for that repo forever. Removal is safe once you accept
+    /// that a repo *never loaded* since 1.22.0 re-probes — i.e. after one release in which users
+    /// have plausibly exercised their installed models, not after an arbitrary minor bump.
+    @available(*, deprecated, message: "Pre-1.22.0 marker compatibility only; migrated automatically by writeMarker. Do not build new behavior on this path.")
+    public func legacyDirectory(for repo: String) -> URL? { legacyDirectoryPath(for: repo) }
+
+    /// Non-deprecated inner spelling so the store's own compatibility reads don't warn.
+    func legacyDirectoryPath(for repo: String) -> URL? {
         guard let root else { return nil }
         return repo.split(separator: "/").reduce(root) {
             $0.appending(path: String($1), directoryHint: .isDirectory)
@@ -94,7 +112,7 @@ public struct ModelStore: Sendable, Equatable {
     /// The install marker for a repo if one exists — the canonical location first, then the
     /// pre-MS-1 one (read-both, write-new). `nil` when neither is present or there is no root.
     public func markerURL(for repo: String) -> URL? {
-        for dir in [directory(for: repo), legacyDirectory(for: repo)].compactMap({ $0 }) {
+        for dir in [directory(for: repo), legacyDirectoryPath(for: repo)].compactMap({ $0 }) {
             let marker = dir.appending(path: Self.markerName, directoryHint: .notDirectory)
             if FileManager.default.fileExists(atPath: marker.path) { return marker }
         }
@@ -107,6 +125,11 @@ public struct ModelStore: Sendable, Equatable {
     /// Write the marker the storage UI counts for an installed package. Best-effort: a no-op when
     /// there is no `root`, and failures are swallowed (the panel tolerates a missing marker). The
     /// caller must hold security-scoped access to `root` (the app does, via its bookmark).
+    ///
+    /// Also **migrates** a pre-MS-1 marker: once the canonical one is written, the legacy copy is
+    /// removed so `markerURL`'s compatibility fallback stops being consulted for this repo. That is
+    /// what makes the MS-1 tolerance window self-closing rather than open-ended — see
+    /// `legacyDirectory(for:)`.
     public func writeMarker(repo: String, revision: String, capabilities: [Capability]) {
         guard let dir = directory(for: repo) else { return }
         do {
@@ -119,8 +142,28 @@ public struct ModelStore: Sendable, Equatable {
             let data = try JSONSerialization.data(withJSONObject: payload,
                                                   options: [.prettyPrinted, .sortedKeys])
             try data.write(to: dir.appending(path: Self.markerName))
+            retireLegacyMarker(for: repo)
         } catch {
             // Best-effort marker — the weights still loaded; the panel just won't count this one.
+        }
+    }
+
+    /// Delete a pre-MS-1 marker once the canonical one exists, and the directory that held it if
+    /// nothing else is in there. Best-effort and deliberately narrow: it removes **only** the
+    /// marker file, never weights — the legacy layout only ever held the marker.
+    private func retireLegacyMarker(for repo: String) {
+        guard let legacy = legacyDirectoryPath(for: repo),
+              legacy != directory(for: repo) else { return }
+        let marker = legacy.appending(path: Self.markerName, directoryHint: .notDirectory)
+        guard FileManager.default.fileExists(atPath: marker.path) else { return }
+        try? FileManager.default.removeItem(at: marker)
+        // Prune the now-empty `<root>/<org>/<name>` (and a childless `<root>/<org>`) so the store
+        // doesn't keep orphan directories the storage panel would walk forever.
+        for dir in [legacy, legacy.deletingLastPathComponent()] {
+            guard dir != root,
+                  let entries = try? FileManager.default.contentsOfDirectory(atPath: dir.path),
+                  entries.isEmpty else { return }
+            try? FileManager.default.removeItem(at: dir)
         }
     }
 
@@ -136,6 +179,53 @@ public struct ModelStore: Sendable, Equatable {
             self.bytes = bytes
             self.installedPackages = installedPackages
         }
+    }
+
+    /// One materialized repo in a store root, for the storage UI's per-model list (MS-4).
+    public struct InstalledModel: Sendable, Equatable, Identifiable {
+        /// The repo id, e.g. `mlx-community/Kokoro-82M`.
+        public let repo: String
+        /// On-disk allocated bytes for this repo's directory, link-deduped like `Usage.bytes`.
+        public let bytes: Int64
+        /// Whether an install marker is present (an in-flight download has a directory but no
+        /// marker yet, so the UI can label it rather than pretend it is installed).
+        public let hasMarker: Bool
+
+        public var id: String { repo }
+
+        public init(repo: String, bytes: Int64, hasMarker: Bool) {
+            self.repo = repo
+            self.bytes = bytes
+            self.hasMarker = hasMarker
+        }
+    }
+
+    /// The repos materialized in a store root, newest-largest first, for a per-model UI (MS-4).
+    ///
+    /// Reads the canonical layout only — one entry per top-level `models--<org>--<name>/`. The repo
+    /// id comes from the marker's `repo` field when present (authoritative, since a name may itself
+    /// contain `--`) and is otherwise decoded from the folder name. Static and `nonisolated` for the
+    /// same reason as `usage(at:)`: the panel calls it for a folder off the main actor. The caller
+    /// must hold security-scoped access to `root`.
+    public static func installedModels(at root: URL) -> [InstalledModel] {
+        let entries = (try? FileManager.default.contentsOfDirectory(
+            at: root, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]))
+            ?? []
+        return entries.compactMap { dir -> InstalledModel? in
+            guard (try? dir.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true,
+                  dir.lastPathComponent.hasPrefix("models--") else { return nil }
+            let marker = dir.appending(path: markerName, directoryHint: .notDirectory)
+            let declared = (try? Data(contentsOf: marker))
+                .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+                .flatMap { $0["repo"] as? String }
+            let repo = declared ?? dir.lastPathComponent
+                .replacingOccurrences(of: "models--", with: "")
+                .replacingOccurrences(of: "--", with: "/")
+            return InstalledModel(repo: repo,
+                                  bytes: usage(at: dir).bytes,
+                                  hasMarker: FileManager.default.fileExists(atPath: marker.path))
+        }
+        .sorted { $0.bytes > $1.bytes }
     }
 
     /// Walk a store root once, summing on-disk size and counting install markers (MS-4).

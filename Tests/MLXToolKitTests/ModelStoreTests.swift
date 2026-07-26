@@ -34,11 +34,17 @@ final class ModelStoreTests: XCTestCase {
         XCTAssertNil(ModelStore().markerURL(for: "org/name"))
     }
 
+    /// The pre-MS-1 path, spelled out here rather than read from the (deprecated) accessor so these
+    /// tests keep pinning the layout after that accessor is finally removed.
+    private func legacyPath(_ repo: String = "org/name") -> URL {
+        repo.split(separator: "/").reduce(root) {
+            $0.appending(path: String($1), directoryHint: .isDirectory)
+        }
+    }
+
     func testLegacyDirectoryIsThePreMS1Path() {
-        let store = ModelStore(root: root)
-        let legacy = store.legacyDirectory(for: "org/name")
-        XCTAssertEqual(legacy, root.appending(path: "org", directoryHint: .isDirectory)
-                                   .appending(path: "name", directoryHint: .isDirectory))
+        XCTAssertEqual(legacyPath(), root.appending(path: "org", directoryHint: .isDirectory)
+                                         .appending(path: "name", directoryHint: .isDirectory))
     }
 
     // MARK: - Snapshot resolution
@@ -95,11 +101,13 @@ final class ModelStoreTests: XCTestCase {
 
     func testMarkerReadFallsBackToTheLegacyLocation() throws {
         let store = ModelStore(root: root)
-        let legacy = try XCTUnwrap(store.legacyDirectory(for: "org/name"))
+        let legacy = legacyPath()
         try FileManager.default.createDirectory(at: legacy, withIntermediateDirectories: true)
         try Data("{}".utf8).write(to: legacy.appending(path: ModelStore.markerName))
 
-        // Read-both: a marker written by a pre-MS-1 engine still counts…
+        // Read-both: a marker written by a pre-MS-1 engine still counts. This is load-bearing —
+        // MS-1 moved the marker, never the weights, so a legacy marker truthfully means "installed"
+        // and dropping the fallback would re-download weights that are already on disk.
         XCTAssertTrue(store.hasMarker(for: "org/name"))
         XCTAssertEqual(store.markerURL(for: "org/name")?.deletingLastPathComponent()
                             .standardizedFileURL, legacy.standardizedFileURL)
@@ -108,6 +116,103 @@ final class ModelStoreTests: XCTestCase {
         store.writeMarker(repo: "org/name", revision: "main", capabilities: [.llm])
         XCTAssertEqual(store.markerURL(for: "org/name")?.deletingLastPathComponent().lastPathComponent,
                        "models--org--name")
+    }
+
+    /// The MS-1 tolerance window is self-closing: writing the canonical marker retires the legacy
+    /// one, so the compatibility fallback is consulted at most once per repo.
+    func testWritingTheMarkerMigratesAndRetiresTheLegacyOne() throws {
+        let store = ModelStore(root: root)
+        let legacy = legacyPath()
+        try FileManager.default.createDirectory(at: legacy, withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: legacy.appending(path: ModelStore.markerName))
+
+        store.writeMarker(repo: "org/name", revision: "abc123", capabilities: [.llm])
+
+        // Canonical marker present and authoritative…
+        let marker = try XCTUnwrap(store.markerURL(for: "org/name"))
+        XCTAssertEqual(marker.deletingLastPathComponent().lastPathComponent, "models--org--name")
+        // …legacy marker gone, and its empty directories pruned rather than left as orphans.
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: legacy.appending(path: ModelStore.markerName).path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: legacy.path))
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: root.appending(path: "org", directoryHint: .isDirectory).path))
+        // The repo still reads as installed throughout — the point of migrating rather than deleting.
+        XCTAssertTrue(store.hasMarker(for: "org/name"))
+    }
+
+    // MARK: - Per-model enumeration (MS-4 UI)
+
+    func testInstalledModelsListsCanonicalReposWithSizes() throws {
+        let store = ModelStore(root: root)
+        for repo in ["org/small", "org/big"] {
+            let snapshot = try XCTUnwrap(store.directory(for: repo))
+                .appending(path: "snapshots", directoryHint: .isDirectory)
+                .appending(path: "abc", directoryHint: .isDirectory)
+            try FileManager.default.createDirectory(at: snapshot, withIntermediateDirectories: true)
+            let bytes = repo == "org/big" ? 40_000 : 400
+            try Data(repeating: 0x41, count: bytes)
+                .write(to: snapshot.appending(path: "model.safetensors"))
+            store.writeMarker(repo: repo, revision: "abc", capabilities: [.llm])
+        }
+
+        let models = ModelStore.installedModels(at: root)
+        // Largest first, so the panel leads with what is worth reclaiming.
+        XCTAssertEqual(models.map(\.repo), ["org/big", "org/small"])
+        XCTAssertTrue(models.allSatisfy(\.hasMarker))
+        XCTAssertGreaterThan(try XCTUnwrap(models.first).bytes, 40_000 - 1)
+    }
+
+    /// A directory exists as soon as a download starts, so a repo with no marker must be listed but
+    /// flagged — never counted as installed.
+    func testInstalledModelsFlagsAnUnmarkedRepo() throws {
+        let store = ModelStore(root: root)
+        let dir = try XCTUnwrap(store.directory(for: "org/partial"))
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+
+        let models = ModelStore.installedModels(at: root)
+        XCTAssertEqual(models.map(\.repo), ["org/partial"])
+        XCTAssertFalse(try XCTUnwrap(models.first).hasMarker)
+    }
+
+    /// The marker's `repo` field wins over folder-name decoding — a name containing `--` cannot be
+    /// recovered from the folder alone.
+    func testInstalledModelsPrefersTheMarkersRepoField() throws {
+        let store = ModelStore(root: root)
+        let repo = "org/name--with--dashes"
+        let dir = try XCTUnwrap(store.directory(for: repo))
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        store.writeMarker(repo: repo, revision: "abc", capabilities: [.llm])
+
+        XCTAssertEqual(ModelStore.installedModels(at: root).map(\.repo), [repo])
+    }
+
+    /// Non-store directories in a chosen folder are ignored rather than listed as models.
+    func testInstalledModelsIgnoresForeignDirectories() throws {
+        try FileManager.default.createDirectory(
+            at: root.appending(path: "Documents", directoryHint: .isDirectory),
+            withIntermediateDirectories: true)
+        XCTAssertTrue(ModelStore.installedModels(at: root).isEmpty)
+    }
+
+    /// Migration must never touch a sibling that happens to live under the same `<root>/<org>/`.
+    func testLegacyPruneLeavesSiblingsAlone() throws {
+        let store = ModelStore(root: root)
+        let legacy = legacyPath()
+        let sibling = root.appending(path: "org", directoryHint: .isDirectory)
+                          .appending(path: "other", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: legacy, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: sibling, withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: legacy.appending(path: ModelStore.markerName))
+        try Data("{}".utf8).write(to: sibling.appending(path: ModelStore.markerName))
+
+        store.writeMarker(repo: "org/name", revision: "abc123", capabilities: [.llm])
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: legacy.path))
+        // `<root>/org` still holds `other`, so it survives — and that sibling's marker is intact.
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: sibling.appending(path: ModelStore.markerName).path))
+        XCTAssertTrue(store.hasMarker(for: "org/other"))
     }
 
     // MARK: - Fixture

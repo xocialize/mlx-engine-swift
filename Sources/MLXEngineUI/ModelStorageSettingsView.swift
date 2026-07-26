@@ -42,6 +42,30 @@ public struct ModelStorageStatus: Sendable, Equatable {
     }
 }
 
+/// Deletes one repo's weights, or throws explaining why it can't.
+///
+/// **The engine owns this, not the UI** (MS-4). `MLXEngineUI` deliberately does not depend on
+/// `MLXServeCore`, and deletion must respect residency — `ModelStore.remove(repo:)` is unguarded and
+/// would happily delete weights out from under a loaded package. So the app injects
+/// `MLXServeEngine.deleteWeights(repo:)` here, which refuses with `EngineError.weightsInUse` while a
+/// resident package draws on the repo. Leave it `nil` and the panel shows no delete affordance at
+/// all — better than offering an unsafe one.
+///
+/// Deliberately **not** actor-isolated: the engine is an actor and the handler is awaited from the
+/// panel, so it must be callable from any isolation. Wired from the app as
+/// `WeightDeleteHandler { try await engine.deleteWeights(repo: $0) }`.
+public struct WeightDeleteHandler: Sendable {
+    private let body: @Sendable (String) async throws -> Void
+
+    public init(_ body: @Sendable @escaping (String) async throws -> Void) {
+        self.body = body
+    }
+
+    public func callAsFunction(_ repo: String) async throws {
+        try await body(repo)
+    }
+}
+
 /// Backing state for `ModelStorageSettingsView`. Consuming apps can supply their
 /// own instance to observe edits and react to Apply/Reset.
 ///
@@ -49,6 +73,11 @@ public struct ModelStorageStatus: Sendable, Equatable {
 /// bookmark** (requires the `files.bookmarks.app-scope` and
 /// `files.user-selected.read-write` entitlements in a sandboxed app). The bookmark
 /// is resolved on init, so access to a previously-chosen folder survives relaunch.
+///
+/// Isolated to the main actor: it is a SwiftUI observable view model, only ever held as `@State` by
+/// the panels in this module. Explicit isolation (rather than a nonisolated class that hops) is what
+/// lets the disk scan return its results without sending a non-`Sendable` model across an isolation
+/// boundary — see `refreshStatus()`.
 @MainActor
 @Observable
 public final class ModelStorageModel {
@@ -58,6 +87,12 @@ public final class ModelStorageModel {
     public var draftPath: String
     /// Status metrics shown in the lower section.
     public var status: ModelStorageStatus
+    /// The repos materialized in the applied folder, largest first. Empty until a folder is granted.
+    public var installed: [ModelStore.InstalledModel] = []
+    /// Set when a delete attempt failed — shown inline (typically "in use by a loaded package").
+    public var deleteError: String?
+    /// The repo a delete is in flight for, so the row can disable itself.
+    public var deletingRepo: String?
 
     /// UserDefaults key under which the app-scope bookmark data is stored.
     private let bookmarkDefaultsKey: String
@@ -66,16 +101,43 @@ public final class ModelStorageModel {
     /// The URL we currently hold an access grant on (must be balanced on change).
     private var accessedURL: URL?
 
+    /// Injected guarded deleter (MS-4). `nil` hides the delete affordance entirely.
+    private let deleteHandler: WeightDeleteHandler?
+
     public init(
         path: String = "~/Library/Application Support/MLXEngine/Models",
         status: ModelStorageStatus = ModelStorageStatus(),
-        bookmarkDefaultsKey: String = "MLXEngine.ModelStorageBookmark"
+        bookmarkDefaultsKey: String = "MLXEngine.ModelStorageBookmark",
+        deleteHandler: WeightDeleteHandler? = nil
     ) {
         self.appliedPath = path
         self.draftPath = path
         self.status = status
         self.bookmarkDefaultsKey = bookmarkDefaultsKey
+        self.deleteHandler = deleteHandler
         restoreBookmark()
+        refreshStatus()
+    }
+
+    /// Whether the panel should offer per-model deletion — only when the app wired a guarded
+    /// deleter and we hold access to the folder.
+    public var canDelete: Bool { deleteHandler != nil && resolvedModelsDirectory != nil }
+
+    /// Delete one repo's weights through the injected engine handler, then re-scan.
+    ///
+    /// Failures are surfaced, not swallowed: the common one is the engine refusing while a resident
+    /// package still draws on the repo, and the user needs to be told that rather than watch a row
+    /// silently not disappear.
+    public func delete(repo: String) async {
+        guard let deleteHandler else { return }
+        deleteError = nil
+        deletingRepo = repo
+        do {
+            try await deleteHandler(repo)
+        } catch {
+            deleteError = "Couldn’t delete \(repo): \(error.localizedDescription)"
+        }
+        deletingRepo = nil
         refreshStatus()
     }
 
@@ -203,18 +265,26 @@ public final class ModelStorageModel {
             status.diskUsed = "—"
             status.modelsInstalled = 0
             status.lastScan = "—"
+            installed = []
             return
         }
-        Task.detached { [weak self] in
-            let scan = Self.scanFolder(at: folder)
-            let formatted = Self.formatBytes(scan.bytes)
-            await MainActor.run {
-                guard let self else { return }
-                self.status.diskUsed = formatted
-                self.status.modelsInstalled = scan.models
-                self.status.lastScan = "now"
-            }
+        // The walk runs off the main actor (a large store is deep), but only the folder URL goes out
+        // and only Sendable results come back — the model itself never crosses an isolation
+        // boundary, which is why this class is `@MainActor` rather than nonisolated-and-hopping.
+        Task { [weak self] in
+            let scan = await Task.detached { Self.scanFolder(at: folder) }.value
+            let models = await Task.detached { ModelStore.installedModels(at: folder) }.value
+            guard let self else { return }
+            status.diskUsed = Self.formatBytes(scan.bytes)
+            status.modelsInstalled = scan.models
+            status.lastScan = "now"
+            installed = models
         }
+    }
+
+    /// A row's size, formatted for display.
+    public func formattedSize(of model: ModelStore.InstalledModel) -> String {
+        Self.formatBytes(model.bytes)
     }
 
     /// The app's sandbox container Application Support directory (always reachable).
@@ -251,6 +321,9 @@ public final class ModelStorageModel {
 /// The reusable model-storage settings panel.
 public struct ModelStorageSettingsView: View {
     @State private var model: ModelStorageModel
+    /// The row awaiting confirmation. Deleting weights is irreversible and can mean a multi-GB
+    /// re-download, so it is never one click.
+    @State private var pendingDeletion: ModelStore.InstalledModel?
 
     /// Creates the panel with a fresh model using default demo values.
     public init() {
@@ -300,10 +373,41 @@ public struct ModelStorageSettingsView: View {
             .padding(.bottom, 12)
 
             statusGroup
+
+            if model.canDelete && !model.installed.isEmpty {
+                sectionHeader("INSTALLED MODELS")
+                    .padding(.top, 28)
+                    .padding(.bottom, 12)
+
+                installedGroup
+
+                if let error = model.deleteError {
+                    Text(error)
+                        .font(MarqueeFont.caption)
+                        .foregroundStyle(MarqueeColor.textPrimary)
+                        .padding(.top, 10)
+                }
+            }
         }
         .padding(MarqueeMetric.panelPadding)
         .frame(width: 520, alignment: .leading)
         .background(MarqueeColor.bgPrimary)
+        .confirmationDialog(
+            pendingDeletion.map { "Delete \($0.repo)?" } ?? "",
+            isPresented: Binding(get: { pendingDeletion != nil },
+                                 set: { if !$0 { pendingDeletion = nil } }),
+            titleVisibility: .visible
+        ) {
+            if let target = pendingDeletion {
+                Button("Delete \(model.formattedSize(of: target))", role: .destructive) {
+                    pendingDeletion = nil
+                    Task { await model.delete(repo: target.repo) }
+                }
+            }
+            Button("Cancel", role: .cancel) { pendingDeletion = nil }
+        } message: {
+            Text("The weights are removed from this folder. Using the model again re-downloads them.")
+        }
     }
 
     // MARK: Sections
@@ -346,6 +450,47 @@ public struct ModelStorageSettingsView: View {
         }
         .background(MarqueeColor.bgSecondary)
         .clipShape(RoundedRectangle(cornerRadius: MarqueeMetric.groupCornerRadius))
+    }
+
+    /// Per-model rows with a guarded delete (MS-4). Only rendered when the app injected a deleter,
+    /// so the panel never offers an unguarded deletion path.
+    private var installedGroup: some View {
+        VStack(spacing: 0) {
+            ForEach(Array(model.installed.enumerated()), id: \.element.id) { index, item in
+                if index > 0 { divider }
+                installedRow(item)
+            }
+        }
+        .background(MarqueeColor.bgSecondary)
+        .clipShape(RoundedRectangle(cornerRadius: MarqueeMetric.groupCornerRadius))
+    }
+
+    private func installedRow(_ item: ModelStore.InstalledModel) -> some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.repo)
+                    .font(MarqueeFont.bodyMedium)
+                    .foregroundStyle(MarqueeColor.textPrimary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                if !item.hasMarker {
+                    Text("incomplete — no install marker")
+                        .font(MarqueeFont.caption)
+                        .foregroundStyle(MarqueeColor.textMuted)
+                }
+            }
+            Spacer()
+            Text(model.formattedSize(of: item))
+                .font(MarqueeFont.body)
+                .foregroundStyle(MarqueeColor.textSecondary)
+                .monospacedDigit()
+            Button("Delete…") { pendingDeletion = item }
+                .buttonStyle(MarqueeButtonStyle(.secondary))
+                .disabled(model.deletingRepo != nil)
+        }
+        .padding(.horizontal, 16)
+        .frame(minHeight: MarqueeMetric.rowHeight)
+        .padding(.vertical, item.hasMarker ? 0 : 6)
     }
 
     // MARK: Components
