@@ -428,5 +428,20 @@ public enum ContractVersion {
     //     `licenseEnforcement: .blocking` and get the pre-1.28.0 behavior exactly, layer-naming
     //     included. `evalAcknowledgedAllowlist` / `.permissiveOrAcknowledged` are untouched and
     //     still meaningful — they now describe classification rather than admission.
-    public static let current = SemanticVersion(major: 1, minor: 28, patch: 0)
+    // 1.29.0 (2026-07-27, additive): EXPOSURE / LIGHTING CORRECTION — new `Capability
+    //   .imageRelight` (`CanonicalOutput.image`) with `ImageRelightRequest` /
+    //   `ImageRelightResponse` / `ImageRelightContract`. Introduced by HVI-CIDNet (CVPR 2025).
+    //   • Deliberately NOT a second package on `imageRestore`, and the reason is behavioural, not
+    //     taxonomic. Low-light models drive their output toward a target mean luma REGARDLESS of
+    //     input, so on an already-correctly-exposed image they degrade it — measured across
+    //     HVI-CIDNet's three published checkpoints at 23.37 / 20.99 / 16.10 dB against the correct
+    //     exposure. A planner told to "restore" an image must not silently re-expose it.
+    //   • The request carries `strength` (0…1); restoration has no such notion. The response
+    //     carries `appliedStrength` and `bypassed` as TYPED fields rather than `metaData`, because
+    //     "I declined to enhance this" is something a caller acts on — a before/after UI has
+    //     nothing to show, and a pipeline may skip a downstream stage.
+    //   • Purely additive: one enum case, one contract file. Existing exhaustive switches over
+    //     `Capability` in package code are `@unknown default`-guarded (C12), and no existing
+    //     request/response type changed.
+    public static let current = SemanticVersion(major: 1, minor: 29, patch: 0)
 }

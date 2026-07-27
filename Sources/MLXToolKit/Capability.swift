@@ -120,6 +120,23 @@ public enum Capability: String, Codable, Sendable, CaseIterable, Hashable {
     /// rig — mesh-in / rigged-mesh-out, the first surface whose input AND output are `Mesh`.
     /// The companion-character path: a VRM's own skeleton → `skinOnly` → skinned VRM.)
     case meshRig
+    /// **Exposure / lighting correction** — an `Image` → the SAME scene re-exposed (lifted shadows,
+    /// recovered mid-tones) at the same dimensions, plus a `strength` dial. Contract 1.29.0;
+    /// introduced by HVI-CIDNet.
+    ///
+    /// Deliberately NOT folded into `imageRestore`. Three reasons: the request carries a
+    /// **strength** parameter that restoration has no notion of; the operation is **continuously
+    /// dialable and reversible in intent** (an exposure choice) rather than a defect being removed;
+    /// and it needs a **bypass** — low-light models drive output toward a target mean luma
+    /// regardless of input, so on an already-correctly-exposed image they *degrade* it (measured:
+    /// 16–23 dB across HVI-CIDNet's checkpoints). A planner asking "restore this" must not
+    /// silently re-expose a correctly-exposed photo, and a user asking "brighten this" would not
+    /// think to look under restoration.
+    ///
+    /// (Distinct from `imageRestore` — that removes defects at fixed appearance; from `imageEdit` —
+    /// instruction-driven and free to invent content; from `imageColorize` — adds chroma to
+    /// greyscale rather than redistributing luminance.)
+    case imageRelight
 }
 
 /// The fixed output artifact kind for a capability. Not negotiable per package (C2).
@@ -177,6 +194,7 @@ extension Capability {
         case .embed: return .structuredText
         case .stt: return .text
         case .meshRig: return .mesh
+        case .imageRelight: return .image
         }
     }
 }
