@@ -2,7 +2,7 @@
 
 > ## Status — usable, evolving
 >
-> MLXEngine is **published and consumable**: tagged **v0.36.0** (capability contract **1.27.0**),
+> MLXEngine is **published and consumable**: tagged **v0.37.0** (capability contract **1.28.0**),
 > and already serving **41 published model packages** (55 tracked, incl. WIP + research — see
 > [the model registry](docs/model-registry.md)) that back **30 of the contract's 31 capabilities** —
 > LLM, TTS, **speech-to-text**, text→image / text→video (+ image/video editing), image→3D, text
@@ -25,6 +25,26 @@ cross-model work is uniform from a programming standpoint.
 > declaration is an information requirement, not a load-time gate: the engine classifies each license
 > against its policy and reports findings on `licenseAdvisories` rather than refusing. Pass
 > `licenseEnforcement: .blocking` to restore hard rejection.
+
+> ### ⚠ Upgrading from v0.36.0 or earlier — read before bumping
+>
+> **The license gate's default flipped in v0.37.0 / contract 1.28.0.** Through **v0.36.0 (contract
+> 1.27.0)** `MLXServeEngine.register()` threw `EngineError.licenseRejected` for any license outside
+> the policy — unconditionally, with no way to opt out. From **v0.37.0** the default is
+> `licenseEnforcement: .advisory`: the same package now **registers**, and the finding is recorded on
+> `licenseAdvisories` instead.
+>
+> **A version bump alone therefore loosens the policy silently.** If your app must not load
+> non-permissive weights — a commercial distribution, or CI asserting the fleet stays clean —
+> the bump must be paired with an explicit:
+>
+> ```swift
+> MLXServeEngine(licenseEnforcement: .blocking)   // pre-1.28.0 behavior, layer-naming included
+> ```
+>
+> Nothing warns you at compile time: the parameter is defaulted, so old call sites keep building. The
+> one runtime signal is the `[License]` log line the engine emits per advisory. Construct the engine in
+> **one** place and set the policy there.
 
 ## Packages
 - **MLXToolKit** — the contract surface every package conforms to (capabilities, canonical
