@@ -443,5 +443,19 @@ public enum ContractVersion {
     //   • Purely additive: one enum case, one contract file. Existing exhaustive switches over
     //     `Capability` in package code are `@unknown default`-guarded (C12), and no existing
     //     request/response type changed.
-    public static let current = SemanticVersion(major: 1, minor: 29, patch: 0)
+    // 1.30.0 (2026-07-27, additive): OPTIONAL STRENGTH ON `imageRestore` — introduced by DRUNet.
+    //   • `ImageRestoreRequest.strength: Float?` (0…1, nil = the package's default) and
+    //     `ImageRestoreResponse.appliedStrength: Float?`. Both defaulted, so the three existing
+    //     backers (NAFNet, FFTformer, Restormer) stay source-compatible and simply ignore it.
+    //   • Why the capability grew a parameter rather than DRUNet getting its own: most restoration
+    //     models bake the level into the checkpoint — you pick a model, not a level — but some take
+    //     it as a genuine INPUT. DRUNet consumes a noise-level plane as a 4th channel, so one set of
+    //     weights spans a continuous range. The request/response shape is otherwise identical to
+    //     `imageRestore`, which made a separate capability weaker justification than `imageRelight`
+    //     had; the alternative was untyped `metaData`, where no planner would find it.
+    //   • `appliedStrength == nil` is the honest signal that a backer has NO dial, as distinct from
+    //     a dial that did nothing. A UI greys the control; a planner routes elsewhere.
+    //   • `ImageRestoreContract.descriptor(supportsStrength:)` gates whether the parameter appears
+    //     on a given package's surface, so a planner is never offered a knob that is ignored.
+    public static let current = SemanticVersion(major: 1, minor: 30, patch: 0)
 }
