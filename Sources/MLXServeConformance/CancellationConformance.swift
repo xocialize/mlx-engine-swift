@@ -176,6 +176,12 @@ public enum CancellationConformance {
         // stt transcribes arbitrarily long audio via the cache-aware chunk loop — genuinely
         // long-run, so a cadence declaration is required (contract 1.20.0).
         .stt,
+        // videoAnalysis samples frames, runs a ViT over thousands of visual tokens, then
+        // autoregresses an answer — measured at ~8 s for a 16-frame clip on an M5 Max. It was
+        // absent here only because the capability had no provider until Mage-VL; the omission
+        // was never exercised rather than deliberate. imageAnalysis stays out: a single image is
+        // one short prefill plus a short generation.
+        .videoAnalysis,
     ]
 
     /// Declared transient peak at or above this implies a long run regardless of capability
