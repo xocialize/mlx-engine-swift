@@ -150,9 +150,22 @@ public final class ModelStorageModel {
     /// Models Installed reflect new content.
     public func refresh() { refreshStatus() }
 
-    /// Whether Apply should be enabled (there is a non-empty, changed draft).
+    /// Whether Apply should be enabled.
+    ///
+    /// A changed path is the obvious case. The second case is the one that stranded a user:
+    /// re-picking the folder that is ALREADY applied. On relaunch `restoreBookmark()` can resolve
+    /// the bookmark — populating `appliedPath`/`draftPath`, so the panel looks correctly
+    /// configured — while `startAccessingSecurityScopedResource()` fails, leaving `accessedURL`
+    /// nil and the app with no actual access. Comparing paths alone then disables Apply exactly
+    /// when the user needs it, and re-choosing the same folder appears to do nothing. The only
+    /// escape was to apply some other folder and then apply the real one again.
+    ///
+    /// So: a fresh pick with no access held is always a pending change, because what changed is
+    /// the GRANT, not the path.
     public var hasPendingChange: Bool {
-        !draftPath.isEmpty && draftPath != appliedPath
+        guard !draftPath.isEmpty else { return false }
+        if draftPath != appliedPath { return true }
+        return selectedURL != nil && accessedURL == nil
     }
 
     /// Commits the draft path, persisting (and beginning access to) the chosen
@@ -235,6 +248,13 @@ public final class ModelStorageModel {
             draftPath = url.path
             status.location = url.path
             if isStale { storeBookmark(for: url) }
+            // Resolving is not the same as being allowed in. When the scope fails to start, the
+            // panel would otherwise show a fully-populated path with no access behind it — the
+            // silent half of the failure above, so say it rather than leave it to be deduced.
+            if accessedURL == nil {
+                NSLog("MLXEngineUI: resolved the app-scope bookmark for \(url.path) but could not "
+                      + "start its security scope — the folder must be re-chosen to regrant access.")
+            }
         } catch {
             NSLog("MLXEngineUI: failed to resolve app-scope bookmark: \(error)")
         }
