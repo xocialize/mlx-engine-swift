@@ -2,8 +2,8 @@
 
 > ## Status — usable, evolving
 >
-> MLXEngine is **published and consumable**: tagged **v0.38.0** (capability contract **1.29.0**),
-> and already serving **41 published model packages** (59 tracked, incl. WIP + research — see
+> MLXEngine is **published and consumable**: tagged **v0.39.0** (capability contract **1.30.0**),
+> and already serving **43 published model packages** (64 tracked, incl. WIP + research — see
 > [the model registry](docs/model-registry.md)) that back **all 32 of the contract's capabilities** —
 > LLM, TTS, **speech-to-text**, text→image / text→video (+ image/video editing), image→3D, text
 > embedding, audio separation / codec / polish, sound effects, speech emotion, image quality /

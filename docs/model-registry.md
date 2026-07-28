@@ -159,7 +159,7 @@ _Seeded 2026-06-30. Val/Eff/Eng are best-effort at seed time — **backfill per 
 
 | Package | Provides | Role | Home | Avail |
 |---|---|---|---|---|
-| mlx-engine-swift | the engine (MLXToolKit/MLXServeCore/UI/retrieval) + **MLXEngineTestKit** (opt-in category testing harness) | engine | MLXEngine/ | ✅ (0.22.0, contract 1.16.0) |
+| mlx-engine-swift | the engine (MLXToolKit/MLXServeCore/UI/retrieval) + **MLXEngineTestKit** (opt-in category testing harness) | engine | MLXEngine/ | ✅ (0.39.0, contract 1.30.0) |
 | mlx-swift-lm | LLM/VLM building blocks | shared | video/LTX_DEV | ✅ |
 | mlx-constrained-decoding-swift | JSON grammar-constrained decoding (`responseFormat` runtime: byte-level JSON FSM + vocab classification + `LogitProcessor`) | shared | think/PROD | ✅ (v0.1.0) |
 | flux2-vae-mlx-swift | FLUX.2 VAE decoder | shared | image/PROD | ✅ |

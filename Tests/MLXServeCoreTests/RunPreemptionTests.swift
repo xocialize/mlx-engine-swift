@@ -207,27 +207,57 @@ private func engine(budget: UInt64,
                           gpuCache: gpuCache, preemption: preemption, physFootprint: { nil })
 }
 
+/// How long the barriers below wait for another task to make progress. Generous on purpose: it is
+/// only ever reached on a genuine hang, so a large value costs nothing in the passing case.
+private let barrierTimeout: Duration = .seconds(10)
+
+/// Wait for a condition, bounded by **wall-clock time** rather than by a yield count.
+///
+/// Two constraints pull in opposite directions here, and getting either wrong produces a flake:
+///
+/// 1. **The bound must be time, not iterations.** The original `for _ in 0..<5000 { await
+///    Task.yield() }` bounded the wait by *scheduling opportunities*. On an idle many-core machine
+///    that spans long enough for the awaited task to run; on a loaded 3-core CI runner the loop
+///    burned through all 5000 in **26 ms** without the victim ever being scheduled far enough to
+///    emit its first report (CI run 30364437675 — a false red on a commit that had touched a
+///    different module entirely).
+/// 2. **The poll must stay zero-latency at first.** Some awaited windows are *microseconds* long —
+///    `NearlyDoneVictim` reports progress and then finishes within ~300 yields. Polling on a
+///    `Task.sleep(1ms)` overshoots that entire run, so the waiter wakes to find the run already
+///    complete and reports "never reported progress" when it actually *missed* it. That is a worse
+///    failure than the flake: deterministic, and it misattributes the cause.
+///
+/// So: yield-poll (catching sub-millisecond windows) for a grace period, then fall back to sleeping
+/// (so a genuine hang doesn't spin a core for the whole timeout) — the whole thing bounded by a
+/// deadline.
+private func waitFor(_ condition: () async -> Bool) async -> Bool {
+    let start = ContinuousClock.now
+    let spinUntil = start + .milliseconds(250)
+    let deadline = start + barrierTimeout
+    while ContinuousClock.now < deadline {
+        if await condition() { return true }
+        if ContinuousClock.now < spinUntil {
+            await Task.yield()
+        } else {
+            try? await Task.sleep(for: .milliseconds(1))
+        }
+    }
+    return false
+}
+
 /// Poll until the named package's in-flight run has delivered a progress report to the
 /// preemption policy — the "victim is genuinely mid-run, signal landed" barrier.
 private func waitUntilRunning(_ e: MLXServeEngine, _ id: PackageID) async throws {
-    for _ in 0 ..< 5000 {
-        if await e.activeRunLatestReport(for: id) != nil { return }
-        await Task.yield()
-    }
-    Issue.record("run of \(id) never reported progress")
+    let ok = await waitFor { await e.activeRunLatestReport(for: id) != nil }
+    if !ok { Issue.record("run of \(id) never reported progress within \(barrierTimeout)") }
 }
 
 /// Poll until the run monitor reads "not running" for a capability/package (MainActor hops lag).
 private func waitUntilMonitorClear(_ e: MLXServeEngine, _ capability: Capability,
                                    package: String) async -> Bool {
-    for _ in 0 ..< 5000 {
-        let clear = await MainActor.run {
-            e.runProgress.report(for: capability, package: package) == nil
-        }
-        if clear { return true }
-        await Task.yield()
+    await waitFor {
+        await MainActor.run { e.runProgress.report(for: capability, package: package) == nil }
     }
-    return false
 }
 
 // MARK: - Tests
