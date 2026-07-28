@@ -390,7 +390,7 @@ public struct ModelStorageSettingsView: View {
             }
         }
         .padding(MarqueeMetric.panelPadding)
-        .frame(width: 520, alignment: .leading)
+        .frame(width: MarqueeMetric.panelWidth, alignment: .leading)
         .background(MarqueeColor.bgPrimary)
         .confirmationDialog(
             pendingDeletion.map { "Delete \($0.repo)?" } ?? "",

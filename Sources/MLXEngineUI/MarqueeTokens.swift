@@ -63,6 +63,31 @@ public enum MarqueeMetric {
     public static let controlCornerRadius: CGFloat = 6
     public static let controlHeight: CGFloat = 28
     public static let rowHeight: CGFloat = 52
+
+    // MARK: Settings-window geometry
+
+    /// Width of the settings sidebar (section list).
+    public static let sidebarWidth: CGFloat = 200
+    /// The 1pt rule between sidebar and detail.
+    public static let hairline: CGFloat = 1
+    /// Width of a settings detail panel, **inclusive of `panelPadding`** — the panels apply
+    /// `.padding(panelPadding)` *inside* a `.frame(width:)`, so this is the total, not the content box.
+    public static let panelWidth: CGFloat = 520
+
+    /// The narrowest width `EngineSettingsView` can render without clipping — **derived**, never
+    /// typed in by hand.
+    ///
+    /// It shipped as a hardcoded `720` while the columns summed to `sidebarWidth + hairline +
+    /// panelWidth` = **721**, so the declared minimum was 1pt under the content it was supposed to
+    /// admit and the detail column clipped for any host that trusted it. A hardcoded minimum is a
+    /// second source of truth for a number the layout already knows; deriving it means changing a
+    /// column can't silently invalidate the window.
+    public static var settingsMinWidth: CGFloat { sidebarWidth + hairline + panelWidth }
+
+    /// A reasonable opening height for the settings window. **Not** a content guarantee: the detail
+    /// column scrolls, because the model-storage panel grows a row per installed model and no fixed
+    /// height can bound it.
+    public static let settingsMinHeight: CGFloat = 620
 }
 
 // MARK: - Hex helper

@@ -77,15 +77,22 @@ public struct EngineSettingsView: View {
     public var body: some View {
         HStack(spacing: 0) {
             sidebar
-                .frame(width: 200)
+                .frame(width: MarqueeMetric.sidebarWidth)
                 .frame(maxHeight: .infinity, alignment: .top)
                 .background(MarqueeColor.bgSecondary)
-            Rectangle().fill(MarqueeColor.bgElevated).frame(width: 1)
-            detail
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .background(MarqueeColor.bgPrimary)
+            Rectangle().fill(MarqueeColor.bgElevated).frame(width: MarqueeMetric.hairline)
+            // Scrolls because the detail column has no bounded height: the model-storage panel
+            // grows a row per installed model (MS-4), so any fixed minHeight is a number the
+            // content will eventually exceed — at which point rows, and the delete buttons on
+            // them, become unreachable rather than merely cramped.
+            ScrollView(.vertical) {
+                detail
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(MarqueeColor.bgPrimary)
         }
-        .frame(minWidth: 720, minHeight: 620)
+        .frame(minWidth: MarqueeMetric.settingsMinWidth,
+               minHeight: MarqueeMetric.settingsMinHeight)
     }
 
     private var sidebar: some View {
@@ -157,7 +164,7 @@ public struct WebSearchSettingsView: View {
             Spacer()
         }
         .padding(MarqueeMetric.panelPadding)
-        .frame(width: 520, alignment: .leading)
+        .frame(width: MarqueeMetric.panelWidth, alignment: .leading)
     }
 
     private var group: some View {
