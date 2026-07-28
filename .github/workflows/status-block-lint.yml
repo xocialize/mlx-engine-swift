@@ -1,0 +1,40 @@
+name: status-block-lint
+
+# Docs gate (NOT a runtime gate): keeps the README status block honest against source and git.
+# Nothing misbehaves at runtime if the prose drifts — but the status block is the first thing a
+# consumer reads, and it is the single most-copied claim about this repo.
+#
+# WHY THIS EXISTS: the block goes stale whenever ANY session lands a capability, a registry row,
+# or a tag. The numbers live in prose, the truth lives in code, and until now nothing connected
+# them — so drift was found by a human noticing, or by a consuming app failing a day later. This
+# is a missing check, not a missing memory, and the fix belongs in CI rather than in discipline.
+#
+# It asserts three things, all derived rather than remembered:
+#   1. the capability count matches `Capability`'s cases
+#   2. the contract version matches `ContractVersion.current`
+#   3. the quoted tag is the newest tag reachable from HEAD
+#
+# (3) is the one that pays for the job: a block quoting a tag that is not the newest reachable is
+# either a release whose docs were never refreshed, or a version bump that never got tagged.
+#
+# `fetch-depth: 0` is LOAD-BEARING. The default shallow checkout has no tags, so `git describe`
+# fails — and the script fails closed with that exact remedy rather than skipping the assertion,
+# because a tag check that silently passes on every CI run is worse than none.
+#
+# ubuntu + no Swift toolchain on purpose: this parses source rather than building it, so it stays
+# seconds-cheap and cannot be the reason anyone disables it.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  status-block:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check README status block against source and tags
+        run: python3 Scripts/status-block-lint.py
