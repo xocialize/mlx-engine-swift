@@ -152,16 +152,20 @@ public final class ModelStorageModel {
 
     /// Whether Apply should be enabled.
     ///
-    /// A changed path is the obvious case. The second case is the one that stranded a user:
-    /// re-picking the folder that is ALREADY applied. On relaunch `restoreBookmark()` can resolve
-    /// the bookmark — populating `appliedPath`/`draftPath`, so the panel looks correctly
-    /// configured — while `startAccessingSecurityScopedResource()` fails, leaving `accessedURL`
-    /// nil and the app with no actual access. Comparing paths alone then disables Apply exactly
-    /// when the user needs it, and re-choosing the same folder appears to do nothing. The only
-    /// escape was to apply some other folder and then apply the real one again.
+    /// A changed path is the obvious case. The second is DEFENSIVE, and the honest history is
+    /// worth recording: it was added believing it explained a consumer app that came up needing a
+    /// folder on every relaunch. It did not — that app was building two engines and showing the
+    /// one it never bootstrapped. The security scope was restoring correctly the whole time.
     ///
-    /// So: a fresh pick with no access held is always a pending change, because what changed is
-    /// the GRANT, not the path.
+    /// The guard is kept because the hole is real even though it was not what bit: on a genuine
+    /// scope failure `restoreBookmark()` still sets `selectedURL` and both path fields, so the
+    /// panel looks correctly configured while `accessedURL` is nil. Comparing paths alone would
+    /// then disable Apply exactly when a regrant is needed, and re-choosing the same folder would
+    /// silently do nothing. A fresh pick with no access held is a pending change because what
+    /// changed is the GRANT, not the path.
+    ///
+    /// Not reproduced against a real scope failure — if you are here because that case is
+    /// misbehaving, verify this branch rather than trusting it.
     public var hasPendingChange: Bool {
         guard !draftPath.isEmpty else { return false }
         if draftPath != appliedPath { return true }
@@ -249,8 +253,10 @@ public final class ModelStorageModel {
             status.location = url.path
             if isStale { storeBookmark(for: url) }
             // Resolving is not the same as being allowed in. When the scope fails to start, the
-            // panel would otherwise show a fully-populated path with no access behind it — the
-            // silent half of the failure above, so say it rather than leave it to be deduced.
+            // panel would otherwise show a fully-populated path with no access behind it. This
+            // log exists because its absence cost a long diagnosis: with nothing distinguishing
+            // "restored and allowed in" from "restored but locked out", the latter gets inferred
+            // from symptoms — and can be inferred wrongly.
             if accessedURL == nil {
                 NSLog("MLXEngineUI: resolved the app-scope bookmark for \(url.path) but could not "
                       + "start its security scope — the folder must be re-chosen to regrant access.")
