@@ -199,8 +199,11 @@ public actor MLXServeEngine {
     /// precedence rules against hosts that write `MLX.Memory.cacheLimit` themselves.
     private let gpuCache: GPUCacheConfiguration
     /// The cap init actually wrote, or nil when the policy was `.unmanaged` OR the write
-    /// failed because this process can't initialize MLX's Metal device (see init).
-    public private(set) var appliedGPUCacheLimitBytes: UInt64?
+    /// failed because this process can't initialize MLX's Metal device (see init). A `let`
+    /// so the `nonisolated` snapshot path can read it without hopping the actor — the
+    /// snapshot reports THIS value instead of re-reading MLX's cacheLimit getter
+    /// (NEUROSTREAM-ACTIONS QW2; see `GPUPoolSnapshot.current(cacheLimitBytes:)`).
+    public nonisolated let appliedGPUCacheLimitBytes: UInt64?
     /// Every unregistered `Specialty` seen at `register()` (C6 governance, warn-only). Diagnostic:
     /// a host can surface it, and the fleet sweep reads it to know what to add to
     /// `Specialty.registeredVocabulary`.
@@ -1285,8 +1288,15 @@ public actor MLXServeEngine {
     /// Process-global — one MLX pool per process, whichever engine reads it. `nil` when the
     /// process can't initialize MLX's Metal device (some CI/test runners) — a process where
     /// this is nil has no pool to observe.
+    ///
+    /// Under a managed policy, `cacheLimitBytes` is the cap **this engine applied at init**,
+    /// not re-read from MLX (a cold `Memory.cacheLimit` getter read mutates the process-global
+    /// limit — see `GPUPoolSnapshot.current(cacheLimitBytes:)`). Consequence of the documented
+    /// last-write-wins precedence: a host that wrote `Memory.cacheLimit` *after* engine
+    /// construction is not reflected here. `.unmanaged` engines (and failed applies) fall
+    /// back to the live read.
     public nonisolated func gpuPoolSnapshot() -> GPUPoolSnapshot? {
-        GPUPoolSnapshot.current()
+        GPUPoolSnapshot.current(cacheLimitBytes: appliedGPUCacheLimitBytes)
     }
 
     /// The GPU cache policy this engine was constructed with (the *configured* intent;

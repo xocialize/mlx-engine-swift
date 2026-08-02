@@ -108,13 +108,25 @@ public struct GPUPoolSnapshot: Sendable, Equatable, CustomStringConvertible {
     /// The live process-global reading, or `nil` when the process can't initialize MLX's
     /// Metal device (the allocator getters are the first MLX touch in some CI/test runner
     /// processes — `withError` scopes that failure to a nil instead of the aborting handler).
-    public static func current() -> GPUPoolSnapshot? {
+    ///
+    /// Pass `cacheLimitBytes` when the effective pool cap is already known (the engine knows
+    /// what it wrote). MLX's `Memory.cacheLimit` *getter* is not a plain read: a cold first
+    /// access performs a set-to-current-and-restore swap on the process-global limit — which
+    /// the allocator can observe mid-run — and warm reads rely on mlx-swift's internal
+    /// memoization behind a serial queue. A known value avoids depending on either. `nil`
+    /// keeps the live read (an `.unmanaged` engine has no better source).
+    ///
+    /// `peakBytes` reads `Memory.peakMemory` — safe, but harness authors beware: that
+    /// property's *setter* ignores the assigned value and resets the peak to zero
+    /// (`Memory.peakMemory = 0` is the reset idiom; the non-deprecated
+    /// `GPU.resetPeakMemory()` is equivalent).
+    public static func current(cacheLimitBytes: UInt64? = nil) -> GPUPoolSnapshot? {
         try? MLX.withError {
             GPUPoolSnapshot(
                 activeBytes: UInt64(max(0, Memory.activeMemory)),
                 cacheBytes: UInt64(max(0, Memory.cacheMemory)),
                 peakBytes: UInt64(max(0, Memory.peakMemory)),
-                cacheLimitBytes: UInt64(max(0, Memory.cacheLimit)))
+                cacheLimitBytes: cacheLimitBytes ?? UInt64(max(0, Memory.cacheLimit)))
         }
     }
 

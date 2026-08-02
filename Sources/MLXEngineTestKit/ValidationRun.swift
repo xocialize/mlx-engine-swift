@@ -47,7 +47,7 @@ public struct ValidationRun: Sendable {
 /// is uniform. `residentFloorBytes` is the **post-load** `phys_footprint` (true weights resident, before the
 /// run allocates activation); `postRunResidentBytes` is read again after the run so `retainedAfterRunBytes`
 /// surfaces any post-run retention separately instead of inflating the floor. Pass `clearCache`
-/// (`{ MLX.GPU.clearCache() }`, the kit is MLX-free) so both reads drop unreferenced pool buffers first.
+/// (`{ MLX.Memory.clearCache() }`, the kit is MLX-free) so both reads drop unreferenced pool buffers first.
 /// Use `isolate: true` for a clean per-model measure that evicts all prior residents.
 @MainActor
 public enum ValidationHarness {
@@ -61,7 +61,7 @@ public enum ValidationHarness {
         request: any CapabilityRequest,
         coResident: Bool = false,                 // additive register (multi-package) vs evict-then-register
         isolate: Bool = false,                    // evict ALL prior residents first (clean per-model measure)
-        clearCache: (@Sendable () -> Void)? = nil, // app passes `{ MLX.GPU.clearCache() }` — see note below
+        clearCache: (@Sendable () -> Void)? = nil, // app passes `{ MLX.Memory.clearCache() }` — see note below
         grantedRoots: [URL] = [],                 // security-scoped roots held for the whole load+run
         inputSummary: String? = nil,
         heartbeatLabel: String? = nil             // non-nil → periodic "alive" console line for long runs

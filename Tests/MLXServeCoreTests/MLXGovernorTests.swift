@@ -480,3 +480,35 @@ private struct BudgetCfg: PackageConfiguration, BudgetAware {
     try await e.prepare(.imageRestore)
     #expect(budgetSpy.seen == 930)
 }
+
+// MARK: - forDevice budget basis (NEUROSTREAM-ACTIONS QW3)
+
+@Test func forDeviceExplicitFractionBudgetsThatShareOfTotal() {
+    let profile = DeviceProfile(
+        chipTier: .max, macOS: SemanticVersion(major: 26, minor: 0, patch: 0),
+        backends: [.metalGPU], totalMemoryBytes: 32_000_000_000)
+    #expect(MemoryGovernor.forDevice(profile, fraction: 0.7).budgetBytes == 22_400_000_000)
+}
+
+@Test func forDeviceSyntheticProfileFallsBackToLegacyFraction() {
+    // A profile whose total doesn't match this host's RAM must not inherit the host's queried
+    // working set — fabricated-profile tests stay deterministic on every machine.
+    let synthetic = ProcessInfo.processInfo.physicalMemory &+ 1_073_741_824
+    let profile = DeviceProfile(
+        chipTier: .max, macOS: SemanticVersion(major: 26, minor: 0, patch: 0),
+        backends: [.metalGPU], totalMemoryBytes: synthetic)
+    #expect(MemoryGovernor.forDevice(profile).budgetBytes == UInt64(Double(synthetic) * 0.7))
+}
+
+@Test func forDeviceRealProfileUsesQueriedWorkingSetWhenAvailable() {
+    // On a host with Metal, the default budget is the OS's recommendedMaxWorkingSetSize;
+    // without Metal (some CI runners) it degrades to the legacy 0.7 fraction.
+    let profile = DeviceProfile.current()
+    let governor = MemoryGovernor.forDevice(profile)
+    if let recommended = HostMemory.recommendedGPUWorkingSetBytes(),
+       recommended > 0, recommended < profile.totalMemoryBytes {
+        #expect(governor.budgetBytes == recommended)
+    } else {
+        #expect(governor.budgetBytes == UInt64(Double(profile.totalMemoryBytes) * 0.7))
+    }
+}

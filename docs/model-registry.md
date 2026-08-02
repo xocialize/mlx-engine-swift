@@ -29,6 +29,12 @@ current.
 > A host that must refuse passes `licenseEnforcement: .blocking`. So these notes now answer "what is
 > this license and is it shippable?" — a product/legal question — not "will it run?".
 
+> **Quant-gate metric doctrine (2026-08-01, NEUROSTREAM-ACTIONS QW4).** Diffusion DiT/UNet quant
+> variants gate on **PSNR/LPIPS vs the fp reference at a fixed seed — FID is inadmissible** (FID
+> stays flat while PSNR collapses 27→19.5; SVDQuant Table 1). Weight-only int4 on a DiT is
+> measurable damage with no speedup (diffusion is compute-bound); diffusion defaults stay bf16 —
+> int4 is opt-in only. AR/LLM-component quant (memory-bound) is unaffected.
+
 _Seeded 2026-06-30. Val/Eff/Eng are best-effort at seed time — **backfill per package as it's revisited.**_
 
 ---
@@ -183,7 +189,7 @@ measurement point matters. NEXT: in-app validation (Val→✅) → LaMa A/B (def
 
 | Package | Provides | Role | Home | Avail |
 |---|---|---|---|---|
-| mlx-engine-swift | the engine (MLXToolKit/MLXServeCore/UI/retrieval) + **MLXEngineTestKit** (opt-in category testing harness) | engine | MLXEngine/ | ✅ (0.39.0, contract 1.30.0) |
+| mlx-engine-swift | the engine (MLXToolKit/MLXServeCore/UI/retrieval) + **MLXEngineTestKit** (opt-in category testing harness) | engine | MLXEngine/ | ✅ (0.41.0, contract 1.30.0) |
 | mlx-swift-lm | LLM/VLM building blocks | shared | video/LTX_DEV | ✅ |
 | mlx-constrained-decoding-swift | JSON grammar-constrained decoding (`responseFormat` runtime: byte-level JSON FSM + vocab classification + `LogitProcessor`) | shared | think/PROD | ✅ (v0.1.0) |
 | flux2-vae-mlx-swift | FLUX.2 VAE decoder | shared | image/PROD | ✅ |

@@ -126,6 +126,20 @@ final class GPUCachePolicyTests: XCTestCase {
         XCTAssertTrue(snap.description.contains("limit"))
     }
 
+    func testSnapshotReportsEngineAppliedLimitWithoutRereadingMLX() throws {
+        try requireMLXAllocator()
+        let engine = MLXServeEngine(
+            device: device(totalGB: 64),
+            governor: MemoryGovernor(budgetBytes: 20_000_000_000),
+            gpuCache: GPUCacheConfiguration(limit: .bytes(777_000_000)))
+        // Documented precedence: a later host write wins the process-global setting — but the
+        // engine's snapshot keeps reporting the cap IT applied, because reading the live value
+        // back would go through MLX's cacheLimit getter (cold read = set-and-restore swap).
+        Memory.cacheLimit = 999_000_000
+        XCTAssertEqual(engine.appliedGPUCacheLimitBytes, 777_000_000)
+        XCTAssertEqual(try XCTUnwrap(engine.gpuPoolSnapshot()).cacheLimitBytes, 777_000_000)
+    }
+
     func testTrimCachesDoesNotGrowThePool() throws {
         try requireMLXAllocator()
         let engine = MLXServeEngine(

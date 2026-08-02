@@ -2,6 +2,9 @@ import Foundation
 #if canImport(Darwin)
 import Darwin
 #endif
+#if canImport(Metal)
+import Metal
+#endif
 
 /// Best-effort host memory readings for R-MEM-1's real-pressure trigger (see docs/architecture.md).
 ///
@@ -25,6 +28,21 @@ public enum HostMemory {
         }
         guard kr == KERN_SUCCESS else { return nil }
         return UInt64(info.phys_footprint)
+        #else
+        return nil
+        #endif
+    }
+
+    /// Metal's `recommendedMaxWorkingSetSize` for the default device, or `nil` when no Metal
+    /// device is available (some CI/test-runner processes). The OS's own answer to "how much
+    /// unified memory may the GPU comfortably use" — macOS 26 scales it with capacity
+    /// (~74% @16 GB → ~84% @128 GB) and it moves across OS releases, which is why it is
+    /// queried, never hardcoded (NEUROSTREAM-TEARDOWN §3.2). A *soft* planning number, not an
+    /// allocation cap: Metal can allocate beyond it, degrading before failing.
+    public static func recommendedGPUWorkingSetBytes() -> UInt64? {
+        #if canImport(Metal)
+        guard let device = MTLCreateSystemDefaultDevice() else { return nil }
+        return device.recommendedMaxWorkingSetSize
         #else
         return nil
         #endif
