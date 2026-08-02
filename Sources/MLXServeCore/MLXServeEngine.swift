@@ -198,6 +198,23 @@ public actor MLXServeEngine {
     /// GPU buffer-pool policy (N5). Applied once here; see `GPUCacheConfiguration` for the
     /// precedence rules against hosts that write `MLX.Memory.cacheLimit` themselves.
     private let gpuCache: GPUCacheConfiguration
+    /// Wired-limit coordination policy (HV1). See `WiredLimitConfiguration`.
+    private let wiredLimit: WiredLimitConfiguration
+    /// The policy group the engine's tickets coordinate under, or nil when coordination is off
+    /// (`.disabled`, or a process that can't initialize MLX's Metal device — same best-effort
+    /// degradation as the cache-limit write).
+    private let wiredPolicy: EngineWiredLimitPolicy?
+    /// The manager the tickets register with. `.shared` in production (the wired limit is
+    /// process-global; multiple managers are undefined per mlx-swift); injectable so tests
+    /// observe an isolated manager's DEBUG event stream instead of racing the process global.
+    private var wiredManager: WiredMemoryManager = .shared
+    /// Package id → its live `.reservation` ticket (started when the resident loads, ended at
+    /// eviction). Mirrors `residents` exactly while coordination is on.
+    private var wiredReservations: [PackageID: WiredMemoryTicket] = [:]
+    /// The wired ceiling the engine resolved at init, or nil when coordination is off —
+    /// observability (the wired sibling of `appliedGPUCacheLimitBytes`). While a run is in
+    /// flight the process-global wired limit rises to at most this value; idle it is 0.
+    public nonisolated let wiredLimitCeilingBytes: UInt64?
     /// The cap init actually wrote, or nil when the policy was `.unmanaged` OR the write
     /// failed because this process can't initialize MLX's Metal device (see init). A `let`
     /// so the `nonisolated` snapshot path can read it without hopping the actor — the
@@ -226,6 +243,7 @@ public actor MLXServeEngine {
                 device: DeviceProfile = .current(),
                 governor: MemoryGovernor? = nil,
                 gpuCache: GPUCacheConfiguration = GPUCacheConfiguration(),
+                wiredLimit: WiredLimitConfiguration = WiredLimitConfiguration(),
                 preemption: PreemptionPolicy = PreemptionPolicy(),
                 physFootprint: @Sendable @escaping () -> UInt64? = HostMemory.physFootprint,
                 hubMetadata: any HubMetadataProviding = HubMetadataClient(),
@@ -236,6 +254,7 @@ public actor MLXServeEngine {
         self.deviceProfile = device
         self.governor = governor ?? .forDevice(device)
         self.gpuCache = gpuCache
+        self.wiredLimit = wiredLimit
         self.preemption = preemption
         self.physFootprint = physFootprint
         self.hubMetadata = hubMetadata
@@ -259,6 +278,46 @@ public actor MLXServeEngine {
         } else {
             self.appliedGPUCacheLimitBytes = nil
         }
+        // Resolve wired-limit coordination (HV1). BEST-EFFORT like the cache write above: a
+        // process that can't initialize MLX's Metal device must never mint tickets, because a
+        // ticket's limit apply is an allocator touch (`mlx_set_wired_limit`) outside any
+        // `withError` scope the engine could install here — coordination degrades to off, which
+        // is exact (no GPU work happens in such a process anyway). The recommended-working-set
+        // arm is consulted only for a profile describing THIS host, so fabricated-profile tests
+        // resolve pure-arithmetic ceilings (the forDevice determinism rule, QW3).
+        if case .disabled = wiredLimit.coordination {
+            self.wiredPolicy = nil
+            self.wiredLimitCeilingBytes = nil
+        } else {
+            let metalHealthy = (try? MLX.withError { _ = Memory.activeMemory }) != nil
+            let isHostProfile = device.totalMemoryBytes == ProcessInfo.processInfo.physicalMemory
+            let recommended = (metalHealthy && isHostProfile)
+                ? HostMemory.recommendedGPUWorkingSetBytes() : nil
+            if metalHealthy,
+               let ceiling = wiredLimit.resolvedCeilingBytes(
+                   totalMemoryBytes: device.totalMemoryBytes, recommendedBytes: recommended),
+               ceiling > 0 {
+                self.wiredPolicy = EngineWiredLimitPolicy(
+                    ceilingBytes: ceiling > UInt64(Int.max) ? Int.max : Int(ceiling),
+                    clampToLiveRecommended: isHostProfile)
+                self.wiredLimitCeilingBytes = ceiling
+            } else {
+                self.wiredPolicy = nil
+                self.wiredLimitCeilingBytes = nil
+            }
+        }
+    }
+
+    /// Test hook: point the engine's tickets at an isolated `WiredMemoryManager` (must be set
+    /// before any `prepare`/`run`). Production always uses `.shared` — the wired limit is
+    /// process-global and multiple managers are undefined behavior per mlx-swift.
+    func _useWiredManager(_ manager: WiredMemoryManager) {
+        wiredManager = manager
+    }
+
+    /// Test observability: the persistent bytes each live `.reservation` ticket was minted with.
+    func wiredReservationSizes() -> [PackageID: Int] {
+        wiredReservations.mapValues(\.size)
     }
 
     /// Point the engine's model store at a download root (the app's chosen, security-scoped models
@@ -618,9 +677,16 @@ public actor MLXServeEngine {
             }
             Task { await self.noteRunProgress(token: token, report: report) }
         }
+        // The `.active` wired ticket (HV1) scopes to exactly this attempt's run task: the wired
+        // limit rises to Σ reservations + this transient while the package computes, and the
+        // pairing survives all three exits (return / throw / cancel — including governor
+        // preemption, whose CancellationError takes the catch path inside the wrapper).
+        let wiredTicket = makeActiveWiredTicket(transientBytes: residentTransient[id] ?? 0)
         let task = Task {
-            try await RunProgress.$sink.withValue(sink) {
-                try await instance.run(request)
+            try await withActiveWiredTicket(wiredTicket) {
+                try await RunProgress.$sink.withValue(sink) {
+                    try await instance.run(request)
+                }
             }
         }
         activeRuns[token] = ActiveRun(id: id, task: task,
@@ -739,10 +805,15 @@ public actor MLXServeEngine {
                 }
                 Task { await self.noteRunProgress(token: token, report: report) }
             }
+            // Same `.active` wired-ticket scope as `runAttempt` (HV1) — a stream is one
+            // serialized inference with a chunked delivery surface.
+            let wiredTicket = makeActiveWiredTicket(transientBytes: residentTransient[id] ?? 0)
             let task = Task {
-                try await RunProgress.$sink.withValue(sink) {
-                    try await streamer.runStream(request) { chunk in
-                        continuation.yield(chunk)
+                try await withActiveWiredTicket(wiredTicket) {
+                    try await RunProgress.$sink.withValue(sink) {
+                        try await streamer.runStream(request) { chunk in
+                            continuation.yield(chunk)
+                        }
                     }
                 }
             }
@@ -877,6 +948,41 @@ public actor MLXServeEngine {
     /// Evict a specific package's resident instance regardless of capability routing.
     public func evict(package id: PackageID) async {
         await evictResident(id)
+    }
+
+    // MARK: - Wired-limit tickets (HV1)
+
+    /// Start the `.reservation` ticket for a freshly loaded resident: its persistent weights now
+    /// participate in wired-limit computation (raised only while some run is active — an idle
+    /// engine's residents stay pageable). Ticket calls are wrapped in the log-and-continue MLX
+    /// error handler: an apply above the live working set is rejected by the allocator
+    /// (`set_wired_limit` throws) and must degrade to a logged line, never kill the process.
+    private func startWiredReservation(_ id: PackageID, persistent: UInt64) async {
+        guard let wiredPolicy else { return }
+        let ticket = WiredMemoryTicket(
+            size: persistent > UInt64(Int.max) ? Int.max : Int(persistent),
+            policy: wiredPolicy, manager: wiredManager, kind: .reservation)
+        wiredReservations[id] = ticket
+        _ = await withErrorHandler(noteWiredApplyFailure) { await ticket.start() }
+    }
+
+    /// End an evicted resident's `.reservation` ticket (no-op when coordination is off or the
+    /// resident predates a `_useWiredManager` swap — the dict is the source of truth).
+    private func endWiredReservation(_ id: PackageID) async {
+        guard let ticket = wiredReservations.removeValue(forKey: id) else { return }
+        _ = await withErrorHandler(noteWiredApplyFailure) { await ticket.end() }
+    }
+
+    /// Mint the `.active` ticket for one run attempt: the in-flight transient (the same resolved
+    /// bytes the serialized-inference reserve accounts). While it lives, the wired limit rises to
+    /// Σ reservations + this transient, clamped to the ceiling; `withActiveWiredTicket` pairs
+    /// start/end across return, throw, and cancel. A zero transient still elevates the
+    /// reservations — weights get wired during runs even when no activation peak is declared.
+    private func makeActiveWiredTicket(transientBytes: UInt64) -> WiredMemoryTicket? {
+        guard let wiredPolicy else { return nil }
+        return WiredMemoryTicket(
+            size: transientBytes > UInt64(Int.max) ? Int.max : Int(transientBytes),
+            policy: wiredPolicy, manager: wiredManager, kind: .active)
     }
 
     // MARK: - Memory accounting (serialized-inference reserve)
@@ -1037,6 +1143,7 @@ public actor MLXServeEngine {
             residentFootprint[id] = persistent
             residentTransient[id] = transient
             governor.charge(persistent)
+            await startWiredReservation(id, persistent: persistent)
             touch(id)
             await updatePhase(.ready, caps: caps, package: pkg)
             return instance
@@ -1257,6 +1364,7 @@ public actor MLXServeEngine {
         if let bytes = residentFootprint.removeValue(forKey: id) {
             governor.release(bytes)
         }
+        await endWiredReservation(id)
         residentTransient.removeValue(forKey: id)
         lastUsed.removeValue(forKey: id)
         // Belt-and-braces on top of the package's own unload()-time clearCache: with the
@@ -1303,4 +1411,9 @@ public actor MLXServeEngine {
     /// `gpuPoolSnapshot().cacheLimitBytes` is the *effective* process-global value, which a
     /// later host write may have changed — last-write-wins).
     public nonisolated var gpuCachePolicy: GPUCacheConfiguration { gpuCache }
+
+    /// The wired-limit coordination this engine was constructed with (the *configured* intent;
+    /// `wiredLimitCeilingBytes` is what it resolved to on this device in this process — nil
+    /// when `.disabled` or when the process can't initialize MLX's Metal device).
+    public nonisolated var wiredLimitConfiguration: WiredLimitConfiguration { wiredLimit }
 }

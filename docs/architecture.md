@@ -49,6 +49,26 @@ reclaim, not stack — the engine, not the caller, owns this.
   `minimum_inference_memory`, made exact for serialized execution). Undeclared transient defaults to 0
   (the real-pressure pass still catches overflow). `MemorySnapshot.transientReserveBytes` exposes the
   reserve; admission rejects a model whose own `persistent + transient` exceeds the whole budget.
+- **Wire the accounted working set during runs — and only during runs (HV1, v0.42.0).** The
+  engine maps its accounting onto mlx-swift's process-global `WiredMemoryManager`: each resident's
+  persistent weights hold a **`.reservation`** ticket (participates in limit computation, never
+  elevates the limit alone) and the one in-flight transient around `run()`/`stream()` holds an
+  **`.active`** ticket — so while a run is live, MLX's wired limit rises to `Σ persistent + that
+  run's transient` (the same split the serialized-inference reserve accounts) and Metal keeps
+  weights + activations resident exactly when a page-out would stall a live command buffer; an
+  idle engine restores the wired=0 default and residents stay fully pageable. Every computed limit
+  clamps to `min(recommendedMaxWorkingSetSize, total − clamp(total/8, 6 GiB…16 GiB))` — the
+  allocator **rejects** an apply above the queried working set (`set_wired_limit` throws; the
+  engine scopes a log-and-continue MLX error handler around every ticket call so a rejection
+  degrades instead of killing the process), and wiring most of RAM is a genuine kernel panic, not
+  an OOM kill (NEUROSTREAM-TEARDOWN §3.2: IOGPUMemory.cpp:550 at 83.5% wired,
+  `memoryPressure=false`). Admission stays the governor's alone — the engine's
+  `WiredMemoryPolicy` never gates `canAdmit`, because a second admission authority could park
+  `prepare()` behind capacity the governor already cleared. `WiredLimitConfiguration`
+  (`.automatic` default / explicit `.ceiling(bytes:)` / `.disabled`) selects the policy;
+  `wiredLimitCeilingBytes` exposes the resolved ceiling. Interaction receipts (pool-cap
+  independence, shrink-hysteresis timing, over-ceiling rejection survival, legacy policy-group
+  coexistence): `mlxengine-todo/probes/hv1_wired_tickets.out`.
 - **Trigger on real cost, not just declared bytes.** Admission headroom MUST reflect *actual*
   resident memory, not solely each package's declared `QuantFootprint.residentBytes`. Declared bytes
   are a **floor**, not a measured cap: a model whose true working set (activations + scratch) exceeds

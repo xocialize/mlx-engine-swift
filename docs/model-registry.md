@@ -189,7 +189,7 @@ measurement point matters. NEXT: in-app validation (Val→✅) → LaMa A/B (def
 
 | Package | Provides | Role | Home | Avail |
 |---|---|---|---|---|
-| mlx-engine-swift | the engine (MLXToolKit/MLXServeCore/UI/retrieval) + **MLXEngineTestKit** (opt-in category testing harness) | engine | MLXEngine/ | ✅ (0.41.0, contract 1.30.0) |
+| mlx-engine-swift | the engine (MLXToolKit/MLXServeCore/UI/retrieval) + **MLXEngineTestKit** (opt-in category testing harness) | engine | MLXEngine/ | ✅ (0.42.0, contract 1.30.0) | <!-- 0.42.0 2026-08-01 (NEUROSTREAM-ACTIONS HV1): WiredMemoryManager ticket adoption — resident persistent weights = .reservation, the one in-flight transient = .active, so the wired limit tracks Σ persistent + running transient during runs and restores wired=0 idle. Ceiling min(recommendedMaxWorkingSetSize, total − clamp(total/8, 6–16 GiB)); ticket calls scoped by a log-and-continue MLX error handler (an over-working-set apply THROWS in the allocator). WiredLimitConfiguration (.automatic default/.ceiling/.disabled) + wiredLimitCeilingBytes; MLXServeCore-only, contract unchanged. Registry rows pick it up on next touch — no fleet sweep. Probe: mlxengine-todo/probes/hv1_wired_tickets.out. --> |
 | mlx-swift-lm | LLM/VLM building blocks | shared | video/LTX_DEV | ✅ |
 | mlx-constrained-decoding-swift | JSON grammar-constrained decoding (`responseFormat` runtime: byte-level JSON FSM + vocab classification + `LogitProcessor`) | shared | think/PROD | ✅ (v0.1.0) |
 | flux2-vae-mlx-swift | FLUX.2 VAE decoder | shared | image/PROD | ✅ |
