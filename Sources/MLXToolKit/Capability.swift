@@ -43,6 +43,13 @@ public enum Capability: String, Codable, Sendable, CaseIterable, Hashable {
     /// only one. Contract 1.5.0; introduced by BiRefNet. (Distinct from `imageEdit`, which returns a
     /// full edited `Image`; matting returns the alpha, not a composited cutout.)
     case matting
+    /// **Defect detection** — an image → a mask of physical damage on it (scratches, tears, dust,
+    /// cracks). The DETECTION half of automatic damage repair: its canonical consumer is
+    /// `imageInpaint` (detect → mask → fill — no hand-painted brush mask). Distinct from `matting`
+    /// (what is the foreground?) and `promptSegment` (segment the indicated object): this asks
+    /// *what should not be here*. Returns a `Matte` — binary (inpaint-ready) or soft (raw
+    /// probability) per the request. Contract 1.31.0; introduced by the BOPBTL scratch detector.
+    case defectDetect
     /// **Character animation / motion transfer** — a reference character `Image` + a driving
     /// `Video` → a video of that character performing the driving performance. Two semantics ride
     /// the `mode` tag: `.animation` (the reference identity performs the driving motion) and
@@ -185,6 +192,7 @@ extension Capability {
         case .videoEdit: return .video
         case .talkingHead: return .video
         case .matting: return .matte
+        case .defectDetect: return .matte
         case .characterAnimation: return .video
         case .imageColorize: return .image
         case .imageInpaint: return .image

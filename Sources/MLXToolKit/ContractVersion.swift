@@ -457,5 +457,13 @@ public enum ContractVersion {
     //     a dial that did nothing. A UI greys the control; a planner routes elsewhere.
     //   • `ImageRestoreContract.descriptor(supportsStrength:)` gates whether the parameter appears
     //     on a given package's surface, so a planner is never offered a knob that is ignored.
-    public static let current = SemanticVersion(major: 1, minor: 30, patch: 0)
+    // 1.31.0 (2026-08-01, additive): `defectDetect` — introduced by the BOPBTL scratch detector.
+    //   • New capability + `DefectDetectRequest`/`Response`/`Contract`. Image → damage `Matte`
+    //     (binary thresholded, inpaint-ready, or softAlpha raw probability), `appliedThreshold`
+    //     reporting what made a binary mask.
+    //   • Why a new capability rather than riding `matting`/`promptSegment`: the question differs
+    //     ("what should not be here" vs "what is the foreground" / "segment what I indicated"),
+    //     and the canonical consumer differs (`imageInpaint`). A planner must be able to route
+    //     damage repair without pattern-matching on package names.
+    public static let current = SemanticVersion(major: 1, minor: 31, patch: 0)
 }
