@@ -1,0 +1,42 @@
+#!/bin/sh
+# Opt-in pre-push guard: run the docs gates before anything reaches origin.
+#
+# WHY THIS EXISTS. The CI workflows already assert these, and on 2026-08-02 the status-block lint
+# did exactly its job — it went red on the first commit that shipped a release without refreshing
+# the README block. It then stayed red for 8 pushes across 2.5 days and three tagged releases
+# (v0.41.0, v0.42.0, v0.43.0), because work lands here by DIRECT PUSH to main: the pull_request
+# trigger never fires, and the push trigger reports after the fact with nothing blocking. A gate
+# nobody is standing in front of is a notification, not a gate.
+#
+# This closes that specific hole at the only point that is actually in the path — the push itself —
+# without server-side branch protection, which would block the direct-to-main workflow this repo
+# deliberately uses.
+#
+# INSTALL (opt-in, per clone):
+#     git config core.hooksPath Scripts/git-hooks
+# BYPASS (when you mean it — e.g. pushing the very commit that fixes the block):
+#     git push --no-verify
+#
+# Fails closed on a missing interpreter or script, for the same reason the lint does: a guard that
+# silently passes when it cannot run is worse than no guard.
+
+set -e
+
+repo_root=$(git rev-parse --show-toplevel)
+
+if ! command -v python3 >/dev/null 2>&1; then
+    echo "pre-push: python3 not found — cannot run the docs gates." >&2
+    echo "          Install python3, or bypass deliberately with: git push --no-verify" >&2
+    exit 1
+fi
+
+for gate in status-block-lint.py provenance-lint.py; do
+    script="$repo_root/Scripts/$gate"
+    [ -f "$script" ] || continue
+    if ! python3 "$script"; then
+        echo "" >&2
+        echo "pre-push: $gate failed — push aborted." >&2
+        echo "          Fix it, or bypass deliberately with: git push --no-verify" >&2
+        exit 1
+    fi
+done
