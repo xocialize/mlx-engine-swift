@@ -109,6 +109,19 @@ public enum Capability: String, Codable, Sendable, CaseIterable, Hashable {
     /// text → vector encoding, no generation; from `MLXRetrievalKit` — that is web search,
     /// not vector production.)
     case embed
+    /// **Late-interaction (multi-vector) embedding** — a batch of texts → one **per-token vector
+    /// matrix** per text, for ColBERT-style retrieval scored by MaxSim (sum over query tokens of
+    /// the max dot against document tokens). Query-side texts are encoded with the model's
+    /// trained fixed-length expansion; document-side texts are variable-length with model-side
+    /// token filtering (e.g. a punctuation skiplist). Matrices ride the response directly
+    /// (`MultiVectorEmbedResponse.multiVectors`, the `embed` non-Artifact precedent) with
+    /// `modelID` + `dimension` provenance — an index must never mix models or dimensions.
+    /// Contract 1.32.0; introduced by LFM2.5-ColBERT-350M. (Distinct from `embed` — that is one
+    /// dense vector per text and the two are not interchangeable: a multi-vector matrix cannot
+    /// ride `EmbedResponse.vectors` without breaking its one-vector-per-text order contract, and
+    /// pooling a ColBERT head into a single vector emits a wrong-space vector. The scoring
+    /// helper lives on `MultiVectorEmbedContract.maxSim` so every consumer scores identically.)
+    case multiVectorEmbed
     /// **Speech-to-text** — a speech `Audio` clip (+ optional BCP-47 `language` hint, nil = auto-detect)
     /// → the transcript with native punctuation/capitalization, plus timestamped segments and the
     /// detected language. Utterance-shaped and one-shot: the caller sends a complete utterance; live
@@ -200,6 +213,7 @@ extension Capability {
         case .trackObject: return .matteSequence
         case .imageTo3D: return .mesh
         case .embed: return .structuredText
+        case .multiVectorEmbed: return .structuredText
         case .stt: return .text
         case .meshRig: return .mesh
         case .imageRelight: return .image

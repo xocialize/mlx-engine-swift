@@ -465,5 +465,20 @@ public enum ContractVersion {
     //     ("what should not be here" vs "what is the foreground" / "segment what I indicated"),
     //     and the canonical consumer differs (`imageInpaint`). A planner must be able to route
     //     damage repair without pattern-matching on package names.
-    public static let current = SemanticVersion(major: 1, minor: 31, patch: 0)
+    // 1.32.0 (2026-08-05, additive): `multiVectorEmbed` — introduced by LFM2.5-ColBERT-350M.
+    //   • New capability + `MultiVectorEmbedRequest`/`Response`/`Contract`. Texts → one
+    //     PER-TOKEN vector matrix per text (ColBERT late interaction), scored by MaxSim —
+    //     the scoring helper ships ON the contract (`MultiVectorEmbedContract.maxSim`) so
+    //     every consumer scores identically and offline tests can pin it without a model.
+    //   • Why a new capability rather than riding `embed`: the OUTPUT SHAPE differs (a matrix
+    //     per text cannot ride `EmbedResponse.vectors` without breaking its one-vector-per-text
+    //     order contract), the comparison function differs (MaxSim, not cosine), and the sides
+    //     differ structurally (query expansion vs document token filtering) rather than by
+    //     prefix. Pooling a ColBERT head into one dense vector emits a wrong-space vector —
+    //     the exact failure LFMEmbeddingPackage.WrongModelError guards against — so a planner
+    //     must be able to route late-interaction encode without pattern-matching package names.
+    //   • Purely additive: one enum case, one contract file. Existing exhaustive switches over
+    //     `Capability` in package code are `@unknown default`-guarded (C12), and no existing
+    //     request/response type changed.
+    public static let current = SemanticVersion(major: 1, minor: 32, patch: 0)
 }
