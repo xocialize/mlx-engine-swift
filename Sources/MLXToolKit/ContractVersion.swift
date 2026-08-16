@@ -480,5 +480,40 @@ public enum ContractVersion {
     //   • Purely additive: one enum case, one contract file. Existing exhaustive switches over
     //     `Capability` in package code are `@unknown default`-guarded (C12), and no existing
     //     request/response type changed.
-    public static let current = SemanticVersion(major: 1, minor: 32, patch: 0)
+    // 1.33.0 (2026-08-16, additive): CANONICAL LLM SEED — `LLMParameters.seed: UInt64?`.
+    //   • The gap (audited by LTX, bridge AB-R-0079 / ask AB-A-0009): `.llm` was the ONLY
+    //     generative capability request in this contract with no seed. Six siblings carry
+    //     `public let seed: UInt64?` — TextToVideo, TextToImage, ImageEdit, VideoEdit,
+    //     SoundEffect, CharacterAnimation — so `.llm` was the omission, not the pattern.
+    //   • Why it binds beyond "nice to have": prompt ENHANCEMENT is an `.llm` call that rewrites
+    //     the prompt a generation then consumes. With an unpinnable enhancer, fixing the
+    //     generation seed does NOT make a run reproducible — the video changes because its prompt
+    //     changed. MEASURED (AB-A-0009 reply, 2026-08-16): the same enhancement prompt run twice
+    //     with no seed produced two different strings, diverging at char 12 (636 vs 642 chars).
+    //     No consumer could honour "same seed ⇒ same output" while enhancement was in the path.
+    //   • Canonical rather than another `metaData` dialect. The escape hatch already worked —
+    //     mlx-lfm-llm-swift reads `metaData["seed"]` (C5 sampling extras, alongside
+    //     topK/minP/repetitionPenalty) — but a dialect means a consumer must know WHICH package
+    //     answered in order to pin it, and it did not rescue callers that build the request
+    //     through a shared kit (`PromptEnhanceKit` sends no `metaData` at all). Recognised-need +
+    //     every-package-would-want-it is exactly the metaData→schema promotion rule.
+    //   • Additive and inert by default: `seed` is the LAST init parameter and defaults to `nil`
+    //     ("seed from system entropy" — today's behaviour), so every existing construction site
+    //     compiles untouched and no existing caller's output changes. Optional property ⇒ the
+    //     synthesized `Codable` decodes pre-1.33.0 JSON that has no `seed` key. Inert at
+    //     `temperature == 0`, where decoding is already greedy.
+    //   • Package obligation: a package that SAMPLES must honour it (mlx-swift-lm consumers:
+    //     `GenerateParameters.seed`, available since 3.31.x — a one-line forward, no dependency
+    //     work). One that decodes greedily may ignore it, since its output does not vary.
+    //   • Gate shape — BOTH halves, or the gate is worthless: same (prompt, seed) across two
+    //     separate model loads ⇒ byte-identical, AND a different seed ⇒ a different string. A
+    //     reproducibility-only check passes green on a package that ignores the seed entirely,
+    //     and on anyone quietly setting temperature to 0. A third case (seed `nil` drifts) is
+    //     worth REPORTING but must not gate: a sampler is permitted to coincide, and failing a
+    //     build on an unlucky-but-legal repeat makes the gate flaky. Reference implementation:
+    //     `RunLTX2 --enhancer-seed-gate` (AB-R-0075); per-package: `RunGemmaLLM --seed-gate`.
+    //   • First adopters: mlx-gemma-llm-swift + mlx-qwen-llm-swift (forward to
+    //     `GenerateParameters.seed`); mlx-lfm-llm-swift reads the canonical field and KEEPS
+    //     `metaData["seed"]` working as an override for its existing callers.
+    public static let current = SemanticVersion(major: 1, minor: 33, patch: 0)
 }

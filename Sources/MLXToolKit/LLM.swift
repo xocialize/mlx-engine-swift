@@ -4,7 +4,8 @@
 /// request as a `Mode` tag (C4), they are not separate tools. Sampling knobs that every LLM
 /// understands (temperature, top-p, max tokens, stop) are **canonical** and live on the
 /// request; anything genuinely package-specific (a bespoke sampler trick, a repetition-penalty
-/// dialect) rides `metaData` (C5).
+/// dialect) rides `metaData` (C5). `seed` is canonical for the same reason (1.33.0): pinning a
+/// run must not require knowing which package answered.
 
 /// A chat turn. The canonical LLM input is a message list; a bare prompt is
 /// `[ChatMessage(role: .user, content: ...)]`.
@@ -25,13 +26,25 @@ public struct LLMParameters: Sendable, Codable, Equatable {
     public var topP: Double?
     public var maxTokens: Int?
     public var stop: [String]
+    /// RNG seed for reproducibility (contract 1.33.0). `nil` (the default) = seed from system
+    /// entropy, i.e. today's behaviour for every existing caller. Inert at `temperature == 0`,
+    /// where decoding is already greedy.
+    ///
+    /// Lives here, not in `metaData`: every sampling LLM has this concept — it is the same field
+    /// the six artifact-generating capabilities already carry (`T2VRequest.seed` et al.), and a
+    /// per-package `metaData["seed"]` dialect forces a consumer to know *which* package it is
+    /// talking to in order to pin a run (the C5 failure). A package that samples MUST honour it;
+    /// one that decodes greedily may ignore it, since its output does not vary.
+    public var seed: UInt64?
 
     public init(temperature: Double? = nil, topP: Double? = nil,
-                maxTokens: Int? = nil, stop: [String] = []) {
+                maxTokens: Int? = nil, stop: [String] = [],
+                seed: UInt64? = nil) {
         self.temperature = temperature
         self.topP = topP
         self.maxTokens = maxTokens
         self.stop = stop
+        self.seed = seed
     }
 }
 
@@ -185,7 +198,7 @@ public enum LLMContract {
             ParameterSchema(name: "messages", kind: .array, required: true,
                             summary: "Chat messages (role + content). A bare prompt is one user turn."),
             ParameterSchema(name: "parameters", kind: .object, required: false,
-                            summary: "Canonical sampling: temperature, topP, maxTokens, stop."),
+                            summary: "Canonical sampling: temperature, topP, maxTokens, stop, seed."),
         ]
         if supportsStructuredOutput {
             parameters.append(

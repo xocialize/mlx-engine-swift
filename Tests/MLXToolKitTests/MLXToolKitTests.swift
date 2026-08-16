@@ -338,6 +338,43 @@ final class MLXToolKitTests: XCTestCase {
         XCTAssertEqual(decoded, usage)
     }
 
+    // 1.33.0 additive: LLMParameters.seed — the canonical RNG pin (AB-R-0079 / AB-A-0009).
+    func testLLMParametersSeedIsAdditiveAndCanonical() throws {
+        // Back-compatibility is the point of the defaulted LAST parameter: every pre-1.33.0
+        // construction site keeps compiling, and reports nil — "seed from system entropy",
+        // i.e. exactly the behaviour it had before this field existed.
+        let legacy = LLMParameters(temperature: 0.7, maxTokens: 512)
+        XCTAssertNil(legacy.seed)
+        XCTAssertNil(LLMRequest(prompt: "hi").parameters.seed)
+
+        // Pinned: the value rides the canonical request, no metaData dialect required.
+        let pinned = LLMParameters(temperature: 0.7, maxTokens: 512, seed: 10)
+        XCTAssertEqual(pinned.seed, 10)
+        let req = LLMRequest(prompt: "enhance this", parameters: pinned, mode: "promptEnhance")
+        XCTAssertEqual(req.parameters.seed, 10)
+        XCTAssertTrue(req.metaData.isEmpty)
+
+        // A different seed is a different request — the discrimination half of the gate has
+        // something to hold onto at the type level too.
+        XCTAssertNotEqual(pinned, LLMParameters(temperature: 0.7, maxTokens: 512, seed: 4242))
+
+        // Codable both ways, and a pre-1.33.0 envelope (no `seed` key) still decodes.
+        let decoded = try JSONDecoder().decode(
+            LLMParameters.self, from: JSONEncoder().encode(pinned))
+        XCTAssertEqual(decoded, pinned)
+        let old = Data(#"{"temperature":0.7,"maxTokens":512,"stop":[]}"#.utf8)
+        XCTAssertNil(try JSONDecoder().decode(LLMParameters.self, from: old).seed)
+
+        // C11: the descriptor advertises the knob, so a planner can find it without reading
+        // package source. `.llm` was the ONLY generative capability without a seed — the six
+        // artifact capabilities already carried one, which is why this is a promotion, not a
+        // new idea.
+        let d = LLMContract.descriptor(name: "llm", summary: "text")
+        let sampling = try XCTUnwrap(d.parameters.first { $0.name == "parameters" })
+        XCTAssertTrue(try XCTUnwrap(sampling.summary).contains("seed"))
+        XCTAssertNotNil(T2VRequest(prompt: "x", seed: 10).seed)
+    }
+
     func testEmbedContractAndIO() {
         // Defaults: document-side, no instruction, native width.
         let doc = EmbedRequest(texts: ["stored summary"])
