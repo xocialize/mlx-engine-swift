@@ -4,9 +4,10 @@
 >
 > MLXEngine develops in the open, but **pull requests are not being accepted at this stage and
 > will be closed.** The conformance gate below is the intended contributor agreement, documented
-> now so it's visible. The runtime itself is shipped and consumable (v0.36.0, contract 1.27.0,
-> 41 published packages) — what is still moving is the *contract*, which takes additive minor
-> bumps as capabilities and conformance levels land (C14 and its INF gate arrived in 1.27.0).
+> now so it's visible. The runtime itself is shipped and consumable (v0.45.1, contract 1.33.0,
+> 47 published packages) — what is still moving is the *contract*, which takes additive minor
+> bumps as capabilities and conformance levels land (C14 and its INF gate, for instance, landed
+> back in 1.27.0).
 > This notice will be lifted once the contract settles.
 >
 > *(Stub. TODO: expand each section before opening the repo to contributors.)*
