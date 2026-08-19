@@ -3,7 +3,7 @@ import XCTest
 import MLXToolKit
 
 final class MLXServeConformanceTests: XCTestCase {
-    // MLXServeConformance's C0–C13 harness is still scaffolding; this asserts the target builds
+    // MLXServeConformance's C0–C14 harness is still scaffolding; this asserts the target builds
     // and tracks the current contract. The MAT gate below is the first executable check.
     func testHarnessTracksCurrentContract() {
         XCTAssertEqual(MLXServeConformance.contractVersion, ContractVersion.current)

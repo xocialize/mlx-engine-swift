@@ -1,6 +1,6 @@
 import MLXToolKit
 
-// MLXServeConformance — the C0–C13 self-check harness contributors run before a PR.
+// MLXServeConformance — the C0–C14 self-check harness contributors run before a PR.
 // SCAFFOLDING PLACEHOLDER for this phase.
 //
 // Will turn the checklist into something executable: given a package's tool types and
