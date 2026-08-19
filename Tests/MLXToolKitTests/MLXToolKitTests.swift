@@ -366,9 +366,11 @@ final class MLXToolKitTests: XCTestCase {
         XCTAssertNil(try JSONDecoder().decode(LLMParameters.self, from: old).seed)
 
         // C11: the descriptor advertises the knob, so a planner can find it without reading
-        // package source. `.llm` was the ONLY generative capability without a seed — the six
-        // artifact capabilities already carried one, which is why this is a promotion, not a
-        // new idea.
+        // package source. `.llm` was the only capability with a canonical sampling block and no
+        // seed in it — the six artifact capabilities already carried one, which is why this is a
+        // promotion, not a new idea. NOT "every generative capability is now pinnable": imageTo3D,
+        // imageInpaint, imageColorize, tts and talkingHead all sample and still have no canonical
+        // seed (see the 1.33.0 SCOPE note in ContractVersion).
         let d = LLMContract.descriptor(name: "llm", summary: "text")
         let sampling = try XCTUnwrap(d.parameters.first { $0.name == "parameters" })
         XCTAssertTrue(try XCTUnwrap(sampling.summary).contains("seed"))

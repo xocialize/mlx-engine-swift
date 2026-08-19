@@ -481,10 +481,18 @@ public enum ContractVersion {
     //     `Capability` in package code are `@unknown default`-guarded (C12), and no existing
     //     request/response type changed.
     // 1.33.0 (2026-08-16, additive): CANONICAL LLM SEED — `LLMParameters.seed: UInt64?`.
-    //   • The gap (audited by LTX, bridge AB-R-0079 / ask AB-A-0009): `.llm` was the ONLY
-    //     generative capability request in this contract with no seed. Six siblings carry
-    //     `public let seed: UInt64?` — TextToVideo, TextToImage, ImageEdit, VideoEdit,
-    //     SoundEffect, CharacterAnimation — so `.llm` was the omission, not the pattern.
+    //   • The gap (audited by LTX, bridge AB-R-0079 / ask AB-A-0009): `.llm` was the only
+    //     capability with a canonical SAMPLING block (`LLMParameters`) that had no seed in it.
+    //     Six siblings carry `public let seed: UInt64?` — TextToVideo, TextToImage, ImageEdit,
+    //     VideoEdit, SoundEffect, CharacterAnimation — so within the set of capabilities that
+    //     already expose their generation envelope, `.llm` was the omission, not the pattern.
+    //   • SCOPE — this does NOT make every generative capability pinnable, and no consumer should
+    //     read it that way. Still seedless after 1.33.0: `imageTo3D` (its own doc: "an opt-in
+    //     generative transform", geometry "invented"), `imageInpaint` (fill "invented"),
+    //     `imageColorize` (color "invented"), `tts`, `talkingHead`. Each samples, none has a
+    //     canonical pin, and a pipeline that routes through one is irreproducible even with
+    //     every `.llm` and artifact seed fixed. Promoting those is separate, unlanded work —
+    //     a reproducibility claim spanning them is not supported by this contract today.
     //   • Why it binds beyond "nice to have": prompt ENHANCEMENT is an `.llm` call that rewrites
     //     the prompt a generation then consumes. With an unpinnable enhancer, fixing the
     //     generation seed does NOT make a run reproducible — the video changes because its prompt
