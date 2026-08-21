@@ -31,6 +31,13 @@ public protocol QuantConfigured {
 /// hint. Detected by `as?` at registration, mirroring the `QuantConfigured` / `ModelStorable` opt-ins.
 public protocol FootprintConfigured {
     var residentBytesHint: UInt64? { get }
+    /// Expected weight bytes read from disk per run for the SELECTED lane (1.35.0, additive;
+    /// AB-A-0013) — wins over `QuantFootprint.expectedWeightReadBytesPerRun`, exactly as the
+    /// other hints win over their quant-keyed counterparts, because read volume is usually a
+    /// tier/lane property (a streamed lane sweeps per step; a resident lane reads once).
+    /// `nil` (the extension default) falls through. Feeds the engine's projected-I/O advisory;
+    /// never refuses anything.
+    var expectedWeightReadBytesPerRunHint: UInt64? { get }
     /// The selected variant's **transient activation peak** (scratch live only during inference, on top
     /// of the persistent weights), when it differs by mode at the same quant — e.g. BiRefNet `best`@2048
     /// has a far larger activation peak than `fast`@1024 though both are fp16. `nil` (the default) falls
@@ -41,6 +48,7 @@ public protocol FootprintConfigured {
 
 public extension FootprintConfigured {
     var peakActivationBytesHint: UInt64? { nil }
+    var expectedWeightReadBytesPerRunHint: UInt64? { nil }
 }
 
 /// Opt-in for configs whose `load()` adapts to the memory it's actually given — e.g. choosing a lighter

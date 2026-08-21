@@ -49,3 +49,51 @@ public enum StorageFloorPolicy: String, Sendable {
     /// their volume (e.g. a one-off measurement run on deliberately slow storage).
     case warnOnly
 }
+
+
+/// A storage finding the engine recorded at `prepare()` — the app-renderable record AB-A-0013
+/// asked for, mirroring `LicenseAdvisory`: more useful SHOWN than printed (1.35.0).
+///
+/// Under `.warnOnly` these are the ONLY surface — nothing throws, so an app that does not read
+/// them shows the user nothing, which was gap 1. Under `.enforce` the crash-floor advisory is
+/// recorded BEFORE the throw, so the app can render the why after the failure too.
+public struct StorageAdvisory: Sendable, Equatable {
+    public enum Kind: String, Sendable, Equatable {
+        /// Measured sustained read < the variant's declared CRASH floor
+        /// (`minSustainedReadBytesPerSecond`). Refused under `.enforce`; recorded either way.
+        case belowCrashFloor
+        /// Projected I/O time per run, from the variant's declared expected read volume and the
+        /// MEASURED volume speed. Informational always — slowness is not a crash. The engine
+        /// deliberately applies no threshold: it computes, the app decides what is worth showing.
+        case projectedIO
+        /// A crash floor is declared but nothing was probeable — UNVERIFIABLE, surfaced so the
+        /// caller knows the floor was not checked (never treated as passed).
+        case floorUnverifiable
+    }
+
+    /// The package id (`PackageID.description`) the advisory is about.
+    public let package: String
+    public let kind: Kind
+    /// The engine-composed, user-renderable sentence — measured and required numbers included,
+    /// so consumers do not re-derive the comparison or re-write the message.
+    public let message: String
+    public let measuredBytesPerSecond: UInt64?
+    /// The declared crash floor, when `kind == .belowCrashFloor`.
+    public let requiredBytesPerSecond: UInt64?
+    /// The declared per-run read volume, when `kind == .projectedIO`.
+    public let expectedReadBytesPerRun: UInt64?
+    /// `expectedReadBytesPerRun / measuredBytesPerSecond`, when both are known.
+    public let projectedIOSecondsPerRun: Double?
+
+    public init(package: String, kind: Kind, message: String,
+                measuredBytesPerSecond: UInt64? = nil, requiredBytesPerSecond: UInt64? = nil,
+                expectedReadBytesPerRun: UInt64? = nil, projectedIOSecondsPerRun: Double? = nil) {
+        self.package = package
+        self.kind = kind
+        self.message = message
+        self.measuredBytesPerSecond = measuredBytesPerSecond
+        self.requiredBytesPerSecond = requiredBytesPerSecond
+        self.expectedReadBytesPerRun = expectedReadBytesPerRun
+        self.projectedIOSecondsPerRun = projectedIOSecondsPerRun
+    }
+}

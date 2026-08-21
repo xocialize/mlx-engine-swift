@@ -27,5 +27,17 @@ final class StorageFloorTests: XCTestCase {
     func testDefaultInitHasNoFloor() {
         let fp = QuantFootprint(quant: .int4, residentBytes: 1)
         XCTAssertNil(fp.minSustainedReadBytesPerSecond)
+        XCTAssertNil(fp.expectedWeightReadBytesPerRun)
+    }
+
+    /// 1.35.0: pre-existing JSON (no expected-read key) decodes to nil, and the field round-trips.
+    func testExpectedReadVolumeIsAdditive() throws {
+        let old = #"{"quant":"int8","residentBytes":1,"peakActivationBytes":0}"#
+        let fp = try JSONDecoder().decode(QuantFootprint.self, from: Data(old.utf8))
+        XCTAssertNil(fp.expectedWeightReadBytesPerRun)
+        let with = QuantFootprint(quant: .int8, residentBytes: 1,
+                                  expectedWeightReadBytesPerRun: 147 << 30)
+        let round = try JSONDecoder().decode(QuantFootprint.self, from: JSONEncoder().encode(with))
+        XCTAssertEqual(round.expectedWeightReadBytesPerRun, 147 << 30)
     }
 }

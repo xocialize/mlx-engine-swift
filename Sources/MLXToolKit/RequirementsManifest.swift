@@ -86,12 +86,25 @@ public struct QuantFootprint: Sendable, Codable, Equatable {
     /// floor on exactly those variants. `nil` (the default, and every pre-1.34 manifest) means no
     /// floor: the engine may still measure and surface the volume, but never refuses.
     public let minSustainedReadBytesPerSecond: UInt64?
+    /// Expected weight bytes READ from disk per run (1.35.0, additive; AB-A-0013 option b) — the
+    /// PERFORMANCE declaration, deliberately separate from the crash floor above. A streamed
+    /// variant re-reads its swept working set every step (LTX compact24: ~147 GiB per 8-step
+    /// clip), so run time has a hard bandwidth term that is NOT a crash: 33 s of I/O at 4.4
+    /// GiB/s becomes 334 s at USB speed, with correct output throughout. Declaring the volume
+    /// lets the ENGINE project I/O time from its own measured B/s and surface one accurate
+    /// informational advisory, instead of every app hardcoding per-tier sweep arithmetic it
+    /// should not have to know. `nil` (default, and every pre-1.35 manifest): no projection.
+    /// Lane-resolved values (the read volume is usually a TIER property, not a quant property)
+    /// ride `FootprintConfigured.expectedWeightReadBytesPerRunHint`, which wins over this.
+    public let expectedWeightReadBytesPerRun: UInt64?
     public init(quant: Quant, residentBytes: UInt64, peakActivationBytes: UInt64 = 0,
-                minSustainedReadBytesPerSecond: UInt64? = nil) {
+                minSustainedReadBytesPerSecond: UInt64? = nil,
+                expectedWeightReadBytesPerRun: UInt64? = nil) {
         self.quant = quant
         self.residentBytes = residentBytes
         self.peakActivationBytes = peakActivationBytes
         self.minSustainedReadBytesPerSecond = minSustainedReadBytesPerSecond
+        self.expectedWeightReadBytesPerRun = expectedWeightReadBytesPerRun
     }
 }
 

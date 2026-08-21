@@ -534,5 +534,20 @@ public enum ContractVersion {
     //   `WeightPrewarming` (the probe needs real file paths); non-declaring packages and
     //   pre-1.34 manifests are byte-identical in behavior. Override:
     //   `MLXServeEngine.setStorageFloorPolicy(.warnOnly)`. AB-T-0070.
-    public static let current = SemanticVersion(major: 1, minor: 34, patch: 0)
+    // 1.35.0 (2026-08-21, additive): STORAGE ADVISORIES — closes AB-A-0013's three gaps in the
+    //   1.34.0 floor. (1) `StorageAdvisory` recorded per package at prepare (LicenseAdvisory
+    //   precedent) + `engine.storageAdvisories(package:)` — `.warnOnly` was print-only, i.e. the
+    //   posture an operator chooses for UX produced nothing an app could show; the crash-floor
+    //   advisory is now recorded under BOTH policies (before the throw under .enforce), and the
+    //   unverifiable case is recorded too. (2) `setStorageFloorPolicy(_:package:)` — per-package
+    //   override over the engine-global default, so a host can warn on slowness for one package
+    //   while refusing a certain crash for another. (3) the PERFORMANCE declaration:
+    //   `QuantFootprint.expectedWeightReadBytesPerRun` + lane-resolved
+    //   `FootprintConfigured.expectedWeightReadBytesPerRunHint` (defaulted; conformers
+    //   unaffected) — streamed variants re-read their sweep every step (LTX compact24 ~147 GiB
+    //   per clip: 33 s of I/O at 4.4 GiB/s, 334 s at USB speed, correct output throughout), so
+    //   the engine projects I/O time from its own measured B/s and records a `projectedIO`
+    //   advisory instead of every app hardcoding per-tier sweep arithmetic. No thresholds, no
+    //   refusals on the performance path — slowness is not a crash.
+    public static let current = SemanticVersion(major: 1, minor: 35, patch: 0)
 }
