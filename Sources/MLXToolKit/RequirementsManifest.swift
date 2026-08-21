@@ -72,10 +72,26 @@ public struct QuantFootprint: Sendable, Codable, Equatable {
     public let quant: Quant
     public let residentBytes: UInt64
     public let peakActivationBytes: UInt64
-    public init(quant: Quant, residentBytes: UInt64, peakActivationBytes: UInt64 = 0) {
+    /// The §5.6 bandwidth floor (1.34.0, additive; reserved by the Wan HV2 wiring note and made
+    /// real by the I9 receipt): the minimum SUSTAINED sequential read, in bytes/second, the
+    /// weights volume must deliver for this variant to be SAFE — not merely fast.
+    ///
+    /// Declare it only where a sub-floor volume is a CRASH, not a slowdown. The mechanism (I9,
+    /// `LTX_TESTING/ISSUES.md:12`): safetensors load lazily, the bytes are pulled inside live
+    /// Metal command buffers, and when the working set outgrows what the page cache can absorb on
+    /// a slow volume, the fault storm trips the GPU watchdog — bf16-on-USB (~250–475 MB/s) was
+    /// 0/7 across three sessions while int8/int4 on the same volume were fine, and prewarm does
+    /// NOT save it (the run's own working set evicts the cache mid-generation). Which quants are
+    /// fatal is therefore per-variant knowledge only the port has — encode it by declaring the
+    /// floor on exactly those variants. `nil` (the default, and every pre-1.34 manifest) means no
+    /// floor: the engine may still measure and surface the volume, but never refuses.
+    public let minSustainedReadBytesPerSecond: UInt64?
+    public init(quant: Quant, residentBytes: UInt64, peakActivationBytes: UInt64 = 0,
+                minSustainedReadBytesPerSecond: UInt64? = nil) {
         self.quant = quant
         self.residentBytes = residentBytes
         self.peakActivationBytes = peakActivationBytes
+        self.minSustainedReadBytesPerSecond = minSustainedReadBytesPerSecond
     }
 }
 

@@ -324,6 +324,22 @@ public actor MLXServeEngine {
     /// folder). Applies to packages registered *after* this call — set it before `register`. Every
     /// `ModelStorable` configuration is then stamped to download here, and the engine writes the
     /// storage marker after each successful `load()`.
+    /// Response when a measured weights volume sits below a variant's declared
+    /// `minSustainedReadBytesPerSecond` (1.34.0, AB-T-0070). Default `.enforce`: the floor marks
+    /// variants where a slow volume is a mid-generation crash, and failing closed — loud, early,
+    /// explainable — is the point. `.warnOnly` is the operator override for deliberate choices.
+    private var storageFloorPolicy: StorageFloorPolicy = .enforce
+    /// Prepare-time volume characterizations, by package id — the storage-advisory data an app
+    /// renders ("weights are on a removable USB volume measuring 0.4 GB/s").
+    private var volumeCharacterizations: [String: VolumeCharacterization] = [:]
+
+    public func setStorageFloorPolicy(_ policy: StorageFloorPolicy) {
+        storageFloorPolicy = policy
+    }
+    public func volumeCharacterization(package: String) -> VolumeCharacterization? {
+        volumeCharacterizations[package]
+    }
+
     public func useModelStore(_ store: ModelStore) {
         modelStore = store
     }
@@ -1098,6 +1114,44 @@ public actor MLXServeEngine {
                     try await WeightDownloadProgress.$sink.withValue(sink) {
                         try await materializer.materialize(missing, into: root)
                     }
+                }
+            }
+
+            // Weights-volume floor (1.34.0, AB-T-0070): measure the volume BEFORE construction,
+            // prewarm, or the first command buffer — the I9 class fails inside live Metal command
+            // buffers, where the only symptom is a GPU-watchdog abort. Probing needs real file
+            // paths, so enforcement requires the config to adopt WeightPrewarming; a declared
+            // floor with no probeable path is surfaced as UNVERIFIABLE, never treated as passed.
+            if let prewarming = entry.configuration as? WeightPrewarming {
+                let floor = entry.registration.manifest.requirements.footprints
+                    .first { $0.quant == (configuration as? QuantConfigured)?.quant }?
+                    .minSustainedReadBytesPerSecond
+                // Probe unconditionally for prewarming configs (cached per volume, 30 min):
+                // even packages with no floor get the characterization surfaced for advisory UI.
+                if let characterization = VolumeProbe.characterize(paths: prewarming.prewarmPaths) {
+                    volumeCharacterizations[pkg] = characterization
+                    if let floor, let measured = characterization.sustainedReadBytesPerSecond,
+                       measured < floor {
+                        let gbs = { (b: UInt64) in String(format: "%.2f GB/s", Double(b) / 1e9) }
+                        let msg = "weights volume \(characterization.volumePath) "
+                            + "(\(characterization.protocolName ?? "unknown protocol")"
+                            + "\(characterization.isRemovable == true ? ", removable" : "")) measured "
+                            + "\(gbs(measured)) sustained read; this variant declares a floor of "
+                            + "\(gbs(floor)) because below it the run crashes mid-generation "
+                            + "(GPU-watchdog, the I9 class) rather than slowing down. Move the "
+                            + "weights to internal/PCI-E storage, or override with "
+                            + "setStorageFloorPolicy(.warnOnly) if this volume is a deliberate choice."
+                        if storageFloorPolicy == .enforce {
+                            await updatePhase(.failed(msg), caps: caps, package: pkg)
+                            throw PackageError.weightsVolumeBelowFloor(msg)
+                        } else {
+                            print("[MLXServeEngine] ⚠️ storage floor (override active): \(msg)")
+                        }
+                    }
+                } else if let floor {
+                    print("[MLXServeEngine] ⚠️ \(pkg) declares a storage floor "
+                        + "(\(floor) B/s) but no probeable weight file was found — "
+                        + "floor is UNVERIFIABLE for this prepare, proceeding.")
                 }
             }
 

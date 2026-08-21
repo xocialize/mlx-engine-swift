@@ -523,5 +523,16 @@ public enum ContractVersion {
     //   • First adopters: mlx-gemma-llm-swift + mlx-qwen-llm-swift (forward to
     //     `GenerateParameters.seed`); mlx-lfm-llm-swift reads the canonical field and KEEPS
     //     `metaData["seed"]` working as an override for its existing callers.
-    public static let current = SemanticVersion(major: 1, minor: 33, patch: 0)
+    // 1.34.0 (2026-08-21, additive): WEIGHTS-VOLUME FLOOR — `QuantFootprint.
+    //   minSustainedReadBytesPerSecond: UInt64?` (the reserved §5.6 bandwidth field) +
+    //   `PackageError.weightsVolumeBelowFloor` + `VolumeCharacterization`. The engine measures the
+    //   weights volume at prepare() (F_NOCACHE sequential read of a real weight file, plus
+    //   protocol/removability/free space) and refuses a below-floor volume for variants that
+    //   declare one — the I9 crash class (bf16-on-USB 0/7, GPU-watchdog aborts inside live
+    //   command buffers; prewarm does not save it) detected BEFORE the first command buffer
+    //   instead of crashing inside it. Floors are enforced only when the config also adopts
+    //   `WeightPrewarming` (the probe needs real file paths); non-declaring packages and
+    //   pre-1.34 manifests are byte-identical in behavior. Override:
+    //   `MLXServeEngine.setStorageFloorPolicy(.warnOnly)`. AB-T-0070.
+    public static let current = SemanticVersion(major: 1, minor: 34, patch: 0)
 }

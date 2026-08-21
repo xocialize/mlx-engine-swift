@@ -75,6 +75,13 @@ public enum PackageError: Error, Sendable, Equatable {
     /// violates what the request contracted for. (1.16.0, additive; C12: keep a `default`
     /// when switching over this enum.)
     case unsupportedRequestFeature(String)
+    /// `prepare()` measured the weights volume below the variant's declared
+    /// `minSustainedReadBytesPerSecond` (1.34.0, additive). Refusing here is deliberate: the
+    /// declared floor marks variants where a slow volume is a mid-generation GPU-watchdog CRASH
+    /// (the I9 class), and a loud, early, explainable refusal beats one. The message carries the
+    /// measured and required numbers plus the override
+    /// (`MLXServeEngine.setStorageFloorPolicy(.warnOnly)`).
+    case weightsVolumeBelowFloor(String)
 }
 
 /// What the engine registers for a package: its static `manifest` plus a license-gated factory the
