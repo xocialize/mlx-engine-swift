@@ -1,4 +1,5 @@
 import Foundation
+import MLXToolKit
 #if canImport(Darwin)
 import Darwin
 #endif
@@ -28,6 +29,35 @@ public enum HostMemory {
         }
         guard kr == KERN_SUCCESS else { return nil }
         return UInt64(info.phys_footprint)
+        #else
+        return nil
+        #endif
+    }
+
+    /// Machine-WIDE memory statistics via `host_statistics64` (`HOST_VM_INFO64`) — the reading
+    /// beside `physFootprint()` that AB-A-0014 asked for: the process number can say what WE use,
+    /// and nothing about what the machine has left. Returns `nil` when the syscall fails.
+    public static func machineMemory() -> MachineMemory? {
+        #if canImport(Darwin)
+        var stats = vm_statistics64_data_t()
+        var count = mach_msg_type_number_t(
+            MemoryLayout<vm_statistics64_data_t>.size / MemoryLayout<integer_t>.size)
+        let kr = withUnsafeMutablePointer(to: &stats) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                host_statistics64(mach_host_self(), HOST_VM_INFO64, $0, &count)
+            }
+        }
+        guard kr == KERN_SUCCESS else { return nil }
+        var pageSize: vm_size_t = 0
+        host_page_size(mach_host_self(), &pageSize)
+        guard pageSize > 0 else { return nil }
+        let page = UInt64(pageSize)
+        return MachineMemory(
+            totalBytes: ProcessInfo.processInfo.physicalMemory,
+            freeBytes: UInt64(stats.free_count) &* page,
+            inactiveBytes: UInt64(stats.inactive_count) &* page,
+            wiredBytes: UInt64(stats.wire_count) &* page,
+            compressedBytes: UInt64(stats.compressor_page_count) &* page)
         #else
         return nil
         #endif

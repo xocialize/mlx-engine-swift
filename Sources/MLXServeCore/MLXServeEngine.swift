@@ -339,6 +339,9 @@ public actor MLXServeEngine {
     /// Storage findings recorded at the most recent `prepare()` per package (1.35.0,
     /// AB-A-0013 gap 1 — the LicenseAdvisory precedent: more useful shown than printed).
     private var storageAdvisories: [String: [StorageAdvisory]] = [:]
+    /// Kernel memory-pressure plumbing (1.36.0): one source, many subscribers.
+    private var pressureSource: (any DispatchSourceMemoryPressure)? = nil
+    private var pressureContinuations: [UUID: AsyncStream<MemoryPressureEvent>.Continuation] = [:]
 
     /// Set the storage-floor policy: engine-global when `package` is nil, else an override for
     /// that package only (`PackageID.description`).
@@ -358,6 +361,103 @@ public actor MLXServeEngine {
     public func storageAdvisories(package: String) -> [StorageAdvisory] {
         storageAdvisories[package] ?? []
     }
+
+    // MARK: Machine fit + pressure (1.36.0, AB-A-0014)
+
+    /// The launch gate's number: the engine's PROJECTED peak for this capability/package against
+    /// the machine's availability, computed FRESH on every call. Advisory by definition
+    /// (AB-D-0038): the host decides whether `fits == false` renders as a warning or a closed
+    /// door — for a job whose peak arrives tens of minutes in, a doomed launch is closer to a
+    /// crash class than a slowdown.
+    ///
+    /// The honest arithmetic (the ask's refinement): at launch the process footprint is near
+    /// zero, so "is there room right now" passes trivially. What is compared is the ADDITIONAL
+    /// bytes the engine projects needing — current residency + this package's resolved
+    /// (persistent + transient) split, minus what the process already holds — against
+    /// `MachineMemory.availableBytes`. The projection uses the same resolution as admission:
+    /// `FootprintConfigured` hints over the quant-keyed `QuantFootprint`. It is therefore only
+    /// as honest as the declared split — a measured peak above the declaration is a declaration
+    /// bug, not a gate bug.
+    public func machineFitAdvisory(_ capability: Capability,
+                                   package: PackageID? = nil) throws -> MachineFitAdvisory {
+        let id = try resolve(capability, package)
+        guard let entry = packages[id] else {
+            throw PackageError.unsupportedCapability(capability)
+        }
+        let fc = entry.configuration as? FootprintConfigured
+        let split = governor.footprintSplit(
+            for: entry.registration.manifest.requirements,
+            quant: (entry.configuration as? QuantConfigured)?.quant,
+            persistentHint: fc?.residentBytesHint,
+            transientHint: fc?.peakActivationBytesHint)
+        let projected = residency() &+ split.persistent &+ transientReserve(extra: split.transient)
+        let current = HostMemory.physFootprint() ?? 0
+        let additional = projected > current ? projected - current : 0
+        let machine = HostMemory.machineMemory()
+            ?? MachineMemory(totalBytes: 0, freeBytes: 0, inactiveBytes: 0,
+                             wiredBytes: 0, compressedBytes: 0)
+        let fits = additional <= machine.availableBytes
+        let gb = { (b: UInt64) in String(format: "%.1f GB", Double(b) / 1e9) }
+        let message = fits
+            ? "projected peak \(gb(projected)) (\(gb(additional)) beyond the current "
+                + "\(gb(current))) fits the machine's \(gb(machine.availableBytes)) available."
+            : "projected peak \(gb(projected)) needs \(gb(additional)) more than the process "
+                + "holds now, but the machine has only \(gb(machine.availableBytes)) available "
+                + "(free \(gb(machine.freeBytes)) + reclaimable \(gb(machine.inactiveBytes))) — "
+                + "a run started now is likely to hit memory pressure before its peak."
+        return MachineFitAdvisory(
+            package: id.description, projectedPeakBytes: projected,
+            currentProcessBytes: current, additionalBytes: additional,
+            machine: machine, fits: fits, message: message)
+    }
+
+    /// OS memory-pressure events with a machine reading attached — the mid-run signal a host's
+    /// render overlay subscribes to (AB-A-0014 ask 3). This is the one piece a host cannot build
+    /// for itself: its own `phys_footprint` says nothing about the machine, and the drift that
+    /// kills a long job (another app's spike, Spotlight, a sync) is precisely not its own memory.
+    /// Backed by ONE kernel `DispatchSource` memory-pressure source, started lazily; every
+    /// subscriber gets every event; streams end when the engine deinits or the task is cancelled.
+    public func memoryPressureEvents() -> AsyncStream<MemoryPressureEvent> {
+        startPressureSourceIfNeeded()
+        let id = UUID()
+        return AsyncStream { continuation in
+            pressureContinuations[id] = continuation
+            continuation.onTermination = { [weak self] _ in
+                Task { await self?.removePressureContinuation(id) }
+            }
+        }
+    }
+
+    private func removePressureContinuation(_ id: UUID) {
+        pressureContinuations[id] = nil
+    }
+
+    private func startPressureSourceIfNeeded() {
+        guard pressureSource == nil else { return }
+        let source = DispatchSource.makeMemoryPressureSource(
+            eventMask: [.normal, .warning, .critical], queue: .global(qos: .utility))
+        source.setEventHandler { [weak self] in
+            let raw = source.data
+            let level: MemoryPressureLevel =
+                raw.contains(.critical) ? .critical : raw.contains(.warning) ? .warning : .nominal
+            let event = MemoryPressureEvent(level: level, machine: HostMemory.machineMemory())
+            Task { await self?.broadcastPressure(event) }
+        }
+        source.activate()
+        pressureSource = source
+    }
+
+    private func broadcastPressure(_ event: MemoryPressureEvent) {
+        for continuation in pressureContinuations.values { continuation.yield(event) }
+    }
+
+    #if DEBUG
+    /// Test seam (the `makeForTesting` precedent): inject a pressure event as if the kernel
+    /// delivered it — real OS pressure cannot be synthesized in CI.
+    func _injectMemoryPressure(_ event: MemoryPressureEvent) {
+        broadcastPressure(event)
+    }
+    #endif
 
     public func useModelStore(_ store: ModelStore) {
         modelStore = store

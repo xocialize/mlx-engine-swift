@@ -549,5 +549,20 @@ public enum ContractVersion {
     //   the engine projects I/O time from its own measured B/s and records a `projectedIO`
     //   advisory instead of every app hardcoding per-tier sweep arithmetic. No thresholds, no
     //   refusals on the performance path — slowness is not a crash.
-    public static let current = SemanticVersion(major: 1, minor: 35, patch: 0)
+    // 1.36.0 (2026-08-22, additive): MACHINE-WIDE FIT + PRESSURE — closes AB-A-0014. Admission
+    //   could answer "does this fit my budget?" but never "does this fit this machine, right
+    //   now?": physFootprint() is THIS-PROCESS, R-MEM-1 is deliberately self-scoped, and Metal's
+    //   number reserves nothing. (1) `HostMemory.machineMemory()` (host_statistics64 /
+    //   HOST_VM_INFO64) → `MachineMemory` with the "available = free + inactive" judgment defined
+    //   in ONE place. (2) `engine.machineFitAdvisory(_:package:)` — the launch gate's number,
+    //   fresh per call: ADDITIONAL projected bytes (residency + resolved split − current
+    //   footprint) vs machine availability; at launch the process is near zero and the peak
+    //   arrives tens of minutes in, so comparing current usage would pass trivially. Advisory by
+    //   definition (AB-D-0038): the host decides warning vs closed door. Honest only if the
+    //   declared split is (a measured peak above declaration is a declaration bug). (3)
+    //   `engine.memoryPressureEvents()` — kernel DispatchSource pressure events with a machine
+    //   reading attached; the mid-run overlay signal a host cannot build from its own
+    //   phys_footprint. The long-exclusive-job envelope hint (ask 4) is deliberately DEFERRED:
+    //   no engine behavior would change on it yet, and speculative surface is how contracts rot.
+    public static let current = SemanticVersion(major: 1, minor: 36, patch: 0)
 }
