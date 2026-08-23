@@ -18,6 +18,7 @@
 //
 
 import SwiftUI
+import DesignScaffold
 import MLXHubMetadata
 
 // MARK: - Model
@@ -145,7 +146,7 @@ public struct HuggingFaceSettingsView: View {
         VStack(alignment: .leading, spacing: 0) {
             Text("Hugging Face")
                 .font(MarqueeFont.pageTitle)
-                .foregroundStyle(MarqueeColor.textPrimary)
+                .foregroundStyle(Tokens.Color.label)
                 .padding(.bottom, 28)
 
             sectionHeader("ACCESS TOKEN")
@@ -156,31 +157,31 @@ public struct HuggingFaceSettingsView: View {
             Text("A token lets the engine download gated and private repositories, and lifts hub "
                 + "rate limits from the shared anonymous pool to your own account. It is stored in "
                 + "this Mac's Keychain and sent only to huggingface.co.")
-                .font(MarqueeFont.caption)
-                .foregroundStyle(MarqueeColor.textMuted)
+                .font(Tokens.Font.caption)
+                .foregroundStyle(Tokens.Color.tertiaryLabel)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, 12)
 
             if model.environmentShadowsKeychain {
                 Text("The environment variable wins while it is set — unset it to use the saved "
                     + "token.")
-                    .font(MarqueeFont.caption)
-                    .foregroundStyle(MarqueeColor.warning)
+                    .font(Tokens.Font.caption)
+                    .foregroundStyle(Tokens.Color.working)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.top, 8)
             }
 
             if let storageError = model.storageError {
                 Text(storageError)
-                    .font(MarqueeFont.caption)
-                    .foregroundStyle(MarqueeColor.error)
+                    .font(Tokens.Font.caption)
+                    .foregroundStyle(Tokens.Color.failure)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.top, 8)
             }
 
             Spacer()
         }
-        .padding(MarqueeMetric.panelPadding)
+        .padding(Tokens.Space.xl)
         .frame(width: MarqueeMetric.panelWidth, alignment: .leading)
         .onAppear { model.refresh() }
     }
@@ -189,20 +190,20 @@ public struct HuggingFaceSettingsView: View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
                 Text("Token")
-                    .font(MarqueeFont.bodyMedium)
-                    .foregroundStyle(MarqueeColor.textPrimary)
+                    .font(Tokens.Font.body.weight(.medium))
+                    .foregroundStyle(Tokens.Color.label)
                 Spacer()
                 SecureField(model.hasKeychainToken ? "•••• stored — enter to replace"
                                                    : "Paste a Hugging Face access token",
                             text: $model.draft)
                     .textFieldStyle(.plain)
-                    .font(MarqueeFont.body)
-                    .foregroundStyle(MarqueeColor.textPrimary)
+                    .font(Tokens.Font.body)
+                    .foregroundStyle(Tokens.Color.label)
                     .frame(width: 200)
                     .padding(.horizontal, 10)
-                    .frame(height: MarqueeMetric.controlHeight)
-                    .background(MarqueeColor.bgInput)
-                    .clipShape(RoundedRectangle(cornerRadius: MarqueeMetric.controlCornerRadius))
+                    .frame(height: Tokens.Layout.controlHeight)
+                    .background(Tokens.Color.fieldFill)
+                    .clipShape(RoundedRectangle(cornerRadius: Tokens.Radius.control))
                     .onSubmit { model.save() }
                 Button("Save") { model.save() }
                     .buttonStyle(MarqueeButtonStyle(.primary))
@@ -218,8 +219,8 @@ public struct HuggingFaceSettingsView: View {
                     .fill(statusColor)
                     .frame(width: 6, height: 6)
                 Text(model.statusText)
-                    .font(MarqueeFont.caption)
-                    .foregroundStyle(MarqueeColor.textSecondary)
+                    .font(Tokens.Font.caption)
+                    .foregroundStyle(Tokens.Color.secondaryLabel)
                 Spacer()
                 Button("Verify") { Task { await model.verify() } }
                     .buttonStyle(MarqueeButtonStyle(.secondary))
@@ -238,7 +239,7 @@ public struct HuggingFaceSettingsView: View {
                 divider
                 HStack(spacing: 6) {
                     Text(verificationText ?? "")
-                        .font(MarqueeFont.caption)
+                        .font(Tokens.Font.caption)
                         .foregroundStyle(verificationColor)
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer()
@@ -247,14 +248,14 @@ public struct HuggingFaceSettingsView: View {
                 .frame(minHeight: 40)
             }
         }
-        .background(MarqueeColor.bgSecondary)
-        .clipShape(RoundedRectangle(cornerRadius: MarqueeMetric.groupCornerRadius))
+        .background(Tokens.Color.surface)
+        .clipShape(RoundedRectangle(cornerRadius: Tokens.Radius.container))
     }
 
     private var statusColor: Color {
-        guard let resolved = model.resolved else { return MarqueeColor.textMuted }
-        if case .keychain = resolved.source { return MarqueeColor.success }
-        return model.environmentShadowsKeychain ? MarqueeColor.warning : MarqueeColor.success
+        guard let resolved = model.resolved else { return Tokens.Color.tertiaryLabel }
+        if case .keychain = resolved.source { return Tokens.Color.ready }
+        return model.environmentShadowsKeychain ? Tokens.Color.working : Tokens.Color.ready
     }
 
     private var verificationText: String? {
@@ -268,22 +269,22 @@ public struct HuggingFaceSettingsView: View {
 
     private var verificationColor: Color {
         switch model.verification {
-        case .verified: return MarqueeColor.success
-        case .failed: return MarqueeColor.error
-        default: return MarqueeColor.textSecondary
+        case .verified: return Tokens.Color.ready
+        case .failed: return Tokens.Color.failure
+        default: return Tokens.Color.secondaryLabel
         }
     }
 
     private func sectionHeader(_ title: String) -> some View {
         Text(title)
-            .font(MarqueeFont.sectionHeader)
+            .font(Tokens.Font.caption.weight(.semibold))
             .tracking(0.5)
-            .foregroundStyle(MarqueeColor.textSecondary)
+            .foregroundStyle(Tokens.Color.secondaryLabel)
     }
 
     private var divider: some View {
         Rectangle()
-            .fill(MarqueeColor.bgElevated)
+            .fill(Tokens.Color.separator)
             .frame(height: 1)
             .padding(.horizontal, 16)
     }

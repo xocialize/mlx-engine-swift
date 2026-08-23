@@ -8,6 +8,7 @@
 //
 
 import SwiftUI
+import DesignScaffold
 import MLXToolKit
 
 /// Renders the current `PreparePhase` for a capability from an engine `PreparationMonitor`. Host it
@@ -37,8 +38,8 @@ public struct ModelStateView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 Text(title ?? capability.rawValue)
-                    .font(MarqueeFont.bodyMedium)
-                    .foregroundStyle(MarqueeColor.textPrimary)
+                    .font(Tokens.Font.body.weight(.medium))
+                    .foregroundStyle(Tokens.Color.label)
                 Spacer()
                 statusLabel(phase)
             }
@@ -46,22 +47,22 @@ public struct ModelStateView: View {
             if let fraction = determinate(phase) {
                 ProgressView(value: fraction)
                     .progressViewStyle(.linear)
-                    .tint(MarqueeColor.accentBlue)
+                    .tint(Tokens.Color.accent)
             } else if isIndeterminate(phase) {
                 ProgressView()
                     .progressViewStyle(.linear)
-                    .tint(MarqueeColor.accentBlue)
+                    .tint(Tokens.Color.accent)
             }
 
             if let caption = caption(phase) {
                 Text(caption)
-                    .font(MarqueeFont.caption)
-                    .foregroundStyle(MarqueeColor.textMuted)
+                    .font(Tokens.Font.caption)
+                    .foregroundStyle(Tokens.Color.tertiaryLabel)
             }
         }
         .padding(12)
-        .background(MarqueeColor.bgSecondary)
-        .clipShape(RoundedRectangle(cornerRadius: MarqueeMetric.groupCornerRadius))
+        .background(Tokens.Color.surface)
+        .clipShape(RoundedRectangle(cornerRadius: Tokens.Radius.container))
     }
 
     // MARK: - Phase → UI
@@ -70,24 +71,24 @@ public struct ModelStateView: View {
     private func statusLabel(_ phase: PreparePhase) -> some View {
         switch phase {
         case .idle:
-            Text("Not loaded").font(MarqueeFont.caption).foregroundStyle(MarqueeColor.textMuted)
+            Text("Not loaded").font(Tokens.Font.caption).foregroundStyle(Tokens.Color.tertiaryLabel)
         case .registering:
-            Text("Preparing…").font(MarqueeFont.caption).foregroundStyle(MarqueeColor.textSecondary)
+            Text("Preparing…").font(Tokens.Font.caption).foregroundStyle(Tokens.Color.secondaryLabel)
         case let .prewarming(fraction):
             Text("Warming \(percent(fraction))")
-                .font(MarqueeFont.caption).foregroundStyle(MarqueeColor.textSecondary)
+                .font(Tokens.Font.caption).foregroundStyle(Tokens.Color.secondaryLabel)
         case let .downloading(fraction, bps):
             Text("Downloading \(percent(fraction))\(speedSuffix(bps))")
-                .font(MarqueeFont.caption).foregroundStyle(MarqueeColor.accentBlue)
+                .font(Tokens.Font.caption).foregroundStyle(Tokens.Color.accent)
         case .loading:
-            Text("Loading…").font(MarqueeFont.caption).foregroundStyle(MarqueeColor.textSecondary)
+            Text("Loading…").font(Tokens.Font.caption).foregroundStyle(Tokens.Color.secondaryLabel)
         case .ready:
             Label("Ready", systemImage: "checkmark.circle.fill")
                 .labelStyle(.titleAndIcon)
-                .font(MarqueeFont.caption).foregroundStyle(MarqueeColor.success)
+                .font(Tokens.Font.caption).foregroundStyle(Tokens.Color.ready)
         case let .failed(reason):
             Label("Failed", systemImage: "exclamationmark.triangle.fill")
-                .font(MarqueeFont.caption).foregroundStyle(MarqueeColor.error)
+                .font(Tokens.Font.caption).foregroundStyle(Tokens.Color.failure)
                 .help(reason)
         }
     }

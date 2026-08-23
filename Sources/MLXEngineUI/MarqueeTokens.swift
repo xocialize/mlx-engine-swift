@@ -2,102 +2,131 @@
 //  MarqueeTokens.swift
 //  MLXEngineUI
 //
-//  Design tokens translated from the MarqueeStudio Figma library
-//  (file UFh5Y592c8aaa9Bk3R2SJb). These are the shared color, typography,
-//  and metric primitives that every MLXEngine UI surface is built from, so
-//  consuming apps render a consistent look without re-deriving values.
+//  DEPRECATED FORWARDERS onto DesignScaffold's `Tokens` — the fleet's single design
+//  authority (AB-D-0042; convergence asked in AB-A-0019 and landed here).
+//
+//  These enums were born as hardcoded hex/values translated from the MarqueeStudio Figma
+//  library. Authored dark, they rendered as a dark island inside light windows and could
+//  not follow the user's appearance, accent colour, or Increase Contrast (evidence:
+//  DesignScaffold AB-R-0128 — the light-mode divergence render). Every symbol now forwards
+//  to the semantic token it was approximating, so:
+//    - existing call sites keep compiling (source-compatible by construction),
+//    - resolved VALUES adapt with the system (light mode changes visibly — that is the fix),
+//    - the deprecation warnings are the migration worklist for external consumers.
+//  The in-tree views have already migrated to `Tokens` directly; these forwarders exist for
+//  API stability toward consuming apps and can be removed at the next major.
+//
+//  Symbols deliberately NOT forwarded (documented panel-local or pending):
+//    - `panelWidth` / `settingsMinWidth` / `settingsMinHeight` — settings-window geometry,
+//      a property of these panels rather than the fleet vocabulary.
+//    - `accentGold` — Marquee brand accent, unused in-tree; kept only for API stability.
+//    - `pageTitle` — awaiting `Tokens.Font.panelTitle` (18 semibold; requested with usage
+//      evidence in AB-A-0019: three settings-panel headers at 520pt width, where the 22pt
+//      `screenTitle` would be oversized).
+//    - `bgElevated`'s FILL role — awaiting `Tokens.Color.fillElevated`. Its DIVIDER role
+//      (4 of 6 sites) was split off to `Tokens.Color.separator` in-tree per the AB-A-0019
+//      review; the two fill sites (capsule badge, secondary-button fill) keep this value
+//      until the token ships.
 //
 
 import SwiftUI
+import DesignScaffold
 
-// MARK: - Color tokens
+// MARK: - Color forwarders
 
-/// The Marquee color palette. Values mirror the Figma "Marquee Colors" collection.
 public enum MarqueeColor {
-    // Backgrounds
-    public static let bgPrimary = Color(hex: 0x1E1E1E)
-    public static let bgSecondary = Color(hex: 0x252526)
-    public static let bgHeader = Color(hex: 0x323233)
-    public static let bgElevated = Color(hex: 0x3C3C3C)
-    public static let bgInput = Color(hex: 0x2D2D2D)
+    @available(*, deprecated, message: "Use Tokens.Color.surfaceElevated (AB-D-0042)")
+    public static let bgPrimary = Tokens.Color.surfaceElevated
+    @available(*, deprecated, message: "Use Tokens.Color.surface (AB-D-0042)")
+    public static let bgSecondary = Tokens.Color.surface
+    @available(*, deprecated, message: "Use Tokens.Color.surface (AB-D-0042); no header-specific token exists and nothing in-tree uses this")
+    public static let bgHeader = Tokens.Color.surface
+    /// ⚠️ Split symbol: divider uses moved to `Tokens.Color.separator` in-tree. This literal
+    /// remains ONLY for the two fill sites (badge capsule, secondary-button fill) until
+    /// DesignScaffold ships `Tokens.Color.fillElevated` (AB-A-0019 Q1 answer: split).
+    public static let bgElevated = Color(.sRGB, red: 0x3C / 255.0, green: 0x3C / 255.0,
+                                         blue: 0x3C / 255.0, opacity: 1.0)
+    @available(*, deprecated, message: "Use Tokens.Color.fieldFill (AB-D-0042; note it sits darker in dark mode than the old #2D2D2D — that is adaptation, not regression)")
+    public static let bgInput = Tokens.Color.fieldFill
 
-    // Text
-    public static let textPrimary = Color(hex: 0xCCCCCC)
-    public static let textSecondary = Color(hex: 0x8C8C8C)
-    public static let textMuted = Color(hex: 0x5C5C5C)
+    @available(*, deprecated, message: "Use Tokens.Color.label (AB-D-0042)")
+    public static let textPrimary = Tokens.Color.label
+    @available(*, deprecated, message: "Use Tokens.Color.secondaryLabel (AB-D-0042)")
+    public static let textSecondary = Tokens.Color.secondaryLabel
+    @available(*, deprecated, message: "Use Tokens.Color.tertiaryLabel (AB-D-0042)")
+    public static let textMuted = Tokens.Color.tertiaryLabel
 
-    // Accents
-    public static let accentBlue = Color(hex: 0x0A84FF)
-    public static let accentGold = Color(hex: 0xD7BA7D)
-    public static let selectionBackground = Color(hex: 0x094771)
+    @available(*, deprecated, message: "Use Tokens.Color.accent — follows the user's accent instead of pinning macOS dark system blue (AB-D-0042)")
+    public static let accentBlue = Tokens.Color.accent
+    /// Marquee brand accent — deliberately panel-local (AB-A-0019 mapping table), unused in-tree.
+    public static let accentGold = Color(.sRGB, red: 0xD7 / 255.0, green: 0xBA / 255.0,
+                                         blue: 0x7D / 255.0, opacity: 1.0)
+    @available(*, deprecated, message: "Use Tokens.Color.selectionWash (AB-D-0042)")
+    public static let selectionBackground = Tokens.Color.selectionWash
 
-    // Semantic
-    public static let success = Color(hex: 0x32D74B)
-    public static let warning = Color(hex: 0xFF9F0A)
-    public static let error = Color(hex: 0xFF453A)
+    @available(*, deprecated, message: "Use Tokens.Color.ready (AB-D-0042)")
+    public static let success = Tokens.Color.ready
+    @available(*, deprecated, message: "Use Tokens.Color.working (AB-D-0042)")
+    public static let warning = Tokens.Color.working
+    @available(*, deprecated, message: "Use Tokens.Color.failure (AB-D-0042)")
+    public static let error = Tokens.Color.failure
 }
 
-// MARK: - Typography tokens
+// MARK: - Typography forwarders
 
-/// The Marquee type ramp. SF Pro is the system font on Apple platforms, so each
-/// token maps to `Font.system` at the size/weight documented in the Figma board.
 public enum MarqueeFont {
-    /// SF Pro 18 Semibold — page / panel titles.
+    /// Awaiting `Tokens.Font.panelTitle` (AB-A-0019) — the one type-ramp addition requested.
     public static let pageTitle = Font.system(size: 18, weight: .semibold)
-    /// SF Pro 11 Semibold — uppercase section headers (pair with `.tracking(0.5)`).
-    public static let sectionHeader = Font.system(size: 11, weight: .semibold)
-    /// SF Pro 13 Medium — emphasized row labels.
-    public static let bodyMedium = Font.system(size: 13, weight: .medium)
-    /// SF Pro 13 Regular — standard body text.
-    public static let body = Font.system(size: 13, weight: .regular)
-    /// SF Pro 12 Regular — captions and helper text.
-    public static let caption = Font.system(size: 12, weight: .regular)
+    @available(*, deprecated, message: "Use Tokens.Font.caption.weight(.semibold) (AB-D-0042)")
+    public static let sectionHeader = Tokens.Font.caption.weight(.semibold)
+    @available(*, deprecated, message: "Use Tokens.Font.body.weight(.medium) (AB-D-0042)")
+    public static let bodyMedium = Tokens.Font.body.weight(.medium)
+    @available(*, deprecated, message: "Use Tokens.Font.body (AB-D-0042)")
+    public static let body = Tokens.Font.body
+    @available(*, deprecated, message: "Use Tokens.Font.caption (AB-D-0042; 12 → 11, an accepted visual change)")
+    public static let caption = Tokens.Font.caption
 }
 
-// MARK: - Metric tokens
+// MARK: - Metric forwarders
 
-/// Spacing, corner-radius, and sizing constants used across Marquee panels.
 public enum MarqueeMetric {
-    public static let panelPadding: CGFloat = 24
-    public static let groupCornerRadius: CGFloat = 8
-    public static let controlCornerRadius: CGFloat = 6
-    public static let controlHeight: CGFloat = 28
-    public static let rowHeight: CGFloat = 52
+    @available(*, deprecated, message: "Use Tokens.Space.xl (AB-D-0042)")
+    public static let panelPadding = Tokens.Space.xl
+    @available(*, deprecated, message: "Use Tokens.Radius.container (AB-D-0042; 8 → 12, kit-measured)")
+    public static let groupCornerRadius = Tokens.Radius.container
+    @available(*, deprecated, message: "Use Tokens.Radius.control (AB-D-0042)")
+    public static let controlCornerRadius = Tokens.Radius.control
+    @available(*, deprecated, message: "Use Tokens.Layout.controlHeight (AB-D-0042; 28 → 24)")
+    public static let controlHeight = Tokens.Layout.controlHeight
+    @available(*, deprecated, message: "Use Tokens.Layout.rowHeight (AB-D-0042; 52 → 42)")
+    public static let rowHeight = Tokens.Layout.rowHeight
+    @available(*, deprecated, message: "Use Tokens.Layout.sidebarWidth (AB-D-0042; 200 → 260)")
+    public static let sidebarWidth = Tokens.Layout.sidebarWidth
+    @available(*, deprecated, message: "Use Tokens.Layout.hairline (AB-D-0042)")
+    public static let hairline = Tokens.Layout.hairline
 
-    // MARK: Settings-window geometry
+    // MARK: Settings-window geometry — panel-local BY DESIGN (not fleet vocabulary)
 
-    /// Width of the settings sidebar (section list).
-    public static let sidebarWidth: CGFloat = 200
-    /// The 1pt rule between sidebar and detail.
-    public static let hairline: CGFloat = 1
     /// Width of a settings detail panel, **inclusive of `panelPadding`** — the panels apply
-    /// `.padding(panelPadding)` *inside* a `.frame(width:)`, so this is the total, not the content box.
+    /// `.padding(panelPadding)` *inside* a `.frame(width:)`, so this is the total, not the
+    /// content box.
     public static let panelWidth: CGFloat = 520
 
     /// The narrowest width `EngineSettingsView` can render without clipping — **derived**, never
     /// typed in by hand.
     ///
     /// It shipped as a hardcoded `720` while the columns summed to `sidebarWidth + hairline +
-    /// panelWidth` = **721**, so the declared minimum was 1pt under the content it was supposed to
-    /// admit and the detail column clipped for any host that trusted it. A hardcoded minimum is a
-    /// second source of truth for a number the layout already knows; deriving it means changing a
-    /// column can't silently invalidate the window.
-    public static var settingsMinWidth: CGFloat { sidebarWidth + hairline + panelWidth }
-
-    /// A reasonable opening height for the settings window. **Not** a content guarantee: the detail
-    /// column scrolls, because the model-storage panel grows a row per installed model and no fixed
-    /// height can bound it.
-    public static let settingsMinHeight: CGFloat = 620
-}
-
-// MARK: - Hex helper
-
-extension Color {
-    /// Creates a color from a 24-bit RGB hex value (e.g. `0x1E1E1E`).
-    init(hex: UInt32) {
-        let r = Double((hex >> 16) & 0xFF) / 255.0
-        let g = Double((hex >> 8) & 0xFF) / 255.0
-        let b = Double(hex & 0xFF) / 255.0
-        self.init(.sRGB, red: r, green: g, blue: b, opacity: 1.0)
+    /// panelWidth` = **721**, so the declared minimum was 1pt under the content it was supposed
+    /// to admit and the detail column clipped for any host that trusted it. A hardcoded minimum
+    /// is a second source of truth for a number the layout already knows; deriving it means
+    /// changing a column can't silently invalidate the window. (Now derives from the TOKEN
+    /// sidebar width, so the 200 → 260 change flows through automatically.)
+    public static var settingsMinWidth: CGFloat {
+        Tokens.Layout.sidebarWidth + Tokens.Layout.hairline + panelWidth
     }
+
+    /// A reasonable opening height for the settings window. **Not** a content guarantee: the
+    /// detail column scrolls, because the model-storage panel grows a row per installed model
+    /// and no fixed height can bound it.
+    public static let settingsMinHeight: CGFloat = 620
 }

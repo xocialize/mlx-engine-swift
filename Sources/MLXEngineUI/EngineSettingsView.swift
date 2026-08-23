@@ -9,6 +9,7 @@
 //
 
 import SwiftUI
+import DesignScaffold
 import MLXRetrievalKitContracts
 
 // MARK: - Web Search settings model
@@ -80,10 +81,10 @@ public struct EngineSettingsView: View {
     public var body: some View {
         HStack(spacing: 0) {
             sidebar
-                .frame(width: MarqueeMetric.sidebarWidth)
+                .frame(width: Tokens.Layout.sidebarWidth)
                 .frame(maxHeight: .infinity, alignment: .top)
-                .background(MarqueeColor.bgSecondary)
-            Rectangle().fill(MarqueeColor.bgElevated).frame(width: MarqueeMetric.hairline)
+                .background(Tokens.Color.surface)
+            Rectangle().fill(Tokens.Color.separator).frame(width: Tokens.Layout.hairline)
             // Scrolls because the detail column has no bounded height: the model-storage panel
             // grows a row per installed model (MS-4), so any fixed minHeight is a number the
             // content will eventually exceed — at which point rows, and the delete buttons on
@@ -92,7 +93,7 @@ public struct EngineSettingsView: View {
                 detail
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .background(MarqueeColor.bgPrimary)
+            .background(Tokens.Color.surfaceElevated)
         }
         .frame(minWidth: MarqueeMetric.settingsMinWidth,
                minHeight: MarqueeMetric.settingsMinHeight)
@@ -114,13 +115,13 @@ public struct EngineSettingsView: View {
             selection = section
         } label: {
             Text(section.rawValue)
-                .font(MarqueeFont.bodyMedium)
-                .foregroundStyle(isSelected ? Color.white : MarqueeColor.textSecondary)
+                .font(Tokens.Font.body.weight(.medium))
+                .foregroundStyle(isSelected ? Tokens.Color.label : Tokens.Color.secondaryLabel)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 10)
                 .frame(height: 28)
-                .background(isSelected ? MarqueeColor.selectionBackground : Color.clear)
-                .clipShape(RoundedRectangle(cornerRadius: MarqueeMetric.controlCornerRadius))
+                .background(isSelected ? Tokens.Color.selectionWash : Color.clear)
+                .clipShape(RoundedRectangle(cornerRadius: Tokens.Radius.control))
         }
         .buttonStyle(.plain)
     }
@@ -151,7 +152,7 @@ public struct WebSearchSettingsView: View {
         VStack(alignment: .leading, spacing: 0) {
             Text("Web Search")
                 .font(MarqueeFont.pageTitle)
-                .foregroundStyle(MarqueeColor.textPrimary)
+                .foregroundStyle(Tokens.Color.label)
                 .padding(.bottom, 28)
 
             sectionHeader("GROUNDING")
@@ -161,14 +162,14 @@ public struct WebSearchSettingsView: View {
 
             Text("Grounds answers in current web results via Brave Search. The key is stored "
                 + "locally on this device.")
-                .font(MarqueeFont.caption)
-                .foregroundStyle(MarqueeColor.textMuted)
+                .font(Tokens.Font.caption)
+                .foregroundStyle(Tokens.Color.tertiaryLabel)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, 12)
 
             Spacer()
         }
-        .padding(MarqueeMetric.panelPadding)
+        .padding(Tokens.Space.xl)
         .frame(width: MarqueeMetric.panelWidth, alignment: .leading)
     }
 
@@ -177,13 +178,13 @@ public struct WebSearchSettingsView: View {
             // Enable toggle
             HStack {
                 Text("Enable web search")
-                    .font(MarqueeFont.bodyMedium)
-                    .foregroundStyle(MarqueeColor.textPrimary)
+                    .font(Tokens.Font.body.weight(.medium))
+                    .foregroundStyle(Tokens.Color.label)
                 Spacer()
                 Toggle("", isOn: Binding(get: { model.enabled }, set: { model.setEnabled($0) }))
                     .labelsHidden()
                     .toggleStyle(.switch)
-                    .tint(MarqueeColor.accentBlue)
+                    .tint(Tokens.Color.accent)
             }
             .padding(.horizontal, 16)
             .frame(height: 52)
@@ -193,19 +194,19 @@ public struct WebSearchSettingsView: View {
             // API key field
             HStack(spacing: 12) {
                 Text("Brave API key")
-                    .font(MarqueeFont.bodyMedium)
-                    .foregroundStyle(MarqueeColor.textPrimary)
+                    .font(Tokens.Font.body.weight(.medium))
+                    .foregroundStyle(Tokens.Color.label)
                 Spacer()
                 SecureField(model.hasStoredKey ? "•••• stored — enter to replace" : "Enter Brave API key",
                             text: $model.apiKeyDraft)
                     .textFieldStyle(.plain)
-                    .font(MarqueeFont.body)
-                    .foregroundStyle(MarqueeColor.textPrimary)
+                    .font(Tokens.Font.body)
+                    .foregroundStyle(Tokens.Color.label)
                     .frame(width: 200)
                     .padding(.horizontal, 10)
-                    .frame(height: MarqueeMetric.controlHeight)
-                    .background(MarqueeColor.bgInput)
-                    .clipShape(RoundedRectangle(cornerRadius: MarqueeMetric.controlCornerRadius))
+                    .frame(height: Tokens.Layout.controlHeight)
+                    .background(Tokens.Color.fieldFill)
+                    .clipShape(RoundedRectangle(cornerRadius: Tokens.Radius.control))
                     .onSubmit { model.saveKey() }
                 Button("Save") { model.saveKey() }
                     .buttonStyle(MarqueeButtonStyle(.primary))
@@ -219,8 +220,8 @@ public struct WebSearchSettingsView: View {
             // Depth picker
             HStack {
                 Text("Depth")
-                    .font(MarqueeFont.bodyMedium)
-                    .foregroundStyle(MarqueeColor.textPrimary)
+                    .font(Tokens.Font.body.weight(.medium))
+                    .foregroundStyle(Tokens.Color.label)
                 Spacer()
                 Picker("", selection: Binding(get: { model.profile }, set: { model.setProfile($0) })) {
                     ForEach(RetrievalProfile.allCases, id: \.self) { profile in
@@ -239,12 +240,12 @@ public struct WebSearchSettingsView: View {
             // Status
             HStack(spacing: 6) {
                 Circle()
-                    .fill(model.isActive ? MarqueeColor.success
-                          : (model.hasStoredKey ? MarqueeColor.warning : MarqueeColor.textMuted))
+                    .fill(model.isActive ? Tokens.Color.ready
+                          : (model.hasStoredKey ? Tokens.Color.working : Tokens.Color.tertiaryLabel))
                     .frame(width: 6, height: 6)
                 Text(statusText)
-                    .font(MarqueeFont.caption)
-                    .foregroundStyle(MarqueeColor.textSecondary)
+                    .font(Tokens.Font.caption)
+                    .foregroundStyle(Tokens.Color.secondaryLabel)
                 Spacer()
                 if model.hasStoredKey {
                     Button("Clear key") { model.clearKey() }
@@ -254,8 +255,8 @@ public struct WebSearchSettingsView: View {
             .padding(.horizontal, 16)
             .frame(height: 52)
         }
-        .background(MarqueeColor.bgSecondary)
-        .clipShape(RoundedRectangle(cornerRadius: MarqueeMetric.groupCornerRadius))
+        .background(Tokens.Color.surface)
+        .clipShape(RoundedRectangle(cornerRadius: Tokens.Radius.container))
     }
 
     private var statusText: String {
@@ -266,14 +267,14 @@ public struct WebSearchSettingsView: View {
 
     private func sectionHeader(_ title: String) -> some View {
         Text(title)
-            .font(MarqueeFont.sectionHeader)
+            .font(Tokens.Font.caption.weight(.semibold))
             .tracking(0.5)
-            .foregroundStyle(MarqueeColor.textSecondary)
+            .foregroundStyle(Tokens.Color.secondaryLabel)
     }
 
     private var divider: some View {
         Rectangle()
-            .fill(MarqueeColor.bgElevated)
+            .fill(Tokens.Color.separator)
             .frame(height: 1)
             .padding(.horizontal, 16)
     }

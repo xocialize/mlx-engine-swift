@@ -10,6 +10,7 @@
 
 import MLXToolKit
 import SwiftUI
+import DesignScaffold
 #if canImport(AppKit)
 import AppKit
 #endif
@@ -365,7 +366,7 @@ public struct ModelStorageSettingsView: View {
         VStack(alignment: .leading, spacing: 0) {
             Text("Models")
                 .font(MarqueeFont.pageTitle)
-                .foregroundStyle(MarqueeColor.textPrimary)
+                .foregroundStyle(Tokens.Color.label)
                 .padding(.bottom, 28)
 
             sectionHeader("MODEL STORAGE")
@@ -374,8 +375,8 @@ public struct ModelStorageSettingsView: View {
             storageGroup
 
             Text("Models are downloaded and cached in this folder.")
-                .font(MarqueeFont.caption)
-                .foregroundStyle(MarqueeColor.textMuted)
+                .font(Tokens.Font.caption)
+                .foregroundStyle(Tokens.Color.tertiaryLabel)
                 .padding(.top, 12)
 
             HStack(spacing: 8) {
@@ -409,15 +410,15 @@ public struct ModelStorageSettingsView: View {
 
                 if let error = model.deleteError {
                     Text(error)
-                        .font(MarqueeFont.caption)
-                        .foregroundStyle(MarqueeColor.textPrimary)
+                        .font(Tokens.Font.caption)
+                        .foregroundStyle(Tokens.Color.label)
                         .padding(.top, 10)
                 }
             }
         }
-        .padding(MarqueeMetric.panelPadding)
+        .padding(Tokens.Space.xl)
         .frame(width: MarqueeMetric.panelWidth, alignment: .leading)
-        .background(MarqueeColor.bgPrimary)
+        .background(Tokens.Color.surfaceElevated)
         .confirmationDialog(
             pendingDeletion.map { "Delete \($0.repo)?" } ?? "",
             isPresented: Binding(get: { pendingDeletion != nil },
@@ -441,25 +442,25 @@ public struct ModelStorageSettingsView: View {
     private var storageGroup: some View {
         HStack(spacing: 12) {
             Text("Model Path")
-                .font(MarqueeFont.bodyMedium)
-                .foregroundStyle(MarqueeColor.textPrimary)
+                .font(Tokens.Font.body.weight(.medium))
+                .foregroundStyle(Tokens.Color.label)
             Spacer()
             Text(model.draftPath)
-                .font(MarqueeFont.body)
-                .foregroundStyle(MarqueeColor.textSecondary)
+                .font(Tokens.Font.body)
+                .foregroundStyle(Tokens.Color.secondaryLabel)
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .frame(maxWidth: 220, alignment: .leading)
                 .padding(.horizontal, 10)
-                .frame(height: MarqueeMetric.controlHeight)
-                .background(MarqueeColor.bgInput)
-                .clipShape(RoundedRectangle(cornerRadius: MarqueeMetric.controlCornerRadius))
+                .frame(height: Tokens.Layout.controlHeight)
+                .background(Tokens.Color.fieldFill)
+                .clipShape(RoundedRectangle(cornerRadius: Tokens.Radius.control))
             Button("Choose…") { model.chooseFolder() }
                 .buttonStyle(MarqueeButtonStyle(.secondary))
         }
         .padding(16)
-        .background(MarqueeColor.bgSecondary)
-        .clipShape(RoundedRectangle(cornerRadius: MarqueeMetric.groupCornerRadius))
+        .background(Tokens.Color.surface)
+        .clipShape(RoundedRectangle(cornerRadius: Tokens.Radius.container))
     }
 
     private var statusGroup: some View {
@@ -474,8 +475,8 @@ public struct ModelStorageSettingsView: View {
             divider
             statusRow("Last Scan", model.status.lastScan)
         }
-        .background(MarqueeColor.bgSecondary)
-        .clipShape(RoundedRectangle(cornerRadius: MarqueeMetric.groupCornerRadius))
+        .background(Tokens.Color.surface)
+        .clipShape(RoundedRectangle(cornerRadius: Tokens.Radius.container))
     }
 
     /// Per-model rows with a guarded delete (MS-4). Only rendered when the app injected a deleter,
@@ -487,35 +488,35 @@ public struct ModelStorageSettingsView: View {
                 installedRow(item)
             }
         }
-        .background(MarqueeColor.bgSecondary)
-        .clipShape(RoundedRectangle(cornerRadius: MarqueeMetric.groupCornerRadius))
+        .background(Tokens.Color.surface)
+        .clipShape(RoundedRectangle(cornerRadius: Tokens.Radius.container))
     }
 
     private func installedRow(_ item: ModelStore.InstalledModel) -> some View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.repo)
-                    .font(MarqueeFont.bodyMedium)
-                    .foregroundStyle(MarqueeColor.textPrimary)
+                    .font(Tokens.Font.body.weight(.medium))
+                    .foregroundStyle(Tokens.Color.label)
                     .lineLimit(1)
                     .truncationMode(.middle)
                 if !item.hasMarker {
                     Text("incomplete — no install marker")
-                        .font(MarqueeFont.caption)
-                        .foregroundStyle(MarqueeColor.textMuted)
+                        .font(Tokens.Font.caption)
+                        .foregroundStyle(Tokens.Color.tertiaryLabel)
                 }
             }
             Spacer()
             Text(model.formattedSize(of: item))
-                .font(MarqueeFont.body)
-                .foregroundStyle(MarqueeColor.textSecondary)
+                .font(Tokens.Font.body)
+                .foregroundStyle(Tokens.Color.secondaryLabel)
                 .monospacedDigit()
             Button("Delete…") { pendingDeletion = item }
                 .buttonStyle(MarqueeButtonStyle(.secondary))
                 .disabled(model.deletingRepo != nil)
         }
         .padding(.horizontal, 16)
-        .frame(minHeight: MarqueeMetric.rowHeight)
+        .frame(minHeight: Tokens.Layout.rowHeight)
         .padding(.vertical, item.hasMarker ? 0 : 6)
     }
 
@@ -523,28 +524,28 @@ public struct ModelStorageSettingsView: View {
 
     private func sectionHeader(_ title: String) -> some View {
         Text(title)
-            .font(MarqueeFont.sectionHeader)
+            .font(Tokens.Font.caption.weight(.semibold))
             .tracking(0.5)
-            .foregroundStyle(MarqueeColor.textSecondary)
+            .foregroundStyle(Tokens.Color.secondaryLabel)
     }
 
     private func statusRow(_ label: String, _ value: String) -> some View {
         HStack {
             Text(label)
-                .font(MarqueeFont.bodyMedium)
-                .foregroundStyle(MarqueeColor.textPrimary)
+                .font(Tokens.Font.body.weight(.medium))
+                .foregroundStyle(Tokens.Color.label)
             Spacer()
             Text(value)
-                .font(MarqueeFont.body)
-                .foregroundStyle(MarqueeColor.textSecondary)
+                .font(Tokens.Font.body)
+                .foregroundStyle(Tokens.Color.secondaryLabel)
         }
         .padding(.horizontal, 16)
-        .frame(height: MarqueeMetric.rowHeight)
+        .frame(height: Tokens.Layout.rowHeight)
     }
 
     private var divider: some View {
         Rectangle()
-            .fill(MarqueeColor.bgElevated)
+            .fill(Tokens.Color.separator)
             .frame(height: 1)
             .padding(.horizontal, 16)
     }
@@ -552,11 +553,11 @@ public struct ModelStorageSettingsView: View {
     private var readyPill: some View {
         HStack(spacing: 6) {
             Circle()
-                .fill(model.status.isReady ? MarqueeColor.success : MarqueeColor.warning)
+                .fill(model.status.isReady ? Tokens.Color.ready : Tokens.Color.working)
                 .frame(width: 6, height: 6)
             Text(model.status.isReady ? "Ready" : "Scanning")
-                .font(MarqueeFont.caption)
-                .foregroundStyle(MarqueeColor.textPrimary)
+                .font(Tokens.Font.caption)
+                .foregroundStyle(Tokens.Color.label)
         }
         .padding(.horizontal, 12)
         .frame(height: 22)
@@ -578,15 +579,15 @@ public struct MarqueeButtonStyle: ButtonStyle {
     public init(_ kind: Kind) { self.kind = kind }
 
     public func makeBody(configuration: Configuration) -> some View {
-        let background = kind == .primary ? MarqueeColor.accentBlue : MarqueeColor.bgElevated
-        let foreground = kind == .primary ? Color.white : MarqueeColor.textPrimary
+        let background = kind == .primary ? Tokens.Color.accent : MarqueeColor.bgElevated
+        let foreground = kind == .primary ? Color.white : Tokens.Color.label
         return configuration.label
-            .font(MarqueeFont.bodyMedium)
+            .font(Tokens.Font.body.weight(.medium))
             .foregroundStyle(foreground)
             .padding(.horizontal, 14)
-            .frame(height: MarqueeMetric.controlHeight)
+            .frame(height: Tokens.Layout.controlHeight)
             .background(background.opacity(configuration.isPressed ? 0.7 : 1.0))
-            .clipShape(RoundedRectangle(cornerRadius: MarqueeMetric.controlCornerRadius))
+            .clipShape(RoundedRectangle(cornerRadius: Tokens.Radius.control))
             .opacity(isEnabled ? 1.0 : 0.4)
     }
 }

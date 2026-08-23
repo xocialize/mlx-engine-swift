@@ -39,6 +39,11 @@ let package = Package(
         // MLXToolKit (the contract packages build against offline) stays dependency-free —
         // SwiftPM's target-based resolution keeps MLXToolKit-only consumers from pulling MLX.
         .package(url: "https://github.com/ml-explore/mlx-swift", from: "0.31.5"),
+        // The fleet's design vocabulary (AB-D-0042). UI-target-only (see MLXEngineUI's deps);
+        // zero-dependency SwiftUI leaf, MIT — the "one runtime dependency" note above still
+        // holds for the engine core: this never reaches MLXToolKit or MLXServeCore.
+        // ≥0.4.1 for Tokens.Color.selectionWash + fieldFill (shipped for AB-A-0019).
+        .package(url: "https://github.com/xocialize/DesignScaffold", from: "0.4.1"),
     ],
     targets: [
         // Contracts only. The dependency floor every package conforms to. Minimal deps.
@@ -74,6 +79,10 @@ let package = Package(
         // call sites read. Same shape as `BraveKeyStore` living in MLXRetrievalKitContracts —
         // the credential store sits where BOTH the settings UI and its consumer can see it.
         .target(name: "MLXEngineUI", dependencies: [
+            // The fleet's design authority (AB-D-0042 / AB-A-0019): vocabulary tokens only,
+            // scoped to the UI target — MLXToolKit/MLXServeCore stay dependency-free of it.
+            // Zero-dependency SwiftUI leaf, MIT, public.
+            .product(name: "DesignScaffold", package: "DesignScaffold"),
             "MLXToolKit", "MLXRetrievalKitContracts", "MLXHubMetadata",
         ]),
 
