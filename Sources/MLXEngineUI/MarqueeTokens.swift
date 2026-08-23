@@ -20,13 +20,8 @@
 //    - `panelWidth` / `settingsMinWidth` / `settingsMinHeight` — settings-window geometry,
 //      a property of these panels rather than the fleet vocabulary.
 //    - `accentGold` — Marquee brand accent, unused in-tree; kept only for API stability.
-//    - `pageTitle` — awaiting `Tokens.Font.panelTitle` (18 semibold; requested with usage
-//      evidence in AB-A-0019: three settings-panel headers at 520pt width, where the 22pt
-//      `screenTitle` would be oversized).
-//    - `bgElevated`'s FILL role — awaiting `Tokens.Color.fillElevated`. Its DIVIDER role
-//      (4 of 6 sites) was split off to `Tokens.Color.separator` in-tree per the AB-A-0019
-//      review; the two fill sites (capsule badge, secondary-button fill) keep this value
-//      until the token ships.
+//    (pageTitle and bgElevated's fill role completed with DesignScaffold 0.4.2's
+//      `panelTitle` + `fillElevated`; bgElevated remains a SPLIT symbol — see its doc.)
 //
 
 import SwiftUI
@@ -41,11 +36,11 @@ public enum MarqueeColor {
     public static let bgSecondary = Tokens.Color.surface
     @available(*, deprecated, message: "Use Tokens.Color.surface (AB-D-0042); no header-specific token exists and nothing in-tree uses this")
     public static let bgHeader = Tokens.Color.surface
-    /// ⚠️ Split symbol: divider uses moved to `Tokens.Color.separator` in-tree. This literal
-    /// remains ONLY for the two fill sites (badge capsule, secondary-button fill) until
-    /// DesignScaffold ships `Tokens.Color.fillElevated` (AB-A-0019 Q1 answer: split).
-    public static let bgElevated = Color(.sRGB, red: 0x3C / 255.0, green: 0x3C / 255.0,
-                                         blue: 0x3C / 255.0, opacity: 1.0)
+    /// ⚠️ Split symbol (AB-A-0019 Q1): this was BOTH the divider and the raised-control fill.
+    /// Divider uses are `Tokens.Color.separator`; the fill forwards below. Migrators must pick
+    /// per site — forwarding both roles to one token would re-create the conflation.
+    @available(*, deprecated, message: "Divider uses → Tokens.Color.separator; fill uses → Tokens.Color.fillElevated (AB-D-0042)")
+    public static let bgElevated = Tokens.Color.fillElevated
     @available(*, deprecated, message: "Use Tokens.Color.fieldFill (AB-D-0042; note it sits darker in dark mode than the old #2D2D2D — that is adaptation, not regression)")
     public static let bgInput = Tokens.Color.fieldFill
 
@@ -75,8 +70,8 @@ public enum MarqueeColor {
 // MARK: - Typography forwarders
 
 public enum MarqueeFont {
-    /// Awaiting `Tokens.Font.panelTitle` (AB-A-0019) — the one type-ramp addition requested.
-    public static let pageTitle = Font.system(size: 18, weight: .semibold)
+    @available(*, deprecated, message: "Use Tokens.Font.panelTitle (AB-D-0042; added on the AB-A-0019 usage evidence)")
+    public static let pageTitle = Tokens.Font.panelTitle
     @available(*, deprecated, message: "Use Tokens.Font.caption.weight(.semibold) (AB-D-0042)")
     public static let sectionHeader = Tokens.Font.caption.weight(.semibold)
     @available(*, deprecated, message: "Use Tokens.Font.body.weight(.medium) (AB-D-0042)")

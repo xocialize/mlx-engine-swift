@@ -151,7 +151,7 @@ public struct WebSearchSettingsView: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text("Web Search")
-                .font(MarqueeFont.pageTitle)
+                .font(Tokens.Font.panelTitle)
                 .foregroundStyle(Tokens.Color.label)
                 .padding(.bottom, 28)
 

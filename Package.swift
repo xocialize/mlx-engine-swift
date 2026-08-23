@@ -42,8 +42,8 @@ let package = Package(
         // The fleet's design vocabulary (AB-D-0042). UI-target-only (see MLXEngineUI's deps);
         // zero-dependency SwiftUI leaf, MIT — the "one runtime dependency" note above still
         // holds for the engine core: this never reaches MLXToolKit or MLXServeCore.
-        // ≥0.4.1 for Tokens.Color.selectionWash + fieldFill (shipped for AB-A-0019).
-        .package(url: "https://github.com/xocialize/DesignScaffold", from: "0.4.1"),
+        // ≥0.4.2 for selectionWash + fieldFill + fillElevated + Font.panelTitle (shipped for AB-A-0019).
+        .package(url: "https://github.com/xocialize/DesignScaffold", from: "0.4.2"),
     ],
     targets: [
         // Contracts only. The dependency floor every package conforms to. Minimal deps.

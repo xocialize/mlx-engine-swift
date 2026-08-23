@@ -365,7 +365,7 @@ public struct ModelStorageSettingsView: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text("Models")
-                .font(MarqueeFont.pageTitle)
+                .font(Tokens.Font.panelTitle)
                 .foregroundStyle(Tokens.Color.label)
                 .padding(.bottom, 28)
 
@@ -561,7 +561,7 @@ public struct ModelStorageSettingsView: View {
         }
         .padding(.horizontal, 12)
         .frame(height: 22)
-        .background(MarqueeColor.bgElevated)
+        .background(Tokens.Color.fillElevated)
         .clipShape(Capsule())
     }
 }
@@ -579,7 +579,7 @@ public struct MarqueeButtonStyle: ButtonStyle {
     public init(_ kind: Kind) { self.kind = kind }
 
     public func makeBody(configuration: Configuration) -> some View {
-        let background = kind == .primary ? Tokens.Color.accent : MarqueeColor.bgElevated
+        let background = kind == .primary ? Tokens.Color.accent : Tokens.Color.fillElevated
         let foreground = kind == .primary ? Color.white : Tokens.Color.label
         return configuration.label
             .font(Tokens.Font.body.weight(.medium))

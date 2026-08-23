@@ -145,7 +145,7 @@ public struct HuggingFaceSettingsView: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text("Hugging Face")
-                .font(MarqueeFont.pageTitle)
+                .font(Tokens.Font.panelTitle)
                 .foregroundStyle(Tokens.Color.label)
                 .padding(.bottom, 28)
 
