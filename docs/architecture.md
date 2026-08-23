@@ -20,6 +20,23 @@ engine does the coordination around them.
   (non-HF hosts, wrappers that fetch internally); those packages keep downloading through their
   own client, pointed at the same root. The engine's executor verifies per-file **size**; deeper
   integrity (xet chunk hashes / ETags) remains a hub client's domain.
+  Since contract **1.37.0** the executor is also **interruption-tolerant**: files at or above
+  64 MB download as ranged chunks whose completions are recorded in a `<file>.partial.ranges`
+  sidecar, so an interrupted transfer resumes at chunk granularity instead of restarting the file,
+  and transient faults (dropped connection, timeout, 429/5xx) retry inside the executor on a
+  configurable `WeightMaterializer.RetryPolicy` before anything reaches the consumer. On that path
+  the **ledger**, not the file's size, is the completeness guard — a preallocated partial is
+  byte-identical to a complete file full of zero-holes.
+- **Hub credentials** — one chain, resolved **per request** by `HFTokenStore` (`MLXHubMetadata`):
+  the `HF_TOKEN` / `HUGGING_FACE_HUB_TOKEN` environment variables, then the **Keychain**, then the
+  `huggingface-cli` token file. Both hub call sites (the metadata listing and the download) share
+  it, so a gated repo cannot enumerate under one identity and 401 under another. Inside an App
+  Sandbox the Keychain is the *only* working source — no shell environment is inherited and the
+  container's home is not where the CLI wrote its token — which is why `MLXEngineUI` ships a
+  Hugging Face settings panel. A token buys gated/private access and a per-account rate limit in
+  place of the anonymous per-source-IP one; hosts inject their own with
+  `MLXServeEngine(hfTokenProvider:)`. A Keychain that cannot be read falls through to the next
+  source rather than failing a download that would have worked anonymously.
 - **Disk governance** — the store's counterpart to memory governance: `WeightSourcing.
   missingWeightSources(storeRoot:)` ships a default probe over that layout,
   `MLXServeEngine.deleteWeights(repo:)` deletes a repo's weights but **refuses while a resident

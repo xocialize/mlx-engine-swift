@@ -69,7 +69,13 @@ let package = Package(
 
         // Shared SwiftUI surface delivered to consuming apps. Carries the Marquee
         // design tokens and reusable settings panels (model storage, etc.).
-        .target(name: "MLXEngineUI", dependencies: ["MLXToolKit", "MLXRetrievalKitContracts"]),
+        // MLXHubMetadata is Foundation + URLSession only (no MLX, no downloads): it carries
+        // `HFTokenStore`, which the Hugging Face settings panel writes and the engine's two hub
+        // call sites read. Same shape as `BraveKeyStore` living in MLXRetrievalKitContracts —
+        // the credential store sits where BOTH the settings UI and its consumer can see it.
+        .target(name: "MLXEngineUI", dependencies: [
+            "MLXToolKit", "MLXRetrievalKitContracts", "MLXHubMetadata",
+        ]),
 
         // Reusable testing/validation harness for category testing apps. SwiftUI + engine targets
         // only (no third-party frameworks); kept lean + composable — apps extend it per package.

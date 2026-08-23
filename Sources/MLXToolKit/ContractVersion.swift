@@ -564,5 +564,31 @@ public enum ContractVersion {
     //   reading attached; the mid-run overlay signal a host cannot build from its own
     //   phys_footprint. The long-exclusive-job envelope hint (ask 4) is deliberately DEFERRED:
     //   no engine behavior would change on it yet, and speculative surface is how contracts rot.
-    public static let current = SemanticVersion(major: 1, minor: 36, patch: 0)
+    // 1.37.0 (2026-08-22, additive): RESILIENT, AUTHENTICATED MATERIALIZATION — closes AB-A-0016.
+    //   The engine could download a 60 GB pack but not survive a blip in one, and a sandboxed app
+    //   could not authenticate at all. (1) CHUNK-GRANULAR RESUME: `WeightMaterializer` records each
+    //   completed ≥64 MB ranged chunk in a `<file>.partial.ranges` sidecar (fsync'd AFTER the data
+    //   it describes) and keeps the partial on failure, so an interruption costs one chunk instead
+    //   of the file — the field receipt was a dropped connection 21 minutes into a ~60 GB pull
+    //   discarding ~28 GB of a ~35 GB file, twice in one afternoon. The delete-on-error it replaces
+    //   was NOT paranoia: a preallocated partial is byte-identical to a complete file full of
+    //   zero-holes, so the size guard would have waved a corrupt weight file through. The ledger is
+    //   what makes keeping it safe, and `isComplete` — not file size — is now the completeness
+    //   guard on that path. (2) BOUNDED RETRY: transient `URLError`s (-1005/-1001/-1009 and kin)
+    //   plus 408/429/5xx retry inside the executor on `WeightMaterializer.RetryPolicy` (default:
+    //   4 attempts, 15/45/120 s), with the failed attempt's bytes rolled back out of the progress
+    //   total so a retry cannot report >100%. Cancellation and 401/403/404 are never retried.
+    //   (3) ONE TOKEN CHAIN, KEYCHAIN-BACKED: `HFTokenStore` (MLXHubMetadata) resolves `HF_TOKEN` /
+    //   `HUGGING_FACE_HUB_TOKEN`, then the Keychain, then the CLI token file — resolved PER REQUEST
+    //   through a `@Sendable () -> String?` provider that both hub call sites now share.
+    //   `HubMetadataClient` previously captured `HF_TOKEN` once at init, so a listing could
+    //   authenticate while the download behind it did not, and in an App Sandbox both non-Keychain
+    //   sources are dead (no inherited environment; the container's home is not where
+    //   `huggingface-cli` wrote). `MLXServeEngine(hfTokenProvider:materializationRetryPolicy:)`
+    //   injects both; `MLXEngineUI` gains a Hugging Face settings panel with hub-verified tokens
+    //   (`HubMetadataClient.whoami()`). A Keychain that cannot be read is never an error — it falls
+    //   through to the next source, because a credential lookup must not break an anonymous
+    //   download that would have worked. Additive with one caveat: `MaterializeError` gains
+    //   `.truncated`, so an exhaustive `switch` over it in consumer code needs a new case.
+    public static let current = SemanticVersion(major: 1, minor: 37, patch: 0)
 }

@@ -45,6 +45,25 @@ public enum HubMetadataError: Error, Sendable, Equatable {
     case httpStatus(Int)
     /// The response body was not the expected tree JSON.
     case malformedResponse
+    /// The hub rejected the token (401/403) — expired, revoked, or wrong account.
+    case unauthorized
+    /// Nothing to verify: no token in the environment, the Keychain, or the CLI token file.
+    case noToken
+}
+
+/// The account a token belongs to (`/api/whoami-v2`), for a settings UI's "verify" affordance.
+public struct HubIdentity: Sendable, Equatable {
+    /// The user or organization name the token authenticates as.
+    public let name: String
+    /// `"user"` / `"org"` as reported by the hub, when present.
+    public let kind: String?
+    public let email: String?
+
+    public init(name: String, kind: String? = nil, email: String? = nil) {
+        self.name = name
+        self.kind = kind
+        self.email = email
+    }
 }
 
 /// Live implementation over the HF tree API:
@@ -56,15 +75,30 @@ public enum HubMetadataError: Error, Sendable, Equatable {
 public struct HubMetadataClient: HubMetadataProviding {
     private let endpoint: URL
     private let session: URLSession
-    /// Optional token for gated/private repos; nil = anonymous (the normal case for our fleet).
-    private let token: String?
+    /// Resolved **per request** for gated/private repos and for the per-user rate limit; nil = the
+    /// anonymous listing (the normal case for our fleet).
+    ///
+    /// This used to be a `String?` captured at init from `HF_TOKEN`, which had two defects a
+    /// consuming app hits immediately: a token entered in Settings after the engine was built never
+    /// took effect, and inside an App Sandbox the environment is empty so the listing authenticated
+    /// differently from the download that followed it. Both call sites now resolve the same chain,
+    /// at the same time (AB-A-0016).
+    private let tokenProvider: @Sendable () -> String?
 
     public init(endpoint: URL = URL(string: "https://huggingface.co")!,
                 session: URLSession = .shared,
-                token: String? = ProcessInfo.processInfo.environment["HF_TOKEN"]) {
+                tokenProvider: @escaping @Sendable () -> String? = HFTokenStore.shared.provider()) {
         self.endpoint = endpoint
         self.session = session
-        self.token = token
+        self.tokenProvider = tokenProvider
+    }
+
+    /// Fixed-token convenience — a caller that already holds one (a test, a CLI flag). Passing nil
+    /// means **anonymous**, not "resolve the chain"; use the `tokenProvider:` initializer for that.
+    public init(endpoint: URL = URL(string: "https://huggingface.co")!,
+                session: URLSession = .shared,
+                token: String?) {
+        self.init(endpoint: endpoint, session: session, tokenProvider: { token })
     }
 
     public func files(repo: String, revision: String?) async throws -> [HubFileEntry] {
@@ -72,13 +106,44 @@ public struct HubMetadataClient: HubMetadataProviding {
             .appending(path: "api/models/\(repo)/tree/\(revision ?? "main")")
             .appending(queryItems: [URLQueryItem(name: "recursive", value: "true")])
         var request = URLRequest(url: url)
-        if let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+        if let token = tokenProvider() {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
 
         let (data, response) = try await session.data(for: request)
         if let http = response as? HTTPURLResponse, http.statusCode != 200 {
             throw HubMetadataError.httpStatus(http.statusCode)
         }
         return try Self.parseTree(data)
+    }
+
+    /// Who the resolved token belongs to — `GET /api/whoami-v2`.
+    ///
+    /// Exists so a settings UI can verify a token **when it is pasted** rather than forty minutes
+    /// into a materialization: a wrong token is otherwise indistinguishable from a gated repo, and
+    /// both surface as a 401 on a file the user never sees named.
+    ///
+    /// - Parameter token: an explicit token to check; nil verifies whatever `tokenProvider` resolves.
+    /// - Throws: ``HubMetadataError/unauthorized`` when the hub rejects the token,
+    ///   ``HubMetadataError/noToken`` when there is nothing to check.
+    public func whoami(token explicit: String? = nil) async throws -> HubIdentity {
+        guard let token = explicit ?? tokenProvider() else { throw HubMetadataError.noToken }
+        var request = URLRequest(url: endpoint.appending(path: "api/whoami-v2"))
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+
+        let (data, response) = try await session.data(for: request)
+        if let http = response as? HTTPURLResponse, http.statusCode != 200 {
+            throw http.statusCode == 401 || http.statusCode == 403
+                ? HubMetadataError.unauthorized
+                : HubMetadataError.httpStatus(http.statusCode)
+        }
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let name = object["name"] as? String else {
+            throw HubMetadataError.malformedResponse
+        }
+        return HubIdentity(name: name,
+                           kind: object["type"] as? String,
+                           email: object["email"] as? String)
     }
 
     /// Parse a `/tree` response body. Directories appear in the listing with `type: "directory"`

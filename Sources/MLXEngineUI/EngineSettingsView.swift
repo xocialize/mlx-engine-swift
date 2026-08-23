@@ -61,16 +61,19 @@ public final class WebSearchSettingsModel {
 public struct EngineSettingsView: View {
     enum SettingsSection: String, CaseIterable, Identifiable {
         case modelStorage = "Model Storage"
+        case huggingFace = "Hugging Face"
         case webSearch = "Web Search"
         var id: String { rawValue }
     }
 
     @State private var selection: SettingsSection = .modelStorage
     @State private var storage: ModelStorageModel
+    @State private var huggingFace: HFTokenSettingsModel
     @State private var webSearch: WebSearchSettingsModel
 
     public init(storage: ModelStorageModel) {
         _storage = State(initialValue: storage)
+        _huggingFace = State(initialValue: HFTokenSettingsModel())
         _webSearch = State(initialValue: WebSearchSettingsModel())
     }
 
@@ -127,6 +130,8 @@ public struct EngineSettingsView: View {
         switch selection {
         case .modelStorage:
             ModelStorageSettingsView(model: storage)
+        case .huggingFace:
+            HuggingFaceSettingsView(model: huggingFace)
         case .webSearch:
             WebSearchSettingsView(model: webSearch)
         }

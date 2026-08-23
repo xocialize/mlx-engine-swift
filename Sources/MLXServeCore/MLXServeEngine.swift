@@ -246,8 +246,10 @@ public actor MLXServeEngine {
                 wiredLimit: WiredLimitConfiguration = WiredLimitConfiguration(),
                 preemption: PreemptionPolicy = PreemptionPolicy(),
                 physFootprint: @Sendable @escaping () -> UInt64? = HostMemory.physFootprint,
-                hubMetadata: any HubMetadataProviding = HubMetadataClient(),
+                hubMetadata: (any HubMetadataProviding)? = nil,
                 materializer: (any WeightMaterializing)? = nil,
+                hfTokenProvider: (@Sendable () -> String?)? = nil,
+                materializationRetryPolicy: WeightMaterializer.RetryPolicy = .default,
                 diskPrecheckEnabled: Bool = true) {
         self.policy = policy
         self.licenseEnforcement = licenseEnforcement
@@ -257,8 +259,19 @@ public actor MLXServeEngine {
         self.wiredLimit = wiredLimit
         self.preemption = preemption
         self.physFootprint = physFootprint
-        self.hubMetadata = hubMetadata
-        self.materializer = materializer ?? WeightMaterializer(listing: hubMetadata)
+        // One token resolution for BOTH hub call sites (AB-A-0016 ask 3). A listing that
+        // authenticates while the download that follows it does not is how a gated repo enumerates
+        // fine and then 401s a file the user never sees named. `nil` resolves the shared chain —
+        // env, then Keychain, then the CLI token file — per request, so a token entered in Settings
+        // takes effect on the next download rather than the next launch.
+        //
+        // An INJECTED `hubMetadata` is left exactly as given: it is the caller's object, and
+        // silently re-tokenizing someone else's provider would be a surprise.
+        let tokens = hfTokenProvider ?? HFTokenStore.shared.provider()
+        let hub = hubMetadata ?? HubMetadataClient(tokenProvider: tokens)
+        self.hubMetadata = hub
+        self.materializer = materializer ?? WeightMaterializer(
+            listing: hub, tokenProvider: tokens, retryPolicy: materializationRetryPolicy)
         self.diskPrecheckEnabled = diskPrecheckEnabled
         // Bound MLX's process-global buffer-recycling pool NOW (before any package loads or
         // runs) so interactive consumers stop ratcheting phys_footprint by GBs per turn
