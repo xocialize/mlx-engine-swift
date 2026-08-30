@@ -121,10 +121,41 @@ extension SPDXLicense {
     /// one). Used by the LFM2.5-8B-A1B `llm` package (LFMLLMPackage).
     public static let lfmOpen1: SPDXLicense = "LicenseRef-LFM-Open-1.0"
 
+    /// Audio8's Community License v1.0 (the Audio8-TTS-Preview-0.1b weights). Non-SPDX,
+    /// referenced via the `LicenseRef-` convention. Reviewed against the full license text
+    /// shipped in the model repo (2026-08-30):
+    ///
+    /// - **§2.1** Non-Commercial Use — reproduce, modify and redistribute, freely.
+    /// - **§2.2** Commercial Use is **permitted** where the Entity's consolidated Annual
+    ///   Revenue is below **US$2,000,000**.
+    /// - **§2.3** At or above that threshold, Commercial Use requires a separate written
+    ///   licence from Audio8.
+    /// - **§3** Attribution on any redistribution, modified or not. No non-compete, no
+    ///   derivative-restriction clause, no eval-only clause.
+    ///
+    /// Same SHAPE as the allowlisted `ltx2Community` — source-available with a revenue gate —
+    /// and lacking that licence's §A.20 non-compete, so it is not the more restrictive of the
+    /// two on obligations. It IS more restrictive on the threshold: **US$2M against LTX-2's
+    /// US$10M**, which is low enough to bind a real business rather than only a large one.
+    /// That number is stated here deliberately: "revenue-capped, like LTX-2" is the summary a
+    /// future reader would otherwise carry away, and the thresholds differ by 5x.
+    ///
+    /// On that basis this project **permits** the licence, and it lives on
+    /// `permissiveAllowlist`. Note that enforcement defaults to `.advisory`, so a consuming
+    /// app should still surface the cap to its users — it is exactly the kind of term worth
+    /// showing in a model list.
+    ///
+    /// Only the LM weights carry this licence. The bundled 44.1 kHz codec is **Apache-2.0**:
+    /// upstream ships a byte-identical `codec.pth` in the Apache-2.0
+    /// `Audio8/Audio8-TTS-Preview-0.6b` repo (same LFS oid; verified bit-identical across the
+    /// encoder, the quantizer decode and the full decode), and our converted tensors derive
+    /// from that repo. The port code (mlx-audio8-tts-swift) is Apache-2.0.
+    public static let audio8Community: SPDXLicense = "LicenseRef-Audio8-Community"
+
     /// The permissive allowlist used by `.permissiveOnly`. Curated; extend deliberately.
     public static let permissiveAllowlist: Set<SPDXLicense> = [
         .mit, .apache2, .bsd2, .bsd3, .isc, .unlicense, .funasrModel, .ccBy4, .ltx2Community, .dinov3,
-        .gemmaTerms, .nvidiaOpenModel, .openMDW1_1, .lfmOpen1,
+        .gemmaTerms, .nvidiaOpenModel, .openMDW1_1, .lfmOpen1, .audio8Community,
     ]
 
     /// Non-permissive licenses explicitly acknowledged for **eval/research** use only. These are
