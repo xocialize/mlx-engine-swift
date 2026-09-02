@@ -66,14 +66,39 @@ extension SPDXLicense {
     /// eval/personal-use opt-in. Used by the Anima anime-T2I port (AnimaT2IPackage).
     public static let circleStoneNonCommercial: SPDXLicense = "LicenseRef-CircleStone-NonCommercial"
 
-    /// bilibili's IndexTTS2 model license (INDEX_MODEL_LICENSE). Non-SPDX, referenced via
-    /// `LicenseRef-`. **NON-permissive** — personal / research / educational use permitted;
-    /// commercial use requires bilibili's separate written authorization. Deliberately NOT on
-    /// `permissiveAllowlist`; admitted ONLY under `.permissiveOrAcknowledged` as an explicit
-    /// eval/personal-use opt-in (same pattern as Anima). The port code (mlx-indextts2-swift,
-    /// donor solar2ain/mlx-indextts) is Apache-2.0/MIT — only the weights carry this license.
-    /// Used by the IndexTTS2 emotion+duration TTS port (IndexTTS2Package).
+    /// bilibili's ORIGINAL IndexTTS2 (2.0) model license (INDEX_MODEL_LICENSE) — personal /
+    /// research / educational use only, commercial use by separate written authorization.
+    /// **RETIRED 2026-09-02** (AB-D IndexTTS-2.5 license update): the fleet's only consumer,
+    /// mlx-indextts2-swift, moved to the IndexTTS-2.5 weights under `bilibiliModelUse`, and the
+    /// non-commercial 2.0 tier was removed rather than carried. Kept as a constant so old
+    /// manifests still decode; it is on NO allowlist, so a package declaring it is rejected
+    /// under `.permissiveOnly` AND `.permissiveOrAcknowledged` alike.
+    @available(*, deprecated, message: "IndexTTS-2.0 tier retired; IndexTTS-2.5 ships under .bilibiliModelUse")
     public static let indexTTS2Model: SPDXLicense = "LicenseRef-Index-Model"
+
+    /// bilibili Model Use License Agreement — the license on the **IndexTTS-2.5** weights
+    /// (IndexTeam/IndexTTS-2.5 LICENSE; bilibili indextts2 model family). Non-SPDX, referenced
+    /// via `LicenseRef-`. Reviewed against the full agreement text (2026-09-02): **commercially
+    /// permissive** — §2.1 grants a worldwide, non-exclusive, royalty-free license to "Use" the
+    /// Model and Derivative Works, where §1.6 "Use" expressly includes distributing, publishing,
+    /// running, modifying and fine-tuning, with no field-of-use, eval-only, or non-commercial
+    /// clause and no claim on outputs. The single commercial carve-out is a **scale gate** (§2.2):
+    /// an entity whose products exceeded **100 million monthly active users** in the preceding
+    /// month or **RMB 1 billion annual revenue** in the preceding year must obtain a separate
+    /// license. That is the same shape as the allowlisted `ltx2Community` (US$10 M gate +
+    /// non-compete) and `lfmOpen1` (US$10 M gate) with a threshold two to three orders of
+    /// magnitude higher and no non-compete, so this project **permits** it under the same
+    /// rationale (AB-D-0055's counter-case, Audio8 at US$2 M, sat far below LTX-2's bar; this
+    /// one sits far above it). Obligations to honor wherever the weights ship: §3.4(b) retain
+    /// the copyright notices + a copy of the Agreement; §3.4(a) flow the terms to downstream
+    /// recipients; §4.1(a) the "not endorsed … by the original right-holder" statement on any
+    /// distributed Derivative Work (our mlx-community conversions carry it); §3.4(c) no use
+    /// of the model to improve OTHER commercial AI models; §4.2 high-risk-deployment AUP;
+    /// §5.3 defensive-patent termination (Apache-2.0 §3 shape). Governing law PRC / Shanghai
+    /// arbitration; the Chinese text prevails (§9). The pass is CONDITIONAL on the §2.2
+    /// thresholds — record them where the weights ship and revisit at crossing.
+    /// Supersedes `indexTTS2Model` (the 2.0 non-commercial terms) for the IndexTTS2 port.
+    public static let bilibiliModelUse: SPDXLicense = "LicenseRef-Bilibili-Model-Use"
 
     /// NVIDIA Open Model License Agreement (v. June 14, 2024). Non-SPDX, referenced via the
     /// `LicenseRef-` convention. Reviewed against the full agreement text: **commercially
@@ -124,7 +149,7 @@ extension SPDXLicense {
     /// The permissive allowlist used by `.permissiveOnly`. Curated; extend deliberately.
     public static let permissiveAllowlist: Set<SPDXLicense> = [
         .mit, .apache2, .bsd2, .bsd3, .isc, .unlicense, .funasrModel, .ccBy4, .ltx2Community, .dinov3,
-        .gemmaTerms, .nvidiaOpenModel, .openMDW1_1, .lfmOpen1,
+        .gemmaTerms, .nvidiaOpenModel, .openMDW1_1, .lfmOpen1, .bilibiliModelUse,
     ]
 
     /// Non-permissive licenses explicitly acknowledged for **eval/research** use only. These are
@@ -133,10 +158,10 @@ extension SPDXLicense {
     /// deliberate, auditable opt-in — extend only when a port is gated to evaluation, never for
     /// shippable capabilities.
     /// - `circleStoneNonCommercial`: the Anima anime-T2I weights (personal/research use only).
-    /// - `indexTTS2Model`: the IndexTTS2 TTS weights (commercial use needs bilibili written
-    ///   authorization).
+    /// (`indexTTS2Model` — the IndexTTS-2.0 non-commercial terms — left this list 2026-09-02 when
+    /// the port moved to IndexTTS-2.5 under the allowlisted `bilibiliModelUse`.)
     public static let evalAcknowledgedAllowlist: Set<SPDXLicense> = [
-        .circleStoneNonCommercial, .indexTTS2Model,
+        .circleStoneNonCommercial,
     ]
 
     public var isPermissive: Bool { SPDXLicense.permissiveAllowlist.contains(self) }
