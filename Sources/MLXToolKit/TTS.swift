@@ -16,6 +16,42 @@ public struct VoiceSelector: Sendable, Codable, Equatable {
     public init(_ selection: Selection = .auto) { self.selection = selection }
 }
 
+/// How an emotion is handed to a TTS surface (contract 1.38.0, E12).
+///
+/// Deliberately shaped like `VoiceSelector.Selection`, its sibling in this file, because the
+/// problem is the same one: a single canonical field several genuinely different mechanisms have
+/// to fit through, one of them a canonical `Audio` artifact. The case a value carries maps 1:1
+/// onto the `TTSControls.EmotionMode` a package declares (see `mode`), so a consumer checks
+/// supportability without learning a second vocabulary.
+///
+/// **The contract carries the plane, not the vocabulary.** `categorical` is an open `String`
+/// because the emotion CATEGORIES are the audio packages' to agree on (E12's 9→8 map is their
+/// work), governed the way `Mode`/`Specialty`/`RunPhase` are. A closed enum here would freeze one
+/// model family's taxonomy into the contract, and the first model with a ninth emotion would
+/// need a contract revision to say so.
+public enum TTSEmotion: Sendable, Codable, Equatable {
+    /// A named category — "happy", "angry". Vocabulary is package-defined and open.
+    case categorical(String)
+    /// A numeric emotion vector; dimensionality and axis meaning are model-defined (IndexTTS2's
+    /// emotion head, or a valence/arousal/dominance triple from an annotation stage).
+    case vector([Float])
+    /// Copy the emotion from a clip, decoupled from timbre — this is NOT voice cloning
+    /// (`VoiceSelector.referenceAudio` is that, and the two compose: clone A, emote like B).
+    case referenceAudio(Audio)
+    /// Natural-language direction ("sound exhausted") — Qwen3-TTS `instruct`.
+    case textDescription(String)
+
+    /// The declaration this value requires a surface to have made.
+    public var mode: TTSControls.EmotionMode {
+        switch self {
+        case .categorical: .categorical
+        case .vector: .vector
+        case .referenceAudio: .referenceAudio
+        case .textDescription: .textDescription
+        }
+    }
+}
+
 extension Mode {
     // Example TTS modes a package may honor. Modes are open/extensible.
     public static let expressive: Mode = "expressive"
@@ -34,17 +70,37 @@ public struct TTSRequest: CapabilityRequest {
     /// package needed it (contract 1.1.0). Ignored unless `voice` is `.referenceAudio`;
     /// packages without an ICL path may ignore it (their cloning quality tier is theirs).
     public let referenceTranscript: String?
+    /// Optional emotion steering (contract 1.38.0, E12). Promoted from `metaData` on exactly the
+    /// rule `referenceTranscript` records above — a second adopter arrived. IndexTTS2 shipped the
+    /// first realization via `metaData` 2026-07-09; ML[X] Audio Studio's Dub section became the
+    /// second 2026-09-01, and the untyped path had made it hardcode which engine reads which key.
+    ///
+    /// Send only a mode the surface DECLARES (`ToolDescriptor.ttsControls?.emotionModes`).
+    /// `MLXServeEngine.run` refuses an undeclared one with
+    /// `PackageError.unsupportedRequestFeature` before admission — silently ignoring a canonical
+    /// request field is a contract violation (the rule 1.16.0 set for `responseFormat`).
+    public let emotion: TTSEmotion?
+    /// Optional target output length in seconds — synthesize to fit a cue window (contract
+    /// 1.38.0, E12). Only for a surface declaring `TTSControls.supportsTargetDuration`; a
+    /// consumer routed to one that does not should time-stretch the result instead, which is the
+    /// decision the flag exists to make routable. **Not a hard guarantee**: a package fits as
+    /// closely as its native duration control allows, and the returned `.wav` is the truth.
+    public let targetDuration: TimeInterval?
     public let mode: Mode?
     public let metaData: MetaData
 
     public init(text: String,
                 voice: VoiceSelector = VoiceSelector(),
                 referenceTranscript: String? = nil,
+                emotion: TTSEmotion? = nil,
+                targetDuration: TimeInterval? = nil,
                 mode: Mode? = nil,
                 metaData: MetaData = [:]) {
         self.text = text
         self.voice = voice
         self.referenceTranscript = referenceTranscript
+        self.emotion = emotion
+        self.targetDuration = targetDuration
         self.mode = mode
         self.metaData = metaData
     }
@@ -83,21 +139,39 @@ public struct TTSStreamChunk: Sendable, Codable, Equatable {
 /// may extend `supportedModes`; the parameter schema is the canonical TTS surface.
 public enum TTSContract {
     public static func descriptor(name: String, summary: String, modes: [Mode] = [],
-                                  streaming: StreamGranularity? = nil) -> ToolDescriptor {
-        ToolDescriptor(
+                                  streaming: StreamGranularity? = nil,
+                                  controls: TTSControls? = nil) -> ToolDescriptor {
+        var parameters = [
+            ParameterSchema(name: "text", kind: .string, required: true,
+                            summary: "The text to speak."),
+            ParameterSchema(name: "voice", kind: .object, required: false,
+                            summary: "Canonical voice selection (named / referenceAudio / auto)."),
+            ParameterSchema(name: "referenceTranscript", kind: .string, required: false,
+                            summary: "Transcript of the referenceAudio clip (ICL-grade cloning)."),
+        ]
+        // The E12 controls appear on the surface only when the package DECLARES them, so a
+        // planner is never offered a knob that is ignored (the `supportsStrength` precedent,
+        // 1.30.0). One source of truth: the schema entries are derived from the declaration, so
+        // the advertised parameters and `ttsControls` cannot drift apart.
+        if let controls, !controls.emotionModes.isEmpty {
+            parameters.append(ParameterSchema(
+                name: "emotion", kind: .object, required: false,
+                summary: "Emotion steering; modes honored: "
+                    + controls.emotionModes.map(\.rawValue).joined(separator: " / ") + "."))
+        }
+        if controls?.supportsTargetDuration == true {
+            parameters.append(ParameterSchema(
+                name: "targetDuration", kind: .number, required: false,
+                summary: "Target output length in seconds (native duration control)."))
+        }
+        return ToolDescriptor(
             name: name,
             capability: .tts,
             summary: summary,
-            parameters: [
-                ParameterSchema(name: "text", kind: .string, required: true,
-                                summary: "The text to speak."),
-                ParameterSchema(name: "voice", kind: .object, required: false,
-                                summary: "Canonical voice selection (named / referenceAudio / auto)."),
-                ParameterSchema(name: "referenceTranscript", kind: .string, required: false,
-                                summary: "Transcript of the referenceAudio clip (ICL-grade cloning)."),
-            ],
+            parameters: parameters,
             supportedModes: modes,
-            streaming: streaming
+            streaming: streaming,
+            controls: controls.map(SurfaceControls.tts)
         )
     }
 }

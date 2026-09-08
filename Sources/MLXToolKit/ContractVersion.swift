@@ -590,5 +590,77 @@ public enum ContractVersion {
     //   through to the next source, because a credential lookup must not break an anonymous
     //   download that would have worked. Additive with one caveat: `MaterializeError` gains
     //   `.truncated`, so an exhaustive `switch` over it in consumer code needs a new case.
-    public static let current = SemanticVersion(major: 1, minor: 37, patch: 0)
+    // 1.38.0 (2026-09-08, additive): THE AUDIO CONTROLS PASS — closes AB-A-0061 / AB-A-0063 /
+    //   AB-A-0064 (+ AB-A-0049 parts 1-2) and AB-A-0029, in one coherent pass because all four
+    //   were the same shape of gap: a shipped app needs a field the contract does not have, and
+    //   reaches it through `metaData` or a hardcoded per-engine table instead.
+    //   • `SurfaceControls` + `ToolDescriptor.controls` (nil = every pre-1.38 conformer) — ONE
+    //     optional field carrying a per-capability block of ROUTING-TIME declarations, read
+    //     through the `ttsControls` / `sttControls` accessors. An enum rather than a member per
+    //     capability, which is where the ask started: `quantFloor` and `streaming` are
+    //     capability-NEUTRAL, so `ttsControls:` would have been the first capability-specific
+    //     member on a shared type, and with 34 capabilities that shape rots. The governing rule
+    //     is written on the enum: a capability earns a case only when a consumer must choose a
+    //     package BEFORE running it. Anything learnable from the response is not a declaration.
+    //   • `TTSControls` (emotionModes + supportsTargetDuration) — E12's control plane, promoted
+    //     on the trigger E12 set for itself. IndexTTS2 shipped the first realization via metaData
+    //     2026-07-09; ML[X] Audio Studio's Dub section became the second 2026-09-01. The cost of
+    //     not having it was concrete: `VoiceLane.TTSControls` hardcodes
+    //     `TTSEngine.supportsNativeDuration`, a routing table that duplicates what the packages
+    //     already know and goes staler with each new one. Subsumes E6's speaker/emotion catalog.
+    //   • `TTSRequest.emotion: TTSEmotion?` + `.targetDuration: TimeInterval?` — the
+    //     `referenceTranscript` promotion rule applied again (its own doc comment records it:
+    //     "promoted from metaData when the second package needed it", 1.1.0). `TTSEmotion` is
+    //     shaped like `VoiceSelector.Selection`, its sibling in the same file — several genuinely
+    //     different mechanisms through one canonical field, one of them an `Audio` artifact —
+    //     with `.categorical(String)` OPEN, because the emotion vocabulary is the audio packages'
+    //     to agree on (E12's 9→8 map) and freezing one model family's taxonomy into the contract
+    //     is what `Mode`/`Specialty`/`RunPhase` governance exists to prevent.
+    //   • `STTSegment.speaker: String?` — speaker-attributed ASR (VibeVoice-ASR{,-Streaming},
+    //     Sortformer pairings) had nowhere to put "who said this", so a package that knew either
+    //     discarded it or smuggled it into `text` as prose. A `String?`, not an `Int?`: models
+    //     that emit named speakers stay representable and enrolled-speaker naming needs no second
+    //     migration. Opaque + session-scoped — "Speaker 0" in two responses is not one person.
+    //   • `STTRequest.context: [String]?` — hotword / recognition biasing, near-universal in the
+    //     current ASR generation (VibeVoice `context_info`; the Python mlx-audio STT family's
+    //     shared `merge_hotwords`) and the highest-leverage knob for the domain vocabulary our own
+    //     apps transcribe. A list, not prose: it is the shape callers hold, and each package
+    //     formats it for its own prompt convention.
+    //   • `STTControls` (attributesSpeakers + supportsContextBiasing) — NOT asked for, added
+    //     because shipping `speaker` alone reproduces AB-A-0064's exact defect inside the same
+    //     pass: `speaker == nil` reads identically for "one person spoke" and "this model cannot
+    //     diarize", so an app would hardcode which STT package diarizes, the routing table E12
+    //     was promoted to delete. Neither member is answerable from a response.
+    //   • DECLARATION DRIVES ADVERTISEMENT. `TTSContract.descriptor(controls:)` and
+    //     `STTContract.descriptor(controls:)` DERIVE the `emotion`/`targetDuration`/`context`
+    //     ParameterSchema entries from the declaration (the `ImageRestoreContract
+    //     .descriptor(supportsStrength:)` precedent, 1.30.0), so a planner is never offered a knob
+    //     that is ignored and the advertised schema cannot drift from `controls`.
+    //   • ENGINE-ENFORCED, NOT PACKAGE-ENFORCED. `MLXServeEngine.run`/`stream` refuse a control
+    //     the resolved surface does not declare with `PackageError.unsupportedRequestFeature`,
+    //     before admission. Silent-ignore of a canonical field is a contract violation (1.16.0),
+    //     but enforcing that package-side would make every shipped TTS/STT conformer retroactively
+    //     non-conformant — which 1.27.0 and 1.28.0 both refused to do. The coordinator already
+    //     holds manifest and request, so it enforces declaration-vs-use for free and a package
+    //     that has not adopted the plane never sees the field. `metaData` stays the compat path
+    //     for everything shipping today, unchanged.
+    //   • `RunPhase.screen` (AB-A-0029) — a mandatory upstream gating classifier that can REFUSE
+    //     the run, minted by mage-flow-swift v0.5.0 and promoted to a canonical constant here.
+    //     Not `encode`: it conditions nothing, it throws where encode does not, it carries its own
+    //     weights (an 8.3 GB VLM on the evicted-conditioner tier), and it is skipped when a caller
+    //     bypasses the filter. Not cosmetic either — AB-R-0150 measured 4.1 s of a 6.6 s edit run
+    //     (62%), so consumers rendering only canonical phases showed a stall for most of a Turbo
+    //     generation. Zero package change: `RunPhase` is an open String and the raw value is
+    //     unchanged.
+    //   • NOT landed, deliberately: the live-STT plane (AB-A-0062 / companion N2). Designed in
+    //     full — `LiveTranscribing` + `STTSession` + `STTStreamChunk` with a `committedThrough`
+    //     watermark instead of a partial/final Bool, + the LIV-1..6 gate — and specified in
+    //     `capability-contract.md`, but held until a SECOND implementation exists to test it
+    //     against. `StreamEmitting.runStream` cannot model it: it holds `@InferenceActor` for the
+    //     length of a run, so a live microphone session would hold the fleet's serialized
+    //     inference for as long as someone keeps talking. See AB-D-0069.
+    //   All additive and inert by default: every new field is optional with a defaulted `nil`,
+    //   every new descriptor parameter is defaulted, and the synthesized `Codable`s decode
+    //   pre-1.38.0 JSON. No existing construction site changes.
+    public static let current = SemanticVersion(major: 1, minor: 38, patch: 0)
 }

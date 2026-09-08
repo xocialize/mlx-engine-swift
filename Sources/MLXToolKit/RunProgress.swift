@@ -18,6 +18,17 @@ public struct RunPhase: RawRepresentable, Sendable, Codable, Equatable, Hashable
 }
 
 extension RunPhase {
+    /// A mandatory gating classifier the package must pass before it may generate — an upstream
+    /// Responsible-AI filter that can REFUSE the run fail-closed (contract 1.38.0; minted by
+    /// mage-flow-swift v0.5.0, promoted on AB-A-0029). Deliberately not folded into `encode`:
+    /// it conditions nothing, it throws where `encode` does not, it can carry its own weights
+    /// (Mage's evicted-conditioner tier loads an 8.3 GB VLM for it), and it is skipped entirely
+    /// when a caller bypasses the filter. Not a rounding error either — AB-R-0150 measured it at
+    /// 4.1 s of a 6.6 s edit run (62%) and 1.2 s of a 1.8 s t2i run on the few-step tiers, so a
+    /// consumer rendering only canonical phases showed a stalled-looking run for most of a Turbo
+    /// generation. Any package wrapping a mandatory upstream classifier reports here rather than
+    /// minting `safety` / `filter` / its own synonym.
+    public static let screen: RunPhase = "screen"
     /// Conditioning/input encoding (text encoder, VAE-encode of an init frame or reference).
     public static let encode: RunPhase = "encode"
     /// The iterative diffusion denoise loop — report per-step counts here; they are cheap

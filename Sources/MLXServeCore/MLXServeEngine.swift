@@ -753,6 +753,7 @@ public actor MLXServeEngine {
                     package: PackageID? = nil) async throws -> any CapabilityResponse {
         let capability = request.capability
         let id = try resolve(capability, package)
+        try checkDeclaredControls(request, id: id)
         var requeues = 0
         while true {
             // A user cancel that lands between attempts (e.g. during a requeue wait, where the
@@ -929,6 +930,7 @@ public actor MLXServeEngine {
         do {
             try Task.checkCancellation()   // entry boundary (caller may cancel pre-admission)
             let id = try resolve(capability, package)
+            try checkDeclaredControls(request, id: id)
 
             await lockAdmission()
             let instance: any ModelPackage
@@ -1157,6 +1159,46 @@ public actor MLXServeEngine {
     }
 
     // MARK: - Admission
+
+    /// Pre-flight canonical-control check (contract 1.38.0). A control the resolved surface does
+    /// not DECLARE is refused here — before admission, before weights are touched — instead of
+    /// being silently dropped inside the package.
+    ///
+    /// **Why the coordinator and not each package.** Silently ignoring a canonical request field
+    /// is a contract violation (the rule 1.16.0 set when `responseFormat` landed), but enforcing
+    /// it package-side would make every shipped TTS/STT conformer retroactively non-conformant —
+    /// the thing 1.27.0/1.28.0 both refused to do. The engine already holds the manifest and the
+    /// request, so it can enforce declaration-vs-use for free, and a package that has not adopted
+    /// the plane simply never sees the field. The failure this prevents is specific: a dub cue
+    /// sent with `targetDuration` to a package with no duration control returns audio of the
+    /// wrong length, and nothing in the response says why.
+    private func checkDeclaredControls(_ request: any CapabilityRequest, id: PackageID) throws {
+        guard let surface = packages[id]?.registration.manifest.surfaces
+            .first(where: { $0.capability == request.capability })
+        else { return }
+
+        if let tts = request as? TTSRequest {
+            if let emotion = tts.emotion,
+               surface.ttsControls?.emotionModes.contains(emotion.mode) != true {
+                throw PackageError.unsupportedRequestFeature(
+                    "emotion(.\(emotion.mode.rawValue)) — \(id) declares no such emotion mode "
+                        + "(ToolDescriptor.ttsControls)")
+            }
+            if tts.targetDuration != nil, surface.ttsControls?.supportsTargetDuration != true {
+                throw PackageError.unsupportedRequestFeature(
+                    "targetDuration — \(id) declares no native duration control; synthesize "
+                        + "without it and time-stretch the result instead")
+            }
+        }
+
+        if let stt = request as? STTRequest,
+           let context = stt.context, !context.isEmpty,
+           surface.sttControls?.supportsContextBiasing != true {
+            throw PackageError.unsupportedRequestFeature(
+                "context — \(id) declares no recognition-biasing surface "
+                    + "(ToolDescriptor.sttControls)")
+        }
+    }
 
     private func resolve(_ capability: Capability, _ package: PackageID?) throws -> PackageID {
         if let package {
