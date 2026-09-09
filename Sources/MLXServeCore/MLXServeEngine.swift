@@ -36,6 +36,25 @@ public enum EngineError: Error, Sendable, Equatable {
     /// as this caller-distinguishable failure, never a `CancellationError` the caller didn't
     /// cause (the V3 invariant, preserved). Retryable: re-issue the stream.
     case streamPreempted(PackageID)
+    /// `transcribeLive()` resolved to a package that does not offer live transcription (1.39.0):
+    /// either no `stt` surface declares `STTControls.liveDiscipline`, or the type does not
+    /// conform to `LiveTranscribing`. Use `run(STTRequest)` for one-shot transcription, and check
+    /// `sttControls?.liveDiscipline` before offering a dictation UI.
+    case liveTranscriptionUnsupported(PackageID)
+    /// The governor ended an in-flight live SESSION to reclaim its residency (1.39.0). Sessions
+    /// are non-requeueable for the same reason streams are — the audio is gone and cannot be
+    /// replayed — so preemption surfaces as this caller-distinguishable failure rather than a
+    /// `CancellationError` the caller did not cause. Retryable only in the sense that a new
+    /// session can be opened; the audio already spoken is lost.
+    ///
+    /// Live sessions are the governor's LAST resort, after idle residents and after in-flight
+    /// batch runs (which requeue and lose nothing).
+    case livePreempted(PackageID)
+    /// A live session went `LiveSessionPolicy.idleTimeout` without a `push` and the engine ended
+    /// it (1.39.0). The handle was almost certainly dropped without `finish()`/`cancel()`; a
+    /// session holds residency for its whole lifetime, so it cannot be left open on the chance
+    /// that audio resumes.
+    case liveSessionIdle(PackageID)
 }
 
 /// Engine-side identity for a registered package — lets several packages back the SAME
@@ -146,6 +165,37 @@ public actor MLXServeEngine {
     private var activeRuns: [UInt64: ActiveRun] = [:]
     private var runTokenClock: UInt64 = 0
 
+    /// One open live transcription session (contract 1.39.0).
+    ///
+    /// Deliberately **not** an `ActiveRun`. An `ActiveRun` is a task the engine can await — that
+    /// is what `drainActiveRuns` and `.waiting` reclaim both do — and a live session's task ends
+    /// when someone stops talking, which may be an hour. Awaiting one would hang admission.
+    /// A session is residency plus a pump; the compute it triggers hops onto `@InferenceActor`
+    /// per buffer and is invisible here, which is exactly the property that keeps an hour-long
+    /// session from holding the fleet's serialized inference.
+    private struct LiveSessionRecord {
+        let id: PackageID
+        /// The package's session — the thing that actually holds the model.
+        let session: any STTSession
+        /// Forwards the package session's chunks into the caller's stream and tears the
+        /// bookkeeping down when it ends. Cancelling it does NOT cancel the session; ending the
+        /// session is what ends the pump.
+        let pump: Task<Void, Never>
+        /// The idle watchdog, or nil when `LiveSessionPolicy.idleTimeout <= 0`.
+        let watchdog: Task<Void, Never>?
+        /// When the caller last fed this session — the watchdog's input, and the governor's
+        /// tie-breaker when it has to choose a session to sacrifice.
+        let activity: LiveActivityClock
+        /// Set on the engine actor BEFORE the session is ended by the engine, so the pump's
+        /// terminal classification can tell governor preemption from a caller cancel — the
+        /// `ActiveRun.preempted` trick, transposed.
+        var endedBy: EngineError?
+    }
+
+    private var liveSessions: [UInt64: LiveSessionRecord] = [:]
+    /// Policy for those sessions (idle watchdog).
+    private let liveSessionPolicy: LiveSessionPolicy
+
     /// Admission serialization (V3): `lockAdmission`/`unlockAdmission` make each admission
     /// (headroom → construct → load → charge → run-handle registration) one critical section.
     /// Actor reentrancy would otherwise interleave two admissions at their awaits — e.g. a
@@ -245,6 +295,7 @@ public actor MLXServeEngine {
                 gpuCache: GPUCacheConfiguration = GPUCacheConfiguration(),
                 wiredLimit: WiredLimitConfiguration = WiredLimitConfiguration(),
                 preemption: PreemptionPolicy = PreemptionPolicy(),
+                liveSessions: LiveSessionPolicy = LiveSessionPolicy(),
                 physFootprint: @Sendable @escaping () -> UInt64? = HostMemory.physFootprint,
                 hubMetadata: (any HubMetadataProviding)? = nil,
                 materializer: (any WeightMaterializing)? = nil,
@@ -258,6 +309,7 @@ public actor MLXServeEngine {
         self.gpuCache = gpuCache
         self.wiredLimit = wiredLimit
         self.preemption = preemption
+        self.liveSessionPolicy = liveSessions
         self.physFootprint = physFootprint
         // One token resolution for BOTH hub call sites (AB-A-0016 ask 3). A listing that
         // authenticates while the download that follows it does not is how a gated repo enumerates
@@ -751,6 +803,16 @@ public actor MLXServeEngine {
     /// cancel→re-run recovery). Genuine errors propagate to the caller unchanged.
     public func run(_ request: any CapabilityRequest,
                     package: PackageID? = nil) async throws -> any CapabilityResponse {
+        // `STTSessionRequest` is a `CapabilityRequest` so that ONE declared-control pre-flight
+        // covers both entry points (contract 1.39.0). The cost is that it type-checks here;
+        // this is the signpost, so a caller never gets `unsupportedCapability(.stt)` from a
+        // package that plainly supports `.stt`.
+        if request is STTSessionRequest {
+            throw PackageError.unsupportedRequestFeature(
+                "STTSessionRequest opens a LIVE transcription session — call "
+                    + "MLXServeEngine.transcribeLive(_:package:). run(_:) transcribes one "
+                    + "complete utterance and takes an STTRequest")
+        }
         let capability = request.capability
         let id = try resolve(capability, package)
         try checkDeclaredControls(request, id: id)
@@ -1012,6 +1074,179 @@ public actor MLXServeEngine {
         }
     }
 
+    // MARK: - Live transcription (contract 1.39.0, companion N2)
+
+    /// Open a live transcription session on a `LiveTranscribing` package — the plane for audio
+    /// that is **still arriving** (contract 1.39.0, AB-D-0069).
+    ///
+    /// Unlike `stream()` this is `async throws` and admits BEFORE it returns: there is nothing
+    /// useful a caller can do with a session that does not exist yet, and buffering audio against
+    /// a pending admission would only move the back-pressure problem into the caller.
+    ///
+    /// Semantics:
+    /// - **Residency is held for the session's lifetime** and counts for admission, but the
+    ///   session does NOT occupy `@InferenceActor` between buffers — the package's driver hops on
+    ///   per buffer. That is the whole reason this is not `StreamEmitting`.
+    /// - **Non-requeueable.** The governor may end a session to reclaim memory, but only after
+    ///   idle residents and in-flight batch runs (which requeue and lose nothing); it surfaces as
+    ///   `EngineError.livePreempted`, never a `CancellationError` the caller did not cause.
+    /// - **Abandoning the handle ends the session** (the abandoned-stream rule), and a handle
+    ///   dropped without iterating is caught by the idle watchdog
+    ///   (`LiveSessionPolicy.idleTimeout` → `EngineError.liveSessionIdle`).
+    /// - The declared-control pre-flight runs here exactly as it does on `run()`: an
+    ///   undeclared `context` is refused before admission.
+    ///
+    /// Per-buffer compute runs under the package's residency wired reservation, not under an
+    /// `.active` ticket: the engine does not bracket a session's inference, so it has no window
+    /// to scope one to.
+    public func transcribeLive(_ request: STTSessionRequest,
+                               package: PackageID? = nil) async throws -> STTLiveHandle {
+        try Task.checkCancellation()
+        let id = try resolve(.stt, package)
+        try checkDeclaredControls(request, id: id)
+        // The advertisement half of LIV-1, enforced before anything is loaded: a package whose
+        // surface does not declare a discipline has no live plane to open, even if the type
+        // happens to conform.
+        guard declaredLiveDiscipline(id) != nil else {
+            throw EngineError.liveTranscriptionUnsupported(id)
+        }
+
+        await lockAdmission()
+        let session: any STTSession
+        do {
+            let instance = try await resident(
+                id, conduct: preemption.enabled ? .preempting : .idleOnly)
+            guard let live = instance as? any LiveTranscribing else {
+                throw EngineError.liveTranscriptionUnsupported(id)
+            }
+            session = try await live.startLiveTranscription(request)
+        } catch {
+            unlockAdmission()
+            throw error
+        }
+
+        runTokenClock &+= 1
+        let token = runTokenClock
+        let activity = LiveActivityClock()
+        let (updates, continuation) = AsyncThrowingStream.makeStream(of: STTStreamChunk.self)
+
+        // No `await` from here to the `liveSessions[token] =` below: the actor cannot be
+        // re-entered mid-sequence, so the pump can never reach `finishLiveSession` before the
+        // record it tears down exists.
+        let pump = Task { [weak self] in
+            var failure: (any Error)?
+            do {
+                for try await chunk in session.updates { continuation.yield(chunk) }
+            } catch {
+                failure = error
+            }
+            // Classify on the actor: an engine-initiated end marked the record BEFORE cancelling
+            // the session, so preemption and the idle watchdog surface as themselves rather than
+            // as the `CancellationError` the package raised on their behalf.
+            let surfaced = await self?.finishLiveSession(token, failure: failure) ?? failure
+            if let surfaced {
+                continuation.finish(throwing: surfaced)
+            } else {
+                continuation.finish()
+            }
+        }
+        continuation.onTermination = { @Sendable reason in
+            // Consumer dropped the stream / cancelled its iteration → end the session.
+            // `.finished` is our own terminal yield and must not re-enter cancel.
+            if case .cancelled = reason { session.cancel() }
+        }
+
+        let policy = liveSessionPolicy
+        let watchdog: Task<Void, Never>? = policy.idleTimeout > 0
+            ? Task { [weak self] in
+                let interval = UInt64(max(0.05, policy.idleCheckInterval) * 1_000_000_000)
+                while !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds: interval)
+                    if Task.isCancelled { return }
+                    guard activity.idleSeconds > policy.idleTimeout else { continue }
+                    await self?.endLiveSession(token, with: .liveSessionIdle(id))
+                    return
+                }
+            }
+            : nil
+
+        liveSessions[token] = LiveSessionRecord(
+            id: id, session: session, pump: pump, watchdog: watchdog, activity: activity)
+        touch(id)
+        unlockAdmission()
+
+        return STTLiveHandle(
+            updates: updates,
+            // From the SESSION, not the descriptor: the session is what produces the chunks, so
+            // if the two ever disagree the handle tells the truth and LIV-1 catches the lie.
+            discipline: session.discipline,
+            maxBufferedSeconds: session.maxBufferedSeconds,
+            expectedSampleRate: session.expectedSampleRate,
+            onPush: { samples, rate in
+                activity.touch()
+                return session.push(samples, sampleRate: rate)
+            },
+            onFinish: { session.finish() },
+            onCancel: { session.cancel() })
+    }
+
+    /// The `liveDiscipline` declared by `id`'s `stt` surface, or nil when it declares none.
+    private func declaredLiveDiscipline(_ id: PackageID) -> STTStreamDiscipline? {
+        packages[id]?.registration.manifest.surfaces
+            .first(where: { $0.capability == .stt })?.sttControls?.liveDiscipline
+    }
+
+    /// Number of open live sessions — internal observability for the engine's own tests.
+    var openLiveSessionCount: Int { liveSessions.count }
+
+    /// Tear down one session's bookkeeping as its pump ends, and say what the caller should see.
+    /// Returns the engine's own reason when the engine ended it, otherwise whatever the package
+    /// raised (nil = a clean `finish()`).
+    private func finishLiveSession(_ token: UInt64, failure: (any Error)?) -> (any Error)? {
+        guard let record = liveSessions.removeValue(forKey: token) else { return failure }
+        record.watchdog?.cancel()
+        touch(record.id)   // hot weights, and a dictation UI's next session is imminent
+        return record.endedBy ?? failure
+    }
+
+    /// End a session on the engine's initiative. Marks the reason first so the pump classifies
+    /// correctly, then cancels — the `ActiveRun.preempted` sequence, transposed.
+    private func endLiveSession(_ token: UInt64, with error: EngineError) {
+        guard let record = liveSessions[token] else { return }
+        liveSessions[token]?.endedBy = error
+        record.session.cancel()
+    }
+
+    /// End every open session on `id` and wait for their pumps, so a caller that evicts a
+    /// package never races an in-flight chunk into a stream whose model is gone.
+    private func endLiveSessions(for id: PackageID, with error: EngineError) async {
+        for token in liveSessions.filter({ $0.value.id == id }).map(\.key) {
+            guard let pump = liveSessions[token]?.pump else { continue }
+            endLiveSession(token, with: error)
+            await pump.value
+        }
+    }
+
+    /// The live session the governor should sacrifice next: not the contender's package, still
+    /// resident, and the one that has gone longest without a `push` — the most likely to be an
+    /// abandoned handle rather than someone mid-sentence.
+    private func liveVictimToken(excluding id: PackageID) -> UInt64? {
+        liveSessions
+            .filter { $0.value.id != id && residents[$0.value.id] != nil }
+            .max(by: { $0.value.activity.idleSeconds < $1.value.activity.idleSeconds })?
+            .key
+    }
+
+    /// Last-resort reclaim of a live session's residency. Unlike `reclaimActiveRun` there is no
+    /// `.waiting` variant: a session ends when the speaker stops, which is not a wait the
+    /// admission path can make.
+    private func reclaimLiveSession(_ token: UInt64) async {
+        guard let record = liveSessions[token] else { return }
+        endLiveSession(token, with: .livePreempted(record.id))
+        await record.pump.value
+        await evictResident(record.id)
+    }
+
     /// Record a run's latest phase report on its handle (the preemption-policy signal).
     private func noteRunProgress(token: UInt64, report: RunPhaseReport) {
         activeRuns[token]?.latestReport = report
@@ -1191,8 +1426,12 @@ public actor MLXServeEngine {
             }
         }
 
-        if let stt = request as? STTRequest,
-           let context = stt.context, !context.isEmpty,
+        // BOTH stt entry points, one site (contract 1.39.0). `STTSessionRequest` is a
+        // `CapabilityRequest` precisely so this refusal cannot drift between `run()` and
+        // `transcribeLive()`: a caller must not get biasing on one door and silence on the other.
+        let sttContext = (request as? STTRequest)?.context
+            ?? (request as? STTSessionRequest)?.context
+        if let context = sttContext, !context.isEmpty,
            surface.sttControls?.supportsContextBiasing != true {
             throw PackageError.unsupportedRequestFeature(
                 "context — \(id) declares no recognition-biasing surface "
@@ -1553,10 +1792,20 @@ public actor MLXServeEngine {
                 await evictResident(victim)
                 continue
             }
-            guard conduct != .idleOnly, let token = activeVictimToken(excluding: id) else {
-                break // nothing left to evict (or reclaim)
+            guard conduct != .idleOnly else { break }
+            if let token = activeVictimToken(excluding: id) {
+                await reclaimActiveRun(token, conduct: conduct)
+                continue
             }
-            await reclaimActiveRun(token, conduct: conduct)
+            // Live sessions rank BELOW batch runs as victims (1.39.0): a preempted run requeues
+            // and loses nothing, a preempted session loses audio nobody can replay. Only a first
+            // attempt may take one — `.waiting` has no way to wait for a session, which ends when
+            // the speaker does.
+            if conduct == .preempting, let token = liveVictimToken(excluding: id) {
+                await reclaimLiveSession(token)
+                continue
+            }
+            break // nothing left to evict (or reclaim)
         }
 
         // (2) R-MEM-1: real-memory pressure trigger.
@@ -1572,7 +1821,11 @@ public actor MLXServeEngine {
     /// The least-recently-used **idle** resident other than `id`, or nil if none remain.
     /// A package with a run in flight is not idle — it is never an LRU victim (V3).
     private func lruIdleVictim(excluding id: PackageID) -> PackageID? {
-        let running = Set(activeRuns.values.map(\.id))
+        // A package with an OPEN LIVE SESSION is not idle either, even though no run is in
+        // flight between buffers — evicting it would unload the model out from under a
+        // microphone. The governor may still take it, but only through `liveVictimToken`,
+        // where the loss is deliberate and surfaces as `livePreempted`.
+        let running = Set(activeRuns.values.map(\.id)).union(liveSessions.values.map(\.id))
         return residents.keys
             .filter { $0 != id && !running.contains($0) }
             .min(by: { (lastUsed[$0] ?? 0) < (lastUsed[$1] ?? 0) })
@@ -1616,6 +1869,10 @@ public actor MLXServeEngine {
     }
 
     private func evictResident(_ id: PackageID) async {
+        // A live session holds the model too (contract 1.39.0). End it — and wait for its pump —
+        // before unloading, or the weights stay alive past eviction and a chunk can race a
+        // half-unloaded model into the caller's stream.
+        await endLiveSessions(for: id, with: .livePreempted(id))
         guard let instance = residents.removeValue(forKey: id) else { return }
         await instance.unload()
         if let bytes = residentFootprint.removeValue(forKey: id) {

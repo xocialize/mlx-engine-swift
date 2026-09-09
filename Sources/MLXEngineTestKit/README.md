@@ -19,6 +19,13 @@ category app. These are the shared implementations so each app stops re-inventin
 | Admissibility / tier seam | `AdmissibilityTiers.check(...)` + `AdmissibilityTierView` — "does this variant fit a 16/32/64/128 GB Mac?" (pure; reuses `MemoryGovernor.footprintSplit`) |
 | Headless autorun | `HeadlessAutorun.request(prefix:)` — env-driven GUI-less single run for scriptable `xcodebuild` measurement |
 
+Plus the per-plane live benches: `StreamingBench` → `StreamingRun` (`[STR]`),
+`CancellationRun` (`[CAN]`), `InferenceModeRun` (`[INF]`), and — contract 1.39.0 —
+`LiveTranscriptionBench` → `LiveTranscriptionRun` (`[LIV]`): time-to-first-chunk, chunk cadence,
+and **commitment lag** (`processedSeconds − committedThrough`, the provisional window a caption UI
+renders as unsettled) over a real `engine.transcribeLive()` session, with the LIV-2/4/5 verdicts
+from the same drive. Latency is a bench, not a gate.
+
 Model-store grant (the seventh seam) is already in `MLXEngineUI` (`ModelStorageModel`) — reuse it.
 
 ## Minimal adoption

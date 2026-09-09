@@ -36,13 +36,13 @@ public struct STTSegment: Sendable, Codable, Equatable {
 /// Canonical output is **text** (the transcript; see `STTResponse`). Multilingual models
 /// auto-detect when `language` is nil.
 ///
-/// **One-shot by design, and still so after 1.38.0.** Audio that is still arriving is a
+/// **One-shot by design, and still so after 1.39.0.** Audio that is still arriving is a
 /// SESSION, not a request: `StreamEmitting.runStream` cannot model it, because it holds
 /// `@InferenceActor` for the length of the run and a live microphone session would hold the
-/// fleet's serialized inference for as long as someone keeps talking. The designed live-STT
-/// plane (`LiveTranscribing` + `STTSession`, the LIV-1..6 gate) is specified in
-/// `EngineeringDocs/MLXEngineDocs/capability-contract.md` and deliberately NOT landed until a
-/// second implementation exists to test it — see AB-A-0062 / AB-D-0069.
+/// fleet's serialized inference for as long as someone keeps talking. That case has its own
+/// plane since 1.39.0 — `LiveTranscribing` + `STTSession` + `MLXServeEngine.transcribeLive`
+/// (`LiveSTT.swift`, the LIV-1..6 gate) — and this request type is unchanged by it. File and
+/// utterance transcription still come here.
 public struct STTRequest: CapabilityRequest {
     public static var capability: Capability { .stt }
 
@@ -116,6 +116,10 @@ public enum STTContract {
                 name: "context", kind: .array, required: false,
                 summary: "Recognition-biasing terms (names, jargon, product vocabulary)."))
         }
+        // `liveDiscipline` derives NO schema entry, and that is not an oversight: live
+        // transcription is a different ENTRY POINT (`MLXServeEngine.transcribeLive`), not a knob
+        // on this one-shot surface. The parameter list describes `run(STTRequest)`; advertising
+        // a live-only field here would offer a planner something `run` cannot honor.
         return ToolDescriptor(
             name: name,
             capability: .stt,

@@ -662,5 +662,79 @@ public enum ContractVersion {
     //   All additive and inert by default: every new field is optional with a defaulted `nil`,
     //   every new descriptor parameter is defaulted, and the synthesized `Codable`s decode
     //   pre-1.38.0 JSON. No existing construction site changes.
-    public static let current = SemanticVersion(major: 1, minor: 38, patch: 0)
+    // 1.39.0 (2026-09-08, additive): THE LIVE-STT PLANE — companion N2, closing AB-A-0062.
+    //   Designed in full in 1.38.0 and deliberately held (AB-D-0069) until a second
+    //   implementation existed to test it against. That trigger is met: mlx-audio's
+    //   VibeVoice-ASR-Streaming-7B port is at V4-V7 with the Python-MLX streaming loop
+    //   token-exact and weights published (AB-R-0218 / AB-R-0219), and its V6 is a live session
+    //   built to this shape. The design landed as specified except where implementing it proved
+    //   the design wrong; those three places are called out below.
+    //   • `LiveTranscribing` — a SECOND opt-in protocol, `as?`-detected like `StreamEmitting`:
+    //     `startLiveTranscription(_ request: STTSessionRequest) async throws -> any STTSession`.
+    //     Not a flag on `StreamEmitting`, because `runStream` is `@InferenceActor` and takes a
+    //     COMPLETE request: a session that waits on a microphone inside it holds the fleet's
+    //     serialized inference for as long as someone keeps talking. Streaming TTS streams
+    //     output from a fixed input; live STT streams output from an input that does not exist
+    //     yet at call time. That asymmetry is structural, not a flag.
+    //   • `STTSession` — `updates` + `finish()` + `cancel()`, plus a `nonisolated`
+    //     `push(_:sampleRate:) -> PushOutcome`. Push, not an `AsyncSequence` input: every real
+    //     source is a callback (AVAudioEngine tap, CoreAudio IOProc), so an AsyncSequence input
+    //     only relocates the adapter into the caller, and `nonisolated` + copy-only makes the
+    //     never-run-MLX-on-an-audio-thread rule enforceable (LIV-3) rather than aspirational.
+    //     Back-pressure is EXPLICIT — the session declares `maxBufferedSeconds` and `push`
+    //     answers `.overrun` past it, where the shipped Nemotron session's unbounded input
+    //     continuation hid a caller outrunning the model as unbounded memory growth.
+    //   • `PushOutcome` has THREE cases, not the designed two. `.ended` exists because an
+    //     AVAudioEngine tap delivers buffers after `finish()` returns — the `pendingStop` race
+    //     ML[X] Audio Studio already paid for once — and answering `.accepted` to audio that was
+    //     dropped is a lie the caller cannot detect.
+    //   • `STTStreamChunk` — partial-vs-final is a WATERMARK, not a Bool. `committedThrough` is
+    //     the audio time before which text will not be revised; `isFinal` marks the end of the
+    //     SESSION, not the settledness of the text. `processedSeconds` is the only honest
+    //     progress axis when the input has no known length. Nil-ness of the watermark is
+    //     constant for a session (LIV-4), so a caption UI decides once how to render.
+    //   • `STTStreamDiscipline` (`.cumulative` / `.incremental`) DECLARED on
+    //     `STTControls.liveDiscipline` — non-nil ⇔ `LiveTranscribing` conformance (LIV-1).
+    //     Assembly cannot be inferred per chunk: guess wrong and you duplicate the transcript or
+    //     drop half of it. It lands inside `STTControls` rather than as a `StreamGranularity`
+    //     case (whose documented invariant is "non-nil requires StreamEmitting" — what STR-1
+    //     asserts) and rather than as a bare `ToolDescriptor` member (1.38.0's rule: a shared
+    //     descriptor does not grow capability-specific members). `.incremental` chunk text
+    //     concatenates VERBATIM — the package carries any separator, because whether two chunks
+    //     want a space between them is a fact only the package knows.
+    //   • DISCIPLINE AND WATERMARK ARE ORTHOGONAL, which the design's own prose got wrong. It
+    //     described Nemotron as "cumulative REVISABLE" with "only the last ~1.12 s provisional".
+    //     `decodePromptedChunk` only ever appends to `state.hypothesis` — greedy RNN-T over a
+    //     cache-aware encoder never retracts a token, and the right-context frames are consumed
+    //     inside the chunk before any of its tokens are emitted. The shipped Nemotron adapter is
+    //     `.cumulative` with `committedThrough == processedSeconds`: cumulative is a DELIVERY
+    //     rule ("replace what you hold"), not a claim that anything may change.
+    //   • `STTSessionRequest` is a `CapabilityRequest` (`.stt`) so the 1.38.0 declared-control
+    //     pre-flight refuses an undeclared `context` on the live path through the SAME code as
+    //     `run(STTRequest)` — one enforcement site cannot drift. `run(_:)` refuses the type with
+    //     a message naming `transcribeLive`, so the conformance costs no footgun.
+    //   • `MLXServeEngine.transcribeLive(_:package:) -> STTLiveHandle` — `async throws`, unlike
+    //     `stream()`: there is nothing a caller can do with a session that does not exist yet.
+    //     Residency is held for the session and counts for admission, but the session does NOT
+    //     occupy `@InferenceActor` between buffers. A package with an open session is never an
+    //     idle LRU victim; the governor may still take one, but only AFTER idle residents and
+    //     in-flight batch runs, because a preempted run requeues and loses nothing while a
+    //     preempted session loses audio nobody can replay. It surfaces as
+    //     `EngineError.livePreempted`, never a `CancellationError` the caller did not cause.
+    //     `LiveSessionPolicy.idleTimeout` (default 300 s of no `push`) stops a dropped handle
+    //     pinning residency → `EngineError.liveSessionIdle`. Sessions are tracked separately
+    //     from `activeRuns` on purpose: an `ActiveRun` is a task the engine can AWAIT, and a
+    //     session's task ends when the speaker does.
+    //   • LIV-1..6 (`MLXServeConformance.LiveTranscriptionConformance`) — advertisement ⇔
+    //     conformance and session ⇔ declaration (LIV-1), declared discipline vs observed
+    //     assembly (LIV-2), `push` non-blocking with `@InferenceActor` held (LIV-3, the STR-6
+    //     analogue and the one that prevents the known failure), sequence integrity incl.
+    //     monotonic `committedThrough ≤ processedSeconds` (LIV-4), final parity vs
+    //     `run(STTRequest)` on the same audio (LIV-5, the STR-5 analogue), cancel semantics
+    //     (LIV-6). Latency is a bench, not a gate.
+    //   Additive: three new `EngineError` cases (error enums, not declaration enums — consumers
+    //     `catch`), one defaulted member on `STTControls`, one defaulted argument on
+    //     `MLXServeEngine.init`. No existing construction site changes, and pre-1.39 descriptor
+    //     JSON decodes unchanged.
+    public static let current = SemanticVersion(major: 1, minor: 39, patch: 0)
 }

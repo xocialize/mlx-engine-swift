@@ -199,6 +199,29 @@ final class FleetCallSiteCompatibilityTests: XCTestCase {
         XCTAssertNil(request.context)
     }
 
+    /// The 1.39.0 companion: the shape `mlx-nemotron-stt-swift` ships NOW, pinned the same way.
+    /// The pre-1.38 site above must keep compiling; this one must keep meaning what it says.
+    func testShippedSTTLiveCallSiteIsPinned() {
+        let descriptor = STTContract.descriptor(
+            name: "nemotron-3.5-asr", summary: "NVIDIA Nemotron 3.5 ASR — …",
+            controls: STTControls(liveDiscipline: .cumulative))
+        XCTAssertEqual(descriptor.sttControls?.liveDiscipline, .cumulative)
+        // A live declaration adds no request parameter — it is a different entry point.
+        XCTAssertEqual(descriptor.parameters.map(\.name), ["audio", "language"])
+        // …and it is NOT the StreamEmitting axis, which STR-1 would then assert against.
+        XCTAssertNil(descriptor.streaming)
+
+        // The VibeVoice-ASR-Streaming V5 shape mlx-audio is building to (AB-A-0062): all three
+        // declarations compose, and only `context` reaches the schema.
+        let vibevoice = STTContract.descriptor(
+            name: "vibevoice-asr-streaming", summary: "VibeVoice-ASR-Streaming-7B — …",
+            controls: STTControls(attributesSpeakers: true, supportsContextBiasing: true,
+                                  liveDiscipline: .incremental))
+        XCTAssertEqual(vibevoice.parameters.map(\.name), ["audio", "language", "context"])
+        XCTAssertEqual(vibevoice.sttControls?.liveDiscipline, .incremental)
+        XCTAssertTrue(vibevoice.controlsMatchCapability)
+    }
+
     // mlx-indextts2-swift:78 (modes only) and mlx-gepard-swift:76 (modes + streaming).
     func testPre138TTSDescriptorCallSitesStillCompile() {
         let indexTTS2 = TTSContract.descriptor(

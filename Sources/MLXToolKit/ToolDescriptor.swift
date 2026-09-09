@@ -102,10 +102,29 @@ public struct STTControls: Sendable, Codable, Equatable {
     /// the descriptor advertises the parameter at all — a planner is never offered a knob that is
     /// ignored (the `ImageRestoreContract.descriptor(supportsStrength:)` precedent, 1.30.0).
     public let supportsContextBiasing: Bool
+    /// The assembly discipline of this surface's LIVE transcription sessions, or `nil` when the
+    /// surface is one-shot only — which is every pre-1.39 conformer (contract 1.39.0).
+    ///
+    /// Non-nil ⇔ the package conforms to `LiveTranscribing` (LIV-1 checks both directions).
+    /// It declares two things at once: that live sessions exist here at all — the advertisement
+    /// half of the `as?`-detected opt-in — and how a consumer assembles their chunks.
+    ///
+    /// It lives here rather than as a `StreamGranularity` case because that enum's invariant is
+    /// "non-nil requires `StreamEmitting`" (what STR-1 asserts), and a live surface conforms to
+    /// `LiveTranscribing` instead; and rather than as a bare `ToolDescriptor` member because an
+    /// assembly discipline is as `stt`-specific as `attributesSpeakers` is. Adding a defaulted
+    /// member is additive; adding a case to a public enum is not.
+    ///
+    /// Deliberately NOT joined here by `maxBufferedSeconds` (a session property — nobody routes
+    /// on buffer depth) or by watermark availability (readable from any chunk, and the governing
+    /// rule excludes anything learnable from a response).
+    public let liveDiscipline: STTStreamDiscipline?
 
-    public init(attributesSpeakers: Bool = false, supportsContextBiasing: Bool = false) {
+    public init(attributesSpeakers: Bool = false, supportsContextBiasing: Bool = false,
+                liveDiscipline: STTStreamDiscipline? = nil) {
         self.attributesSpeakers = attributesSpeakers
         self.supportsContextBiasing = supportsContextBiasing
+        self.liveDiscipline = liveDiscipline
     }
 }
 
