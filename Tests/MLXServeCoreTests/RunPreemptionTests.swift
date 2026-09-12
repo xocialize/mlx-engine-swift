@@ -24,14 +24,18 @@ private final class RunProbe: @unchecked Sendable {
     private let lock = NSLock()
     private var _attempts = 0
     private var _cancelledMidRun = false
+    private var _finished = 0
 
-    func reset() { lock.withLock { _attempts = 0; _cancelledMidRun = false } }
+    func reset() { lock.withLock { _attempts = 0; _cancelledMidRun = false; _finished = 0 } }
     /// Registers the start of one run() attempt and returns its ordinal (1-based).
     func beginAttempt() -> Int { lock.withLock { _attempts += 1; return _attempts } }
     func noteCancelled() { lock.withLock { _cancelledMidRun = true } }
+    /// Registers a run() that returned on its own (not cancelled).
+    func noteFinished() { lock.withLock { _finished += 1 } }
 
     var attempts: Int { lock.withLock { _attempts } }
     var cancelledMidRun: Bool { lock.withLock { _cancelledMidRun } }
+    var finished: Int { lock.withLock { _finished } }
 }
 
 // MARK: - Mock packages (cooperative: yield between steps, honor Task.checkCancellation)
@@ -130,6 +134,7 @@ private func mockManifest(name: String, capability: Capability = .llm,
             Self.probe.noteCancelled()
             throw error
         }
+        Self.probe.noteFinished()
         return LLMResponse(text: "victim-finished-naturally", finishReason: .stop)
     }
 }
@@ -429,7 +434,17 @@ private func waitUntilMonitorClear(_ e: MLXServeEngine, _ capability: Capability
         try await e.register(PackageRegistration.of(QuickContender.self), configuration: cfg())
 
         let victimCall = Task { try await e.run(LLMRequest(prompt: "v"), package: "neardone-llm") }
-        try await waitUntilRunning(e, "neardone-llm")
+        // "Running" OR "already finished on its own": this victim's whole run is ~300 yields, and
+        // on a loaded hosted runner it can complete before the yield-poll ever observes its
+        // progress report — the barrier then waits out its full deadline for a report that is
+        // gone (ci run 34699340195, a docs-only push). The claim under test does not need the
+        // victim mid-run: a victim that finished before the contender ran was, trivially, not
+        // preempted. The mid-run ordering is pinned by the enabled-policy tests above.
+        let observed = await waitFor {
+            await e.activeRunLatestReport(for: "neardone-llm") != nil
+                || NearlyDoneVictim.probe.finished == 1
+        }
+        if !observed { Issue.record("neardone-llm neither ran nor finished within \(barrierTimeout)") }
 
         let contender = try await e.run(LLMRequest(prompt: "c"), package: "contender-llm")
         #expect((contender as? LLMResponse)?.text == "contender")
@@ -437,5 +452,6 @@ private func waitUntilMonitorClear(_ e: MLXServeEngine, _ capability: Capability
         #expect((victim as? LLMResponse)?.text == "victim-finished-naturally")
         #expect(!NearlyDoneVictim.probe.cancelledMidRun)
         #expect(NearlyDoneVictim.probe.attempts == 1)
+        #expect(NearlyDoneVictim.probe.finished == 1)
     }
 }

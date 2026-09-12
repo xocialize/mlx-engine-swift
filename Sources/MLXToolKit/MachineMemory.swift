@@ -121,6 +121,13 @@ public struct WorkloadFit: Sendable, Equatable {
         self.projectedActivationBytes = projectedActivationBytes
         self.reservedActivationBytes = reservedActivationBytes
     }
+
+    /// What a run at this workload RESERVES (contract 1.42.0, AB-A-0075): the larger of the
+    /// scalar and the projection. Admission sizes the transient per run this way, so a package's
+    /// representative case still decides which machines it registers on while a longer job
+    /// reserves what its declaration projects — and only for that job. Meaningful inside the
+    /// ceiling; beyond it nothing is admitted and this is the extrapolation.
+    public var perRunReserveBytes: UInt64 { max(reservedActivationBytes, projectedActivationBytes) }
 }
 
 /// OS memory-pressure level, as reported by the kernel's pressure source (1.36.0).

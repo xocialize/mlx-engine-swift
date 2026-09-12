@@ -70,6 +70,15 @@ public enum EngineError: Error, Sendable, Equatable {
     /// declaration covers it. `requested` and `ceiling` are in units of `axis`.
     case workloadExceedsDeclaredCeiling(package: PackageID, axis: WorkloadAxis,
                                         requested: Double, ceiling: Double)
+    /// THIS run's reserve does not fit the budget even alone (1.42.0, AB-A-0075). Admission sizes
+    /// the transient per run — `max(scalar, projectedBytes(at: workload))` — so a package whose
+    /// representative case fits can still be handed a workload that does not: `required` is the
+    /// package's persistent weights plus that per-run reserve, against `budget`. Nothing was
+    /// evicted and nothing loaded. Shorten the workload, or run it on a machine with the room —
+    /// the ceiling is not the problem (a beyond-ceiling workload is
+    /// `workloadExceedsDeclaredCeiling`). `requested` is in units of `axis`.
+    case workloadExceedsMemoryBudget(package: PackageID, axis: WorkloadAxis, requested: Double,
+                                     required: UInt64, budget: UInt64)
 }
 
 /// Engine-side identity for a registered package — lets several packages back the SAME
@@ -540,14 +549,15 @@ public actor MLXServeEngine {
         return (split, scaling)
     }
 
-    /// The 1.36.0 arithmetic, with the transient swapped for the model's projection when a
-    /// workload was asked: ADDITIONAL bytes (residency + persistent + one transient reserve −
-    /// current footprint) against machine availability, fresh per call.
+    /// The 1.36.0 arithmetic, with the transient swapped for what a run at this workload would
+    /// RESERVE when one was asked — `max(scalar, projection)`, the 1.42.0 per-run rule, so the
+    /// advisory and admission read the same number: ADDITIONAL bytes (residency + persistent +
+    /// one transient reserve − current footprint) against machine availability, fresh per call.
     private func composeFit(id: PackageID,
                             split: (persistent: UInt64, transient: UInt64),
                             scaling: ActivationScaling?,
                             workload: WorkloadFit?) -> MachineFitAdvisory {
-        let transient = workload?.projectedActivationBytes ?? split.transient
+        let transient = workload?.perRunReserveBytes ?? split.transient
         let projected = residency() &+ split.persistent &+ transientReserve(extra: transient)
         let current = HostMemory.physFootprint() ?? 0
         let additional = projected > current ? projected - current : 0
@@ -762,12 +772,17 @@ public actor MLXServeEngine {
                 print("[Footprint] \(packageID): activationScaling is malformed (FIT-1) — "
                     + "ceiling \(scaling.measuredCeiling) \(scaling.axis), slope "
                     + "\(scaling.bytesPerUnit) B/unit; a non-positive ceiling refuses every run")
-            } else if !scaling.isCovered(by: split.transient) {
+            } else if !scaling.isCovered(by: split.transient),
+                      !(configuration is WorkloadDeclaring) {
+                // 1.42.0: a configuration that maps workloads is covered PER RUN
+                // (`runReserve(for:id:)` reserves max(scalar, projection)), so an uncovered pair
+                // is a finding only when nothing can ever map a request to the line.
                 print("[Footprint] \(packageID): declared activation scaling projects "
                     + "\(gb(scaling.bytesAtCeiling)) at its ceiling of "
                     + "\(scaling.measuredCeiling) \(scaling.axis), but admission reserves "
-                    + "\(gb(split.transient)) — the reserve does not cover the declared "
-                    + "envelope (FIT-2). Raise peakActivationBytes / the lane hint, or lower "
+                    + "\(gb(split.transient)) and the configuration does not adopt "
+                    + "WorkloadDeclaring, so no run can be sized past that (FIT-2/FIT-3). Adopt "
+                    + "WorkloadDeclaring, raise peakActivationBytes / the lane hint, or lower "
                     + "measuredCeiling to what the reserve was measured at.")
             }
         }
@@ -998,10 +1013,13 @@ public actor MLXServeEngine {
                             id: PackageID,
                             capability: Capability,
                             conduct: AdmissionConduct) async throws -> RunAttemptOutcome {
+        // What THIS run reserves (1.42.0): the scalar, or the declared model at the mapped
+        // workload when that is larger. Sized before admission so the headroom is made for it.
+        let reserve = runReserve(for: request, id: id)
         await lockAdmission()
         let instance: any ModelPackage
         do {
-            instance = try await resident(id, conduct: conduct)
+            instance = try await resident(id, conduct: conduct, reserve: reserve)
         } catch {
             unlockAdmission()
             throw error
@@ -1025,7 +1043,7 @@ public actor MLXServeEngine {
         // limit rises to Σ reservations + this transient while the package computes, and the
         // pairing survives all three exits (return / throw / cancel — including governor
         // preemption, whose CancellationError takes the catch path inside the wrapper).
-        let wiredTicket = makeActiveWiredTicket(transientBytes: residentTransient[id] ?? 0)
+        let wiredTicket = makeActiveWiredTicket(transientBytes: reserve.transient)
         let task = Task {
             try await withActiveWiredTicket(wiredTicket) {
                 try await RunProgress.$sink.withValue(sink) {
@@ -1033,8 +1051,7 @@ public actor MLXServeEngine {
                 }
             }
         }
-        activeRuns[token] = ActiveRun(id: id, task: task,
-                                      transientBytes: residentTransient[id] ?? 0)
+        activeRuns[token] = ActiveRun(id: id, task: task, transientBytes: reserve.transient)
         unlockAdmission()
 
         defer {
@@ -1126,12 +1143,13 @@ public actor MLXServeEngine {
             try Task.checkCancellation()   // entry boundary (caller may cancel pre-admission)
             let id = try resolve(capability, package)
             try preflight(request, id: id)
+            let reserve = runReserve(for: request, id: id)   // 1.42.0, as in runAttempt
 
             await lockAdmission()
             let instance: any ModelPackage
             do {
                 instance = try await resident(
-                    id, conduct: preemption.enabled ? .preempting : .idleOnly)
+                    id, conduct: preemption.enabled ? .preempting : .idleOnly, reserve: reserve)
             } catch {
                 unlockAdmission()
                 throw error
@@ -1152,7 +1170,7 @@ public actor MLXServeEngine {
             }
             // Same `.active` wired-ticket scope as `runAttempt` (HV1) — a stream is one
             // serialized inference with a chunked delivery surface.
-            let wiredTicket = makeActiveWiredTicket(transientBytes: residentTransient[id] ?? 0)
+            let wiredTicket = makeActiveWiredTicket(transientBytes: reserve.transient)
             let task = Task {
                 try await withActiveWiredTicket(wiredTicket) {
                     try await RunProgress.$sink.withValue(sink) {
@@ -1162,8 +1180,7 @@ public actor MLXServeEngine {
                     }
                 }
             }
-            activeRuns[token] = ActiveRun(id: id, task: task,
-                                          transientBytes: residentTransient[id] ?? 0)
+            activeRuns[token] = ActiveRun(id: id, task: task, transientBytes: reserve.transient)
             unlockAdmission()
 
             defer {
@@ -1511,11 +1528,13 @@ public actor MLXServeEngine {
     }
 
     /// The single transient activation headroom to reserve: `max(peakActivation)` across residents,
-    /// since only one model runs at a time. `extra` folds in an incoming model's transient; `skip`
-    /// excludes one id.
+    /// since only one model runs at a time — and, since 1.42.0, across the runs IN FLIGHT, whose
+    /// per-run reserve may exceed their package's idle scalar (`runReserve(for:id:)`). `extra`
+    /// folds in an incoming model's transient; `skip` excludes one id.
     private func transientReserve(extra: UInt64 = 0, excluding skip: PackageID? = nil) -> UInt64 {
         var m = extra
         for (id, t) in residentTransient where id != skip { m = max(m, t) }
+        for run in activeRuns.values where run.id != skip { m = max(m, run.transientBytes) }
         return m
     }
 
@@ -1546,6 +1565,39 @@ public actor MLXServeEngine {
     private func preflight(_ request: any CapabilityRequest, id: PackageID) throws {
         try checkDeclaredControls(request, id: id)
         try checkDeclaredWorkloadCeiling(request, id: id)
+    }
+
+    /// What ONE run reserves, and why (contract 1.42.0, AB-A-0075 — the AB-D-0075 §6 follow-up).
+    private struct RunReserve {
+        /// The transient this run is admitted against and the `.active` wired ticket carries.
+        let transient: UInt64
+        /// The mapped workload the transient was projected from, for the refusal message; nil
+        /// when the run reserves the plain scalar.
+        let workload: (axis: WorkloadAxis, units: Double)?
+    }
+
+    /// Per-run reserve sizing (1.42.0): `max(scalar, projectedBytes(at: workload))` when the
+    /// resolved package declares `ActivationScaling` AND its configuration maps this request
+    /// (`WorkloadDeclaring`); the resolved scalar (or lane hint) otherwise — an unmappable request
+    /// (a live session at open time, a request type the package does not map) and a scalar-only
+    /// package reserve exactly what they did before.
+    ///
+    /// Why `max` and not the projection alone: the scalar is the author's representative case,
+    /// measured, and a projection below it says only that the line is a first-order model —
+    /// reserving less than the scalar for a short workload would be admitting on a number that
+    /// was never measured as a peak. Why per run and not per registration: the scalar stays the
+    /// idle reserve (`residentTransient`), so a package keeps fitting the machines its
+    /// representative case fits, and only the run that actually needs more reserves more — for
+    /// exactly its duration (the active-run transient rides `transientReserve` while it runs).
+    /// Runs past the ceiling never reach here (`checkDeclaredWorkloadCeiling` refused them), so
+    /// the projection is always inside the measured envelope — never the extrapolation.
+    private func runReserve(for request: any CapabilityRequest, id: PackageID) -> RunReserve {
+        guard let entry = packages[id] else { return RunReserve(transient: 0, workload: nil) }
+        guard let scaling = entry.scaling,
+              let units = (entry.configuration as? WorkloadDeclaring)?.workloadUnits(for: request)
+        else { return RunReserve(transient: entry.transient, workload: nil) }
+        return RunReserve(transient: max(entry.transient, scaling.projectedBytes(at: units)),
+                          workload: (scaling.axis, units))
     }
 
     /// Pre-flight workload-ceiling check (contract 1.41.0, AB-A-0069). When the resolved
@@ -1623,8 +1675,15 @@ public actor MLXServeEngine {
     }
 
     private func resident(_ id: PackageID,
-                          conduct: AdmissionConduct = .idleOnly) async throws -> any ModelPackage {
+                          conduct: AdmissionConduct = .idleOnly,
+                          reserve: RunReserve? = nil) async throws -> any ModelPackage {
         if let existing = residents[id] {
+            // Already resident, and this run reserves MORE than the idle scalar (1.42.0): the
+            // per-run headroom is made here, under the same accounting and the same eviction
+            // ladder as a fresh admission — a resident package is not a free pass past the budget.
+            if let reserve, reserve.transient > (residentTransient[id] ?? 0) {
+                try await makeRunHeadroom(id, reserve: reserve, conduct: conduct)
+            }
             touch(id)
             return existing
         }
@@ -1653,7 +1712,14 @@ public actor MLXServeEngine {
                 throw EngineError.exceedsMemoryBudget(required: persistent &+ transient,
                                                       budget: governor.budgetBytes)
             }
-            await makeHeadroom(persistent: persistent, transient: transient, keeping: id,
+            // Per-run reserve sizing (1.42.0): the package fits at its representative case, but
+            // THIS run may reserve more — check that before loading a working set only to refuse
+            // the run, and make headroom for the larger of the two.
+            let runTransient = max(transient, reserve?.transient ?? 0)
+            if runTransient > transient, !governor.fitsBudget(persistent &+ runTransient) {
+                throw runBudgetRefusal(id, persistent: persistent, reserve: reserve!)
+            }
+            await makeHeadroom(persistent: persistent, transient: runTransient, keeping: id,
                                conduct: conduct)
 
             // Stamp the headroom this model is loading into onto a BudgetAware config (for memory-adaptive
@@ -1955,6 +2021,35 @@ public actor MLXServeEngine {
     /// it only reclaims our own idle residents (never the incoming `id`), and stops when
     /// nothing's left to evict, so external (non-engine) memory pressure can't loop. Degrades to
     /// the declared-byte pass when no host reading is available.
+    /// The per-run headroom for a package that is ALREADY resident (1.42.0): its own persistent
+    /// weights are charged already, so the accounting question is whether Σ residency + one
+    /// transient reserve at THIS run's size fits — evicting idle LRU (and, under a preempting
+    /// conduct, reclaiming) exactly as a fresh admission would. Refused without evicting when the
+    /// package + this run cannot fit the budget even alone.
+    private func makeRunHeadroom(_ id: PackageID, reserve: RunReserve,
+                                 conduct: AdmissionConduct) async throws {
+        let persistent = residentFootprint[id] ?? 0
+        guard governor.fitsBudget(persistent &+ reserve.transient) else {
+            throw runBudgetRefusal(id, persistent: persistent, reserve: reserve)
+        }
+        await makeHeadroom(persistent: persistent, transient: reserve.transient, keeping: id,
+                           conduct: conduct)
+    }
+
+    /// The refusal for a per-run reserve that cannot fit even alone: names the WORKLOAD when the
+    /// reserve was projected from one (the usual case — a scalar-sized run cannot exceed a budget
+    /// its registration already passed).
+    private func runBudgetRefusal(_ id: PackageID, persistent: UInt64,
+                                  reserve: RunReserve) -> EngineError {
+        let required = persistent &+ reserve.transient
+        if let workload = reserve.workload {
+            return .workloadExceedsMemoryBudget(package: id, axis: workload.axis,
+                                                requested: workload.units, required: required,
+                                                budget: governor.budgetBytes)
+        }
+        return .exceedsMemoryBudget(required: required, budget: governor.budgetBytes)
+    }
+
     private func makeHeadroom(persistent p: UInt64, transient t: UInt64, keeping id: PackageID,
                               conduct: AdmissionConduct = .idleOnly) async {
         // (1) Declared-byte headroom under the serialized-inference accounting (Σ persistent + one

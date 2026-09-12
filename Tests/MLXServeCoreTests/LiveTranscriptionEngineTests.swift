@@ -451,13 +451,18 @@ private func drive(_ handle: STTLiveHandle, seconds: Double) async throws -> [ST
 }
 
 @Test func aFedSessionOutlivesTheIdleTimeout() async throws {
-    // The watchdog must not shoot a session that is being used.
-    let engine = liveEngine(policy: LiveSessionPolicy(idleTimeout: 0.2, idleCheckInterval: 0.05))
+    // The watchdog must not shoot a session that is being used. The session is fed for longer
+    // than the idle timeout, with gaps well inside it. ⚠️ The gaps are what the hosted CI runner
+    // stretches: with a 0.2 s timeout and 50 ms sleeps, one sleep overshooting by 150 ms shot a
+    // session that was being used (ci run 34673758942, a docs-only push). The timeout is now
+    // 1 s against 100 ms gaps — a single gap has to overshoot by 0.9 s to fail this wrongly,
+    // and the session is still fed for 1.2 s, past the timeout, so the claim keeps its teeth.
+    let engine = liveEngine(policy: LiveSessionPolicy(idleTimeout: 1.0, idleCheckInterval: 0.05))
     try await engine.register(PackageRegistration.of(LiveSTTPackage.self), configuration: cfg())
     let handle = try await engine.transcribeLive(STTSessionRequest())
-    for _ in 0..<8 {
+    for _ in 0..<12 {
         #expect(handle.push(Mock.buffer(seconds: 0.25), sampleRate: Mock.rate) == .accepted)
-        try? await Task.sleep(nanoseconds: 50_000_000)
+        try? await Task.sleep(nanoseconds: 100_000_000)
     }
     let open = await engine.openLiveSessionCount
     #expect(open == 1)

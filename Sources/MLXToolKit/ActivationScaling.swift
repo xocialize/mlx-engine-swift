@@ -76,12 +76,18 @@ public struct WorkloadAxis: RawRepresentable, Sendable, Codable, Equatable, Hash
 ///    (`EngineError.workloadExceedsDeclaredCeiling`): past the ceiling the model is an
 ///    extrapolation, and being admitted against a number that no longer applies is the failure
 ///    this declaration exists to prevent. A package that wants a wider envelope measures it.
-/// 3. **The reserve covers the model at the ceiling:** `peakActivationBytes ≥
-///    projectedBytes(at: measuredCeiling)`. The FIT gate (`MLXServeConformance
-///    .FootprintConformance`) checks it in the package's own suite; the engine logs a resolved
-///    pair that violates it at registration and never under-reserves silently. A lane that
-///    raises its cap re-declares BOTH through `FootprintConfigured` (`peakActivationBytesHint` +
-///    `activationScalingHint`), and the rule holds for that pair.
+/// 3. **Every admitted run is reserved for.** Since 1.42.0 (AB-A-0075) admission sizes the
+///    transient PER RUN — `max(peakActivationBytes, projectedBytes(at: workload))` when the
+///    configuration maps the request (`WorkloadDeclaring`) — so the scalar is the author's
+///    REPRESENTATIVE case (what registration and the idle reserve charge; what decides which
+///    machines the package fits) and the line is what a longer job reserves, for exactly that
+///    job. The 1.41.0 form of the rule — `peakActivationBytes ≥ projectedBytes(at:
+///    measuredCeiling)` — still holds when nothing can map a request to the line: the FIT gate
+///    (`MLXServeConformance.FootprintConformance`, FIT-2) requires it of a configuration that
+///    does not adopt `WorkloadDeclaring`, and passes a mapping one with the per-run note. A lane
+///    that raises its cap still re-declares BOTH through `FootprintConfigured`
+///    (`peakActivationBytesHint` + `activationScalingHint`) so the lane's representative case
+///    is its own.
 ///
 /// Measure on `phys_footprint`, not the allocator's view: the VibeVoice port found MLX's own
 /// accounting under-reading the same run by 45 % (0.116 vs 0.182 GB/min), and `phys` is what the
@@ -122,10 +128,13 @@ public struct ActivationScaling: Sendable, Codable, Equatable {
     /// Whether `units` is inside the measured envelope (rule 2).
     public func covers(_ units: Double) -> Bool { units <= measuredCeiling }
 
-    /// The model evaluated at the ceiling — what the reserve must cover (rule 3).
+    /// The model evaluated at the ceiling — what a run AT the ceiling reserves (rule 3), and
+    /// what the scalar alone must cover when no configuration can map a request to the line.
     public var bytesAtCeiling: UInt64 { projectedBytes(at: measuredCeiling) }
 
-    /// Rule 3 as a predicate: does `reserveBytes` cover the model at the ceiling?
+    /// Does `reserveBytes` cover the model at the ceiling? The 1.41.0 form of rule 3 — decisive
+    /// for a scalar that has to stand alone; informational for a lane whose runs are sized per
+    /// workload (1.42.0).
     public func isCovered(by reserveBytes: UInt64) -> Bool { bytesAtCeiling <= reserveBytes }
 
     /// Well-formedness (FIT-1): a positive, finite ceiling and a finite, non-negative slope. A

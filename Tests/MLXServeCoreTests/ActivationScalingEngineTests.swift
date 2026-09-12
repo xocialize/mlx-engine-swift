@@ -39,17 +39,19 @@ private struct ScalingConfiguration: PackageConfiguration, QuantConfigured, Foot
     func workloadUnits(for request: any CapabilityRequest) -> Double? {
         guard mapsWorkload else { return nil }
         let meta = (request as? STTRequest)?.metaData ?? (request as? STTSessionRequest)?.metaData
+            ?? (request as? TTSRequest)?.metaData
         guard case .double(let seconds)? = meta?["seconds"] else { return nil }
         return seconds
     }
 }
 
-private func sttManifest(name: String, scaling: ActivationScaling?) -> PackageManifest {
+private func sttManifest(name: String, scaling: ActivationScaling?,
+                         peak: UInt64 = 4_000) -> PackageManifest {
     PackageManifest(
         license: LicenseDeclaration(weightLicense: .apache2, portCodeLicense: .apache2),
         provenance: Provenance(sourceRepo: "mock/\(name)", revision: "main", tier: 1),
         requirements: RequirementsManifest(
-            footprints: [QuantFootprint(quant: .int4, residentBytes: 1, peakActivationBytes: 4_000,
+            footprints: [QuantFootprint(quant: .int4, residentBytes: 1, peakActivationBytes: peak,
                                         activationScaling: scaling)],
             requiredBackends: [.metalGPU]),
         surfaces: [STTContract.descriptor(name: name, summary: "m")])
@@ -62,6 +64,21 @@ private final class ScalingSTTPackage: ModelPackage {
         sttManifest(name: "scaling-stt", scaling: quantScaling)
     }
     nonisolated init(configuration: ScalingConfiguration) {}
+    func load() async throws {}
+    func unload() async {}
+    func run(_ request: any CapabilityRequest) async throws -> any CapabilityResponse {
+        STTResponse(text: "ok")
+    }
+}
+
+/// A small scalar-only co-resident (1 B resident, 100 B transient) for the headroom tests.
+@InferenceActor
+private final class TinySTTPackage: ModelPackage {
+    typealias Configuration = StandardConfiguration
+    nonisolated static var manifest: PackageManifest {
+        sttManifest(name: "tiny-stt", scaling: nil, peak: 100)
+    }
+    nonisolated init(configuration: StandardConfiguration) {}
     func load() async throws {}
     func unload() async {}
     func run(_ request: any CapabilityRequest) async throws -> any CapabilityResponse {
@@ -282,3 +299,158 @@ private func ceilingRefusal(_ error: any Error)
     let advisory = try await engine.machineFitAdvisory(.stt, workload: try #require(units))
     #expect(advisory.workload?.projectedActivationBytes == 1_210)
 }
+
+// MARK: - Per-run reserve sizing (contract 1.42.0, AB-A-0075)
+
+/// A lane whose reserve is BELOW the model at the ceiling: scalar 2 000 B, line 1 000 + 5 B/s to
+/// 600 s (4 000 B at the ceiling). Under 1.41.0 this pair was incoherent; under 1.42.0 the
+/// scalar is the representative case and a run past it reserves the projection.
+private func representativeLane() -> ScalingConfiguration {
+    ScalingConfiguration(laneScaling: quantScaling, laneReserve: 2_000)
+}
+
+/// A byte-scale budget with the R-MEM-1 real-pressure pass disabled (`physFootprint: nil`):
+/// against a 4 001-byte budget the test process's real footprint would read as pressure on
+/// every admission and evict every idle resident, which is not what these tests measure.
+private func engine(budget: UInt64) -> MLXServeEngine {
+    MLXServeEngine(governor: MemoryGovernor(budgetBytes: budget), physFootprint: { nil })
+}
+
+// The gap AB-A-0075 named: a 20-minute file on the ten-minute lane. Inside the ceiling, above
+// the scalar — admitted, reserving the projection, and the reserve returns to the scalar after.
+@Test func aRunAboveTheScalarReservesTheProjectionForItsDuration() async throws {
+    let engine = engine(budget: 10_000)
+    try await engine.register(PackageRegistration.of(ScalingSTTPackage.self),
+                              configuration: representativeLane())
+    _ = try await engine.run(request(seconds: 600))   // projection 4 000 > scalar 2 000
+    let snapshot = await engine.memory
+    #expect(snapshot.transientReserveBytes == 2_000)   // idle reserve: the scalar, as before
+}
+
+// A resident package is not a free pass: the larger run makes headroom by evicting an idle
+// co-resident, exactly as a fresh admission would.
+@Test func aLargerRunEvictsAnIdleCoResidentToMakeHeadroom() async throws {
+    // Budget 4 001: A (1 + 2 000) and B (1 + 100) co-reside at 2 + max(2 000, 100) = 2 002.
+    // A's run at 600 s needs 1 + 4 000 = 4 001 → B (idle LRU) is evicted, then it fits exactly.
+    let engine = engine(budget: 4_001)
+    let a = try await engine.register(PackageRegistration.of(ScalingSTTPackage.self),
+                                      configuration: representativeLane())
+    let b = try await engine.register(PackageRegistration.of(TinySTTPackage.self),
+                                      configuration: StandardConfiguration(weightsRepo: "mock/b"),
+                                      id: "tiny-b")
+    _ = try await engine.run(request(seconds: 100), package: a)   // A resident (reserve 2 000)
+    _ = try await engine.prepare(.stt, package: b)                 // B resident too
+    var resident = await engine.residentPackages
+    #expect(resident[a] != nil && resident[b] != nil)
+    _ = try await engine.run(request(seconds: 600), package: a)   // per-run 4 000
+    resident = await engine.residentPackages
+    #expect(resident[a] != nil)
+    #expect(resident[b] == nil, "B should have been evicted to make the per-run headroom")
+}
+
+// A run whose reserve cannot fit even alone is refused before anything is evicted or loaded —
+// by the BUDGET, not the ceiling (600 s is inside the envelope).
+@Test func aRunWhoseReserveCannotFitAloneIsRefusedWithoutEvicting() async throws {
+    let engine = engine(budget: 3_000)
+    let a = try await engine.register(PackageRegistration.of(ScalingSTTPackage.self),
+                                      configuration: representativeLane())
+    let b = try await engine.register(PackageRegistration.of(TinySTTPackage.self),
+                                      configuration: StandardConfiguration(weightsRepo: "mock/b"),
+                                      id: "tiny-b")
+    _ = try await engine.prepare(.stt, package: b)
+    do {
+        _ = try await engine.run(request(seconds: 600), package: a)   // needs 1 + 4 000 > 3 000
+        Issue.record("expected workloadExceedsMemoryBudget")
+    } catch {
+        guard case .workloadExceedsMemoryBudget(let package, let axis, let requested, let required,
+                                                let budget) = error as? EngineError
+        else { Issue.record("unexpected \(error)"); return }
+        #expect(package == a)
+        #expect(axis == .audioSeconds)
+        #expect(requested == 600)
+        #expect(required == 4_001)
+        #expect(budget == 3_000)
+    }
+    let resident = await engine.residentPackages
+    #expect(resident[b] != nil, "nothing is evicted for a run that cannot fit anyway")
+    #expect(resident[a] == nil, "nothing is loaded for a run that cannot fit anyway")
+    // The same package still runs its representative case on this machine.
+    _ = try await engine.run(request(seconds: 100), package: a)
+}
+
+// Below the scalar the run reserves the scalar — `max`, never the bare projection.
+@Test func aRunBelowTheScalarStillReservesTheScalar() async throws {
+    let engine = engine(budget: 10_000)
+    try await engine.register(PackageRegistration.of(ScalingSTTPackage.self),
+                              configuration: representativeLane())
+    let advisory = try await engine.machineFitAdvisory(.stt, workload: 100)   // projection 1 500
+    let fit = try #require(advisory.workload)
+    #expect(fit.projectedActivationBytes == 1_500)
+    #expect(fit.reservedActivationBytes == 2_000)
+    #expect(fit.perRunReserveBytes == 2_000)
+    let above = try await engine.machineFitAdvisory(.stt, workload: 600)      // projection 4 000
+    #expect(above.workload?.perRunReserveBytes == 4_000)
+}
+
+// MARK: - The stream door (1.42.0)
+
+/// The TTS twin of `ScalingSTTPackage`, streaming — the stream door must size the same way.
+@InferenceActor
+private final class ScalingTTSPackage: ModelPackage, StreamEmitting {
+    typealias Configuration = ScalingConfiguration
+    nonisolated static var manifest: PackageManifest {
+        PackageManifest(
+            license: LicenseDeclaration(weightLicense: .apache2, portCodeLicense: .apache2),
+            provenance: Provenance(sourceRepo: "mock/scaling-tts", revision: "main", tier: 1),
+            requirements: RequirementsManifest(
+                footprints: [QuantFootprint(quant: .int4, residentBytes: 1, peakActivationBytes: 4_000,
+                                            activationScaling: quantScaling)],
+                requiredBackends: [.metalGPU]),
+            surfaces: [TTSContract.descriptor(name: "scaling-tts", summary: "m")])
+    }
+    nonisolated init(configuration: ScalingConfiguration) {}
+    func load() async throws {}
+    func unload() async {}
+    func run(_ request: any CapabilityRequest) async throws -> any CapabilityResponse {
+        TTSResponse(audio: Audio(data: Data()))
+    }
+    func runStream(_ request: any CapabilityRequest,
+                   emit: @escaping @Sendable (TTSStreamChunk) -> Void)
+        async throws -> any CapabilityResponse
+    {
+        emit(TTSStreamChunk(samples: [0], sampleRate: 16_000, index: 0, isFinal: true))
+        return TTSResponse(audio: Audio(data: Data()))
+    }
+}
+
+private func ttsRequest(seconds: Double) -> TTSRequest {
+    TTSRequest(text: "x", metaData: ["seconds": .double(seconds)])
+}
+
+// `stream` sizes the run exactly as `run` does: a stream whose reserve cannot fit even alone is
+// refused with the budget error BEFORE admission (the stream fails with it), and one inside the
+// scalar streams.
+@Test func theStreamDoorSharesThePerRunSizing() async throws {
+    let engine = engine(budget: 3_000)
+    let id = try await engine.register(PackageRegistration.of(ScalingTTSPackage.self),
+                                       configuration: representativeLane())
+    let refused = await engine.stream(ttsRequest(seconds: 600), package: id)   // 1 + 4 000 > 3 000
+    do {
+        for try await _ in refused.chunks {}
+        Issue.record("expected workloadExceedsMemoryBudget from the stream door")
+    } catch {
+        guard case .workloadExceedsMemoryBudget(_, _, let requested, let required, let budget)
+                = error as? EngineError
+        else { Issue.record("unexpected \(error)"); return }
+        #expect(requested == 600)
+        #expect(required == 4_001)
+        #expect(budget == 3_000)
+    }
+    let resident = await engine.residentPackages
+    #expect(resident[id] == nil)
+    let admitted = await engine.stream(ttsRequest(seconds: 100), package: id)     // scalar 2 000
+    var chunks = 0
+    for try await _ in admitted.chunks { chunks += 1 }
+    #expect(chunks == 1)
+}
+

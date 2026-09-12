@@ -39,8 +39,11 @@ public enum FootprintConformance {
 
     /// Check every quant-keyed footprint in `manifest`, and — when a `configuration` is given —
     /// the RESOLVED lane pair the engine would register (lane hints over quant-keyed, the same
-    /// rule `MemoryGovernor.footprintSplit` applies) plus FIT-3. Call from the package's own
-    /// conformance tests:
+    /// rule `MemoryGovernor.footprintSplit` applies) plus FIT-3. Pass the configuration: since
+    /// 1.42.0 FIT-2 is a per-run guarantee for a configuration that adopts `WorkloadDeclaring`
+    /// (the scalar is the representative case, a longer run reserves the projection), and only a
+    /// scalar that has to stand alone must cover the model at the ceiling. Call from the
+    /// package's own conformance tests:
     /// ```swift
     /// let report = FootprintConformance.check(manifest: MyPackage.manifest,
     ///                                         configuration: MyConfiguration())
@@ -51,6 +54,11 @@ public enum FootprintConformance {
         var checks: [Check] = []
         let gb = { (b: UInt64) in String(format: "%.2f GB", Double(b) / 1e9) }
 
+        // 1.42.0: a configuration that maps workloads is covered PER RUN (admission reserves
+        // max(scalar, projection)), so an uncovered pair fails FIT-2 only when nothing can map
+        // a request to the line — a manifest checked alone, or a configuration without
+        // `WorkloadDeclaring`.
+        let perRunSized = configuration is WorkloadDeclaring
         func pair(_ label: String, scaling: ActivationScaling, reserve: UInt64) {
             let formed = scaling.isWellFormed
             checks.append(Check(
@@ -62,13 +70,23 @@ public enum FootprintConformance {
                         + "must be finite, ceiling > 0, slope ≥ 0"))
             guard formed else { return }
             let covered = scaling.isCovered(by: reserve)
-            checks.append(Check(
-                name: "FIT-2 coherent (\(label))", passed: covered,
-                note: covered
-                    ? "reserve \(gb(reserve)) covers \(gb(scaling.bytesAtCeiling)) at the ceiling"
-                    : "reserve \(gb(reserve)) does NOT cover \(gb(scaling.bytesAtCeiling)) at "
-                        + "the ceiling of \(scaling.measuredCeiling) \(scaling.axis) — raise "
-                        + "the reserve or lower measuredCeiling to where it was measured"))
+            let note: String
+            if covered {
+                note = "reserve \(gb(reserve)) covers \(gb(scaling.bytesAtCeiling)) at the ceiling"
+            } else if perRunSized {
+                note = "reserve \(gb(reserve)) is the representative case below "
+                    + "\(gb(scaling.bytesAtCeiling)) at the ceiling of \(scaling.measuredCeiling) "
+                    + "\(scaling.axis); the configuration maps workloads, so a run past it "
+                    + "reserves the projection per run (1.42.0) — an unmappable request reserves "
+                    + "only \(gb(reserve))"
+            } else {
+                note = "reserve \(gb(reserve)) does NOT cover \(gb(scaling.bytesAtCeiling)) at "
+                    + "the ceiling of \(scaling.measuredCeiling) \(scaling.axis) and nothing "
+                    + "maps a request to the line — adopt WorkloadDeclaring, raise the reserve, "
+                    + "or lower measuredCeiling to where it was measured"
+            }
+            checks.append(Check(name: "FIT-2 coherent (\(label))",
+                                passed: covered || perRunSized, note: note))
         }
 
         var declared = false

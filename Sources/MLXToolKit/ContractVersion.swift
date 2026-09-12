@@ -829,5 +829,39 @@ public enum ContractVersion {
     //     arguments on `MachineFitAdvisory`, two new `EngineError` cases (error enum — consumers
     //     `catch`, the 1.39.0 precedent), three new types, one new protocol, one overload. No
     //     existing construction site changes; pre-1.41 footprint JSON decodes unchanged.
-    public static let current = SemanticVersion(major: 1, minor: 41, patch: 0)
+    // 1.42.0 (2026-09-12, additive): PER-RUN RESERVE SIZING — the AB-D-0075 §6 follow-up, asked
+    //   by mlx-audio as AB-A-0075 the day VibeVoice adopted 1.41.0 and found the scalar reserve
+    //   forcing a LANE ENUM on its configuration: with admission at the scalar, the ten-minute
+    //   reserve (4.60 GB, 16 GB-deployable) and a meeting-length one (8.0 GB) had to be two
+    //   registrations a host picks between — a 128 GB machine on the default lane refused a
+    //   20-minute file at the ceiling, a 16 GB machine could not register the wide lane at all.
+    //   • Admission sizes the transient PER RUN: `max(scalar, projectedBytes(at: workload))` when
+    //     the resolved package declares `ActivationScaling` AND its configuration maps the request
+    //     (`WorkloadDeclaring`); the scalar otherwise. Applied at `run` and `stream` (the `.active`
+    //     wired ticket carries it; `transcribeLive` opens on the scalar — a session's workload is
+    //     nil at open time). The scalar stays the IDLE reserve (`residentTransient`) and what
+    //     registration checks, so a package keeps fitting the machines its representative case
+    //     fits; a run that needs more reserves more for exactly its duration — the in-flight
+    //     transient rides `transientReserve` alongside the residents', so a co-admission during
+    //     the run accounts for it. A resident package is not a free pass: a larger run makes
+    //     headroom under the same eviction ladder as a fresh admission.
+    //   • `EngineError.workloadExceedsMemoryBudget(package:axis:requested:required:budget:)` —
+    //     the run's reserve does not fit the budget even alone (persistent + per-run reserve),
+    //     refused BEFORE anything is evicted or loaded. Distinct from the ceiling refusal: the
+    //     ceiling is where measurement stopped, this is where the machine does.
+    //   • Rule 3 restated: "every admitted run is reserved for." The 1.41.0 form (the scalar
+    //     covers the model at the ceiling) holds when nothing can map a request to the line —
+    //     FIT-2 requires it of a configuration without `WorkloadDeclaring` (or a manifest checked
+    //     alone) and passes a mapping configuration with the per-run note; the registration-time
+    //     `[Footprint]` log follows the same rule. `machineFitAdvisory(_:package:workload:)` now
+    //     projects the per-run reserve (`WorkloadFit.perRunReserveBytes`, additive), so the
+    //     advisory and admission read the same number — the scalar form is untouched.
+    //   Why `max` and not the projection alone: the scalar is measured as a peak, a projection
+    //     below it says only that the line is first-order. Why per run and not per registration:
+    //     the AB-D-0075 rejection of `max(scalar, model@ceiling)` stands — mage-vl at budget 4096
+    //     is still charged 6.5 GB, not the 8192 figure; only the run that asks for more pays more.
+    //   Additive: one `EngineError` case (error enum — consumers `catch`), one computed member on
+    //     `WorkloadFit`, one defaulted private parameter. No construction site changes; every
+    //     scalar-only package and every unmappable request admits exactly as before.
+    public static let current = SemanticVersion(major: 1, minor: 42, patch: 0)
 }

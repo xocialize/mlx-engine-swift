@@ -83,6 +83,15 @@ reclaim, not stack — the engine, not the caller, owns this.
   extrapolation shown; a scalar-only package throws `activationScalingUndeclared` rather than
   answering with a number nobody measured against a workload). A `nil` workload is never refused;
   for an open-ended live session the ceiling is advisory (the engine does not cut a session).
+- **Size the reserve per run (contract 1.42.0, AB-A-0075).** Admission reserves
+  `max(scalar, projectedBytes(at: workload))` when the package declares scaling and its
+  configuration maps the request — the scalar is the author's REPRESENTATIVE case (what
+  registration checks and the idle reserve charges, so a package keeps fitting the machines that
+  case fits) and the line is what a longer job reserves, for exactly that job (the in-flight
+  transient rides `transientReserve`; a resident package makes headroom under the same eviction
+  ladder). A run whose reserve cannot fit even alone is refused before anything is evicted or
+  loaded (`workloadExceedsMemoryBudget`). This is why VibeVoice no longer needs a session-envelope
+  lane enum to serve 16 GB and 128 GB machines from one declaration.
 - **Wire the accounted working set during runs — and only during runs (HV1, v0.42.0).** The
   engine maps its accounting onto mlx-swift's process-global `WiredMemoryManager`: each resident's
   persistent weights hold a **`.reservation`** ticket (participates in limit computation, never
