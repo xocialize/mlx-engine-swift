@@ -81,7 +81,10 @@ public struct STTStreamChunk: Sendable, Codable, Equatable {
     /// declared `STTControls.liveDiscipline`, and it is not inferrable from here.
     ///
     /// Under `.incremental` this is concatenated VERBATIM with its predecessors, so the package
-    /// carries any leading separator; see `STTStreamDiscipline.assemble(_:)`.
+    /// carries any leading separator; see `STTStreamDiscipline.assemble(_:)`. Do NOT trim or
+    /// normalise whitespace per chunk: that emits words fused across boundaries
+    /// (`"bigger.Mm-hmm.Um."`) while the batch path — which normalises AFTER joining — reads
+    /// correctly. LIV-5 catches it (AB-A-0068).
     public let text: String
     /// Timestamped spans covering `text`, in order; carries `speaker` when the surface declares
     /// `STTControls.attributesSpeakers`. May be empty for models without timing output.
@@ -95,6 +98,12 @@ public struct STTStreamChunk: Sendable, Codable, Equatable {
     /// Audio time before which the transcript will **not** be revised. For a cache-aware model
     /// with a provisional tail, `processedSeconds - rightContextSeconds`; for a model that
     /// commits every chunk (and for an append-only greedy decoder), `processedSeconds`.
+    ///
+    /// A THIRD shape exists (VibeVoice-ASR-Streaming, AB-A-0068): a chunked decoder that reads
+    /// `chunk + lookahead` never revises yet still trails — `committedThrough = (N+1)·chunkSeconds`,
+    /// `processedSeconds = min(committed + lookahead, pushed)`, meeting at `finish()`. Append-only
+    /// does NOT imply equality. And a zero-padded tail window must not advance the watermark by a
+    /// whole chunk; LIV-4 sees that as `processedSeconds` going backwards.
     ///
     /// `nil` = the package makes no commitment guarantee — and **nil-ness is constant for the
     /// lifetime of a session** (LIV-4). A package that commits, commits from chunk 0, so a
