@@ -28,7 +28,8 @@ public enum Capability: String, Codable, Sendable, CaseIterable, Hashable {
     /// Instruction-driven **video** editing — source video (+ optional reference
     /// images) + prompt → edited video. Contract 1.3.0; introduced by Bernini-R's
     /// v2v/rv2v. (Image editing is `imageEdit`; reference-conditioned *generation*
-    /// rides `textToVideo.referenceImages`.)
+    /// rides `textToVideo.referenceImages`, and audio-driven *generation* rides
+    /// `textToVideo.initAudio` (1.40.0) — an edit has a source video, a2v does not.)
     case videoEdit
     /// Audio-driven **lip-sync / face reenactment** — a source face video + driving audio →
     /// a video whose mouth/lower-face is regenerated to match the speech. Contract 1.4.0;

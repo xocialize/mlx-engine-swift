@@ -736,5 +736,33 @@ public enum ContractVersion {
     //     `catch`), one defaulted member on `STTControls`, one defaulted argument on
     //     `MLXServeEngine.init`. No existing construction site changes, and pre-1.39 descriptor
     //     JSON decodes unchanged.
-    public static let current = SemanticVersion(major: 1, minor: 39, patch: 0)
+    // 1.40.0 (2026-09-11, additive): a2v RIDES t2v — `T2VRequest.initAudio`, closing AB-A-0023
+    //   (nudged by AB-A-0066). LTX-2.5 shipped audio-to-video as videoEdit mode "audio_to_video"
+    //   with the track smuggled inside `VEditRequest.video` — a carrier hack (the retake-span
+    //   precedent, AB-A-0021) that could not express "no source video" honestly, because
+    //   `VEditRequest.video` is non-optional and having a source video IS the videoEdit capability.
+    //   • `T2VRequest.initAudio: Audio?` — the third conditioning input on t2v, exactly parallel
+    //     to `initImage` (i2v) and `referenceImages` (r2v, 1.3.0): t2v already means "generate a
+    //     video, optionally conditioned on something I hand you". The whole clip is generated
+    //     AGAINST the track (music, ambience, speech) and the track is returned untouched in the
+    //     output container. NOT a new `.audioToVideo` capability: same canonical output, same
+    //     geometry envelope, same seed — the C4 test says conditioning input, not surface
+    //     (`imageRelight` earned its own capability because its BEHAVIOUR differed).
+    //   • DECLARATION-GATED, unlike `initImage`/`referenceImages` — the consumer's own verdict
+    //     (mlx-ltx on AB-A-0066: gated). Those two degrade when ignored; an ignored `initAudio`
+    //     returns a video unrelated to the supplied track — wrong output a caller cannot detect.
+    //     So: `T2VControls(supportsInitAudio:)` on `ToolDescriptor.controls` as
+    //     `SurfaceControls.textToVideo`, read via `t2vControls`; `T2VContract.descriptor(controls:)`
+    //     DERIVES the `initAudio` ParameterSchema from the declaration (1.30.0's supportsStrength
+    //     rule); and `MLXServeEngine.run` refuses an undeclared `initAudio` before admission with
+    //     `PackageError.unsupportedRequestFeature` — the `targetDuration` rule (1.38.0), same
+    //     pre-flight site (`checkDeclaredControls`). The only implementer today (LTX-2.5) pays one
+    //     declaration; every other t2v package sees nothing.
+    //   • Compatibility: `mode: "audio_to_video"` on videoEdit stays as LTX's alias, exactly as
+    //     planned for retake's span keys. Nothing is removed.
+    //   Additive: one defaulted member + init argument on `T2VRequest`, one defaulted argument on
+    //     `T2VContract.descriptor`, one new struct, and one new `SurfaceControls` case — an enum
+    //     consumers already switch with `@unknown default` (the 1.38.0 note). Pre-1.40 descriptor
+    //     JSON decodes unchanged; no existing construction site changes.
+    public static let current = SemanticVersion(major: 1, minor: 40, patch: 0)
 }

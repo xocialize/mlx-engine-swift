@@ -1426,6 +1426,18 @@ public actor MLXServeEngine {
             }
         }
 
+        // a2v (contract 1.40.0, AB-A-0023 / AB-A-0066): declaration-gated, unlike `initImage` /
+        // `referenceImages`, by the implementer's own verdict. A silently ignored track yields a
+        // video UNRELATED to the audio the caller supplied — wrong output, not degraded output,
+        // and invisible in the response.
+        if let t2v = request as? T2VRequest, t2v.initAudio != nil,
+           surface.t2vControls?.supportsInitAudio != true {
+            throw PackageError.unsupportedRequestFeature(
+                "initAudio — \(id) declares no audio-to-video conditioning "
+                    + "(ToolDescriptor.t2vControls); choose a package that declares "
+                    + "supportsInitAudio, or drop the track")
+        }
+
         // BOTH stt entry points, one site (contract 1.39.0). `STTSessionRequest` is a
         // `CapabilityRequest` precisely so this refusal cannot drift between `run()` and
         // `transcribeLive()`: a caller must not get biasing on one door and silence on the other.

@@ -102,6 +102,37 @@ private final class BiasingSTTPackage: ModelPackage {
     }
 }
 
+/// A t2v package that declares nothing (every t2v package shipping today except LTX-2.5).
+@InferenceActor
+private final class PlainT2VPackage: ModelPackage {
+    typealias Configuration = StandardConfiguration
+    nonisolated static var manifest: PackageManifest {
+        controlsManifest(surfaces: [T2VContract.descriptor(name: "plain-t2v", summary: "m")])
+    }
+    nonisolated init(configuration: StandardConfiguration) {}
+    func load() async throws {}
+    func unload() async {}
+    func run(_ request: any CapabilityRequest) async throws -> any CapabilityResponse {
+        T2VResponse(video: Video(format: .mp4, data: Data(count: 8)))
+    }
+}
+
+/// The LTX-2.5 shape: generates the clip AGAINST `initAudio` (contract 1.40.0).
+@InferenceActor
+private final class A2VCapableT2VPackage: ModelPackage {
+    typealias Configuration = StandardConfiguration
+    nonisolated static var manifest: PackageManifest {
+        controlsManifest(surfaces: [T2VContract.descriptor(
+            name: "a2v-t2v", summary: "m", controls: T2VControls(supportsInitAudio: true))])
+    }
+    nonisolated init(configuration: StandardConfiguration) {}
+    func load() async throws {}
+    func unload() async {}
+    func run(_ request: any CapabilityRequest) async throws -> any CapabilityResponse {
+        T2VResponse(video: Video(format: .mp4, data: Data(count: 8)))
+    }
+}
+
 private func controlsManifest(surfaces: [ToolDescriptor]) -> PackageManifest {
     PackageManifest(
         license: LicenseDeclaration(weightLicense: .apache2, portCodeLicense: .apache2),
@@ -226,4 +257,37 @@ private func unsupportedFeature(_ error: any Error) -> String? {
     try await engine.register(PackageRegistration.of(PlainSTTPackage.self),
                               configuration: mockConfig())
     _ = try await engine.run(STTRequest(audio: Audio(data: Data()), language: "en-US"))
+}
+
+// MARK: - textToVideo (contract 1.40.0, AB-A-0023)
+
+// The failure this exists to prevent: a soundtrack sent to a package with no a2v path used to
+// come back as a video UNRELATED to the track, with nothing in the response saying so.
+@Test func initAudioAgainstAPackageWithoutA2VIsRefusedBeforeTheRun() async throws {
+    let engine = MLXServeEngine()
+    try await engine.register(PackageRegistration.of(PlainT2VPackage.self),
+                              configuration: mockConfig())
+    do {
+        _ = try await engine.run(T2VRequest(prompt: "rain on a tin roof",
+                                            initAudio: Audio(data: Data(count: 44))))
+        Issue.record("expected unsupportedRequestFeature")
+    } catch {
+        #expect(unsupportedFeature(error)?.contains("initAudio") == true)
+    }
+}
+
+// The ignorable inputs are NOT gated: a plain t2v package still takes `referenceImages`, and a
+// request with no track never touches the declaration.
+@Test func plainT2VStillAcceptsTheIgnorableConditioning() async throws {
+    let engine = MLXServeEngine()
+    try await engine.register(PackageRegistration.of(PlainT2VPackage.self),
+                              configuration: mockConfig())
+    _ = try await engine.run(T2VRequest(prompt: "p", referenceImages: []))
+}
+
+@Test func initAudioPassesAgainstADeclaringPackage() async throws {
+    let engine = MLXServeEngine()
+    try await engine.register(PackageRegistration.of(A2VCapableT2VPackage.self),
+                              configuration: mockConfig())
+    _ = try await engine.run(T2VRequest(prompt: "p", initAudio: Audio(data: Data(count: 44))))
 }

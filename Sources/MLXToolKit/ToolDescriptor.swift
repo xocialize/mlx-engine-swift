@@ -143,6 +143,8 @@ public struct STTControls: Sendable, Codable, Equatable {
 public enum SurfaceControls: Sendable, Codable, Equatable {
     case tts(TTSControls)
     case stt(STTControls)
+    /// The a2v declaration for `T2VRequest.initAudio` (contract 1.40.0, AB-A-0023).
+    case textToVideo(T2VControls)
 }
 
 /// Self-description a package publishes so the registry — and any out-of-process tool client, such
@@ -176,7 +178,7 @@ public struct ToolDescriptor: Sendable, Codable, Equatable {
     public let streaming: StreamGranularity?
     /// Per-capability **routing-time** declarations (contract 1.38.0, additive). `nil` = this
     /// surface declares none, which is every pre-1.38 conformer. Read it through the
-    /// `ttsControls` / `sttControls` accessors below.
+    /// `ttsControls` / `sttControls` / `t2vControls` accessors below.
     public let controls: SurfaceControls?
 
     public init(name: String,
@@ -211,6 +213,14 @@ extension ToolDescriptor {
         return nil
     }
 
+    /// The `textToVideo` control declaration, or nil when this surface declares none
+    /// (contract 1.40.0). `t2vControls?.supportsInitAudio == true` is what admits
+    /// `T2VRequest.initAudio`.
+    public var t2vControls: T2VControls? {
+        if case .textToVideo(let declared) = controls { return declared }
+        return nil
+    }
+
     /// Whether a declared controls block matches this surface's capability. `false` is a package
     /// bug: the block would describe a surface the descriptor does not name.
     public var controlsMatchCapability: Bool {
@@ -218,6 +228,7 @@ extension ToolDescriptor {
         case nil: return true
         case .tts: return capability == .tts
         case .stt: return capability == .stt
+        case .textToVideo: return capability == .textToVideo
         }
     }
 }
