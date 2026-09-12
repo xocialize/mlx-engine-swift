@@ -92,15 +92,32 @@ public struct MemoryGovernor: Sendable {
                                quant: Quant?,
                                persistentHint: UInt64?,
                                transientHint: UInt64?) -> (persistent: UInt64, transient: UInt64) {
-        let chosen: QuantFootprint? = {
-            if let quant, let match = requirements.footprints.first(where: { $0.quant == quant }) {
-                return match
-            }
-            let sorted = requirements.footprints.sorted { $0.residentBytes < $1.residentBytes }
-            return sorted.last(where: { $0.residentBytes <= budgetBytes }) ?? sorted.first
-        }()
+        let chosen = chosenFootprint(for: requirements, quant: quant)
         return (persistentHint ?? chosen?.residentBytes ?? 0,
                 transientHint ?? chosen?.peakActivationBytes ?? 0)
+    }
+
+    /// Resolve the activation-scaling declaration the engine enforces and advises on (1.41.0):
+    /// a lane `hint` (`FootprintConfigured.activationScalingHint`) wins over the chosen
+    /// footprint's `activationScaling`, by the same rule as the split above. `nil` = the scalar
+    /// is the whole declaration — nothing is refused, and the workload-aware advisory throws
+    /// rather than answering with a number that was never measured against a workload.
+    public func activationScaling(for requirements: RequirementsManifest,
+                                  quant: Quant?,
+                                  hint: ActivationScaling?) -> ActivationScaling? {
+        hint ?? chosenFootprint(for: requirements, quant: quant)?.activationScaling
+    }
+
+    /// The base `QuantFootprint` both resolutions start from: the quant match, else
+    /// largest-that-fits, else smallest. ONE function so the split and the scaling can never be
+    /// read off two different footprints.
+    private func chosenFootprint(for requirements: RequirementsManifest,
+                                 quant: Quant?) -> QuantFootprint? {
+        if let quant, let match = requirements.footprints.first(where: { $0.quant == quant }) {
+            return match
+        }
+        let sorted = requirements.footprints.sorted { $0.residentBytes < $1.residentBytes }
+        return sorted.last(where: { $0.residentBytes <= budgetBytes }) ?? sorted.first
     }
 
     public mutating func charge(_ bytes: UInt64) {

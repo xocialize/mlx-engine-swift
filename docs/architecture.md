@@ -66,6 +66,23 @@ reclaim, not stack — the engine, not the caller, owns this.
   `minimum_inference_memory`, made exact for serialized execution). Undeclared transient defaults to 0
   (the real-pressure pass still catches overflow). `MemorySnapshot.transientReserveBytes` exposes the
   reserve; admission rejects a model whose own `persistent + transient` exceeds the whole budget.
+- **Declare activation as a function of workload where it is one (contract 1.41.0, AB-A-0069).**
+  A scalar `peakActivationBytes` cannot straddle a 4× input range: a full-attention ASR decoder
+  grows with session length, a VLM with its visual-token budget, a video generator with
+  pixel-frames — and the launch gate (`machineFitAdvisory`) inherits the declaration's error
+  exactly. `QuantFootprint.activationScaling` (per quant; `FootprintConfigured
+  .activationScalingHint` per lane wins) declares `baseBytes + bytesPerUnit × units` on an open
+  `WorkloadAxis` plus the `measuredCeiling` it was measured up to. **The reserve is unchanged** —
+  admission still charges the scalar or lane hint, which MUST cover the model at the ceiling
+  (FIT-2, `MLXServeConformance.FootprintConformance`; the engine logs a resolved pair that
+  violates it and never refuses registration). What changes: `run`/`stream`/`transcribeLive`
+  share one `preflight` that refuses a request whose workload (the configuration's
+  `WorkloadDeclaring.workloadUnits(for:)`) exceeds the ceiling — `EngineError
+  .workloadExceedsDeclaredCeiling`, before weights are touched — and `machineFitAdvisory(_:package:
+  workload:)` evaluates the model at a specific job (beyond the ceiling: `fits == false`,
+  extrapolation shown; a scalar-only package throws `activationScalingUndeclared` rather than
+  answering with a number nobody measured against a workload). A `nil` workload is never refused;
+  for an open-ended live session the ceiling is advisory (the engine does not cut a session).
 - **Wire the accounted working set during runs — and only during runs (HV1, v0.42.0).** The
   engine maps its accounting onto mlx-swift's process-global `WiredMemoryManager`: each resident's
   persistent weights hold a **`.reservation`** ticket (participates in limit computation, never

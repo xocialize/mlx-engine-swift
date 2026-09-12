@@ -68,6 +68,10 @@ public struct OSRequirement: Sendable, Codable, Equatable {
 /// per model — which fits more models safely than charging weights+activation per model. Declare
 /// `peakActivationBytes` as the max-over-phase activation (NOT the sum of phases); measure with the
 /// in-app footprint probe. See docs/architecture.md (R-MEM-1).
+///
+/// When the activation peak is a FUNCTION of a run-time input (session length, token budget,
+/// output geometry), declare `activationScaling` beside it (1.41.0): the scalar remains the
+/// reserve, the scaling says which workloads it was sized for, and the engine refuses the rest.
 public struct QuantFootprint: Sendable, Codable, Equatable {
     public let quant: Quant
     public let residentBytes: UInt64
@@ -97,14 +101,27 @@ public struct QuantFootprint: Sendable, Codable, Equatable {
     /// Lane-resolved values (the read volume is usually a TIER property, not a quant property)
     /// ride `FootprintConfigured.expectedWeightReadBytesPerRunHint`, which wins over this.
     public let expectedWeightReadBytesPerRun: UInt64?
+    /// How `peakActivationBytes` MOVES with a run-time workload, and up to which workload it was
+    /// measured (1.41.0, additive; AB-A-0069). `peakActivationBytes` stays the scalar admission
+    /// reserves; this qualifies it: `baseBytes + bytesPerUnit × units` on a declared axis
+    /// (`audioSeconds`, `visualTokens`, `pixelFrames`, …) and a `measuredCeiling` the engine
+    /// refuses requests beyond — BEFORE admission — so a caller cannot raise an input past what
+    /// the declaration was measured at and be admitted against a number that no longer applies.
+    /// The reserve must cover the model at the ceiling (the FIT-2 rule; round the scalar UP).
+    /// Lane-resolved values ride `FootprintConfigured.activationScalingHint`, which wins over
+    /// this. `nil` (default, and every pre-1.41 manifest): the scalar is the whole declaration
+    /// and nothing is refused.
+    public let activationScaling: ActivationScaling?
     public init(quant: Quant, residentBytes: UInt64, peakActivationBytes: UInt64 = 0,
                 minSustainedReadBytesPerSecond: UInt64? = nil,
-                expectedWeightReadBytesPerRun: UInt64? = nil) {
+                expectedWeightReadBytesPerRun: UInt64? = nil,
+                activationScaling: ActivationScaling? = nil) {
         self.quant = quant
         self.residentBytes = residentBytes
         self.peakActivationBytes = peakActivationBytes
         self.minSustainedReadBytesPerSecond = minSustainedReadBytesPerSecond
         self.expectedWeightReadBytesPerRun = expectedWeightReadBytesPerRun
+        self.activationScaling = activationScaling
     }
 }
 

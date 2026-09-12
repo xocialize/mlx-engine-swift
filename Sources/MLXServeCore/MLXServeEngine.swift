@@ -55,6 +55,21 @@ public enum EngineError: Error, Sendable, Equatable {
     /// session holds residency for its whole lifetime, so it cannot be left open on the chance
     /// that audio resumes.
     case liveSessionIdle(PackageID)
+    /// `machineFitAdvisory(_:package:workload:)` was asked on a package whose resolved footprint
+    /// declares no `ActivationScaling` (1.41.0). A throw, deliberately, rather than the scalar
+    /// answer: a workload the engine could not evaluate reading back as "fits" is the false
+    /// green the harness lesson exists to prevent. Catch it and fall back to the scalar form
+    /// `machineFitAdvisory(_:package:)` when a package may or may not declare scaling.
+    case activationScalingUndeclared(PackageID)
+    /// The request's workload exceeds the ceiling its package's activation declaration was
+    /// measured at (1.41.0, AB-A-0069) — refused BEFORE admission, before weights are touched.
+    /// Past `ceiling` the declared model is an extrapolation and the reserve admission holds was
+    /// never sized for it; a caller cannot raise an input past what the declaration was measured
+    /// at and be admitted against a number that no longer applies. Shorten the workload
+    /// (segment the audio, lower the budget, reduce the geometry) or choose a package whose
+    /// declaration covers it. `requested` and `ceiling` are in units of `axis`.
+    case workloadExceedsDeclaredCeiling(package: PackageID, axis: WorkloadAxis,
+                                        requested: Double, ceiling: Double)
 }
 
 /// Engine-side identity for a registered package — lets several packages back the SAME
@@ -119,6 +134,9 @@ public actor MLXServeEngine {
         let configuration: any PackageConfiguration
         let persistent: UInt64
         let transient: UInt64
+        /// The resolved activation-scaling declaration (1.41.0): lane hint over quant-keyed.
+        /// `nil` = the scalar is the whole declaration.
+        let scaling: ActivationScaling?
     }
 
     /// Package id → the registration backing it.
@@ -445,35 +463,134 @@ public actor MLXServeEngine {
     /// bug, not a gate bug.
     public func machineFitAdvisory(_ capability: Capability,
                                    package: PackageID? = nil) throws -> MachineFitAdvisory {
+        let (id, entry) = try resolveEntry(capability, package)
+        let (split, scaling) = resolveFootprint(entry.registration.manifest.requirements,
+                                                entry.configuration)
+        return composeFit(id: id, split: split, scaling: scaling, workload: nil)
+    }
+
+    /// The workload-aware launch gate (1.41.0, AB-A-0069): "will THIS job fit?" rather than
+    /// "does the author's representative case fit?". Evaluates the package's declared
+    /// `ActivationScaling` at `workload` (units of its axis — seconds of audio, visual tokens,
+    /// pixel-frames) in place of the resolved transient, through the same ADDITIONAL-bytes
+    /// arithmetic as the scalar form, and reports the workload half on `.workload`.
+    ///
+    /// Two things the scalar form cannot say: a workload beyond the declared `measuredCeiling`
+    /// answers `fits == false` whatever the machine has, because the engine WILL refuse it at
+    /// admission — the extrapolated numbers ride along so a host can say how far out of envelope
+    /// the job is; and a package that declares no scaling THROWS
+    /// `EngineError.activationScalingUndeclared` rather than answering with the scalar, because
+    /// an unevaluated workload that reads as "fits" is the false green this exists to prevent.
+    /// Compose the question from what you hold with `workloadUnits(for:package:)`.
+    public func machineFitAdvisory(_ capability: Capability,
+                                   package: PackageID? = nil,
+                                   workload units: Double) throws -> MachineFitAdvisory {
+        let (id, entry) = try resolveEntry(capability, package)
+        let (split, scaling) = resolveFootprint(entry.registration.manifest.requirements,
+                                                entry.configuration)
+        guard let scaling else { throw EngineError.activationScalingUndeclared(id) }
+        let fit = WorkloadFit(axis: scaling.axis, units: units,
+                              measuredCeiling: scaling.measuredCeiling,
+                              withinCeiling: scaling.covers(units),
+                              projectedActivationBytes: scaling.projectedBytes(at: units),
+                              reservedActivationBytes: split.transient)
+        return composeFit(id: id, split: split, scaling: scaling, workload: fit)
+    }
+
+    /// The activation-scaling declaration the engine resolved for a package (lane hint over
+    /// quant-keyed; 1.41.0), or `nil` when the scalar is its whole declaration. Read it to render
+    /// the axis and ceiling, or to decide whether the workload-aware advisory can be asked.
+    public func declaredActivationScaling(_ capability: Capability,
+                                          package: PackageID? = nil) throws -> ActivationScaling? {
+        try resolveEntry(capability, package).entry.scaling
+    }
+
+    /// This request's workload in the package's declared axis, as the package's configuration
+    /// maps it (`WorkloadDeclaring`; 1.41.0) — the same mapping the pre-admission ceiling check
+    /// uses, exposed so a host can ask the advisory the question admission will ask. `nil` when
+    /// the configuration does not adopt `WorkloadDeclaring` or cannot map this request.
+    public func workloadUnits(for request: any CapabilityRequest,
+                              package: PackageID? = nil) throws -> Double? {
+        let (_, entry) = try resolveEntry(request.capability, package)
+        return (entry.configuration as? WorkloadDeclaring)?.workloadUnits(for: request)
+    }
+
+    private func resolveEntry(_ capability: Capability,
+                              _ package: PackageID?) throws -> (id: PackageID, entry: Entry) {
         let id = try resolve(capability, package)
         guard let entry = packages[id] else {
             throw PackageError.unsupportedCapability(capability)
         }
-        let fc = entry.configuration as? FootprintConfigured
-        let split = governor.footprintSplit(
-            for: entry.registration.manifest.requirements,
-            quant: (entry.configuration as? QuantConfigured)?.quant,
-            persistentHint: fc?.residentBytesHint,
-            transientHint: fc?.peakActivationBytesHint)
-        let projected = residency() &+ split.persistent &+ transientReserve(extra: split.transient)
+        return (id, entry)
+    }
+
+    /// The footprint resolution admission and the advisory share: `FootprintConfigured` hints
+    /// over the quant-keyed `QuantFootprint`, for the split AND the scaling declaration.
+    private func resolveFootprint(_ requirements: RequirementsManifest,
+                                  _ configuration: any PackageConfiguration)
+        -> (split: (persistent: UInt64, transient: UInt64), scaling: ActivationScaling?)
+    {
+        let fc = configuration as? FootprintConfigured
+        let quant = (configuration as? QuantConfigured)?.quant
+        let split = governor.footprintSplit(for: requirements, quant: quant,
+                                            persistentHint: fc?.residentBytesHint,
+                                            transientHint: fc?.peakActivationBytesHint)
+        let scaling = governor.activationScaling(for: requirements, quant: quant,
+                                                 hint: fc?.activationScalingHint)
+        return (split, scaling)
+    }
+
+    /// The 1.36.0 arithmetic, with the transient swapped for the model's projection when a
+    /// workload was asked: ADDITIONAL bytes (residency + persistent + one transient reserve −
+    /// current footprint) against machine availability, fresh per call.
+    private func composeFit(id: PackageID,
+                            split: (persistent: UInt64, transient: UInt64),
+                            scaling: ActivationScaling?,
+                            workload: WorkloadFit?) -> MachineFitAdvisory {
+        let transient = workload?.projectedActivationBytes ?? split.transient
+        let projected = residency() &+ split.persistent &+ transientReserve(extra: transient)
         let current = HostMemory.physFootprint() ?? 0
         let additional = projected > current ? projected - current : 0
         let machine = HostMemory.machineMemory()
             ?? MachineMemory(totalBytes: 0, freeBytes: 0, inactiveBytes: 0,
                              wiredBytes: 0, compressedBytes: 0)
-        let fits = additional <= machine.availableBytes
+        let roomFits = additional <= machine.availableBytes
+        let withinCeiling = workload?.withinCeiling ?? true
+        let fits = roomFits && withinCeiling
         let gb = { (b: UInt64) in String(format: "%.1f GB", Double(b) / 1e9) }
-        let message = fits
-            ? "projected peak \(gb(projected)) (\(gb(additional)) beyond the current "
-                + "\(gb(current))) fits the machine's \(gb(machine.availableBytes)) available."
-            : "projected peak \(gb(projected)) needs \(gb(additional)) more than the process "
-                + "holds now, but the machine has only \(gb(machine.availableBytes)) available "
-                + "(free \(gb(machine.freeBytes)) + reclaimable \(gb(machine.inactiveBytes))) — "
-                + "a run started now is likely to hit memory pressure before its peak."
+        let units = { (u: Double) in
+            u == u.rounded() ? String(Int64(u)) : String(format: "%.1f", u)
+        }
+        var message: String
+        if let workload, !withinCeiling {
+            message = "workload \(units(workload.units)) \(workload.axis) exceeds the declared "
+                + "measured ceiling of \(units(workload.measuredCeiling)) \(workload.axis) — the "
+                + "engine refuses it at admission. Extrapolated peak \(gb(projected)) (activation "
+                + "\(gb(workload.projectedActivationBytes)) vs \(gb(workload.reservedActivationBytes)) "
+                + "reserved) would need \(gb(additional)) more than the process holds now, against "
+                + "\(gb(machine.availableBytes)) available."
+        } else {
+            message = roomFits
+                ? "projected peak \(gb(projected)) (\(gb(additional)) beyond the current "
+                    + "\(gb(current))) fits the machine's \(gb(machine.availableBytes)) available."
+                : "projected peak \(gb(projected)) needs \(gb(additional)) more than the process "
+                    + "holds now, but the machine has only \(gb(machine.availableBytes)) available "
+                    + "(free \(gb(machine.freeBytes)) + reclaimable \(gb(machine.inactiveBytes))) — "
+                    + "a run started now is likely to hit memory pressure before its peak."
+            if let workload {
+                message = "at \(units(workload.units)) \(workload.axis) (activation "
+                    + "\(gb(workload.projectedActivationBytes)) projected, "
+                    + "\(gb(workload.reservedActivationBytes)) reserved): " + message
+            } else if let scaling {
+                message += " Declared activation holds up to \(units(scaling.measuredCeiling)) "
+                    + "\(scaling.axis); ask with workload: for a specific job."
+            }
+        }
         return MachineFitAdvisory(
             package: id.description, projectedPeakBytes: projected,
             currentProcessBytes: current, additionalBytes: additional,
-            machine: machine, fits: fits, message: message)
+            machine: machine, fits: fits, message: message,
+            activationScaling: scaling, workload: workload)
     }
 
     /// OS memory-pressure events with a machine reading attached — the mid-run signal a host's
@@ -633,16 +750,32 @@ public actor MLXServeEngine {
                 selected: selectedQuant ?? .int4))
         }
 
-        let fc = configuration as? FootprintConfigured
-        let split = governor.footprintSplit(
-            for: registration.manifest.requirements,
-            quant: (configuration as? QuantConfigured)?.quant,
-            persistentHint: fc?.residentBytesHint,
-            transientHint: fc?.peakActivationBytesHint)
+        let (split, scaling) = resolveFootprint(registration.manifest.requirements, configuration)
+        // The FIT rules, at the one place the RESOLVED pair is known (1.41.0). Logged, never
+        // refused: a declaration-shape error is a conformance failure for the package's own
+        // suite (FootprintConformance), not a runtime brick for the app that registered it —
+        // the 1.28.0 stance. The reserve is left as declared; under-reserving is R-MEM-1's
+        // domain and the log line is what makes it not silent.
+        if let scaling {
+            let gb = { (b: UInt64) in String(format: "%.2f GB", Double(b) / 1e9) }
+            if !scaling.isWellFormed {
+                print("[Footprint] \(packageID): activationScaling is malformed (FIT-1) — "
+                    + "ceiling \(scaling.measuredCeiling) \(scaling.axis), slope "
+                    + "\(scaling.bytesPerUnit) B/unit; a non-positive ceiling refuses every run")
+            } else if !scaling.isCovered(by: split.transient) {
+                print("[Footprint] \(packageID): declared activation scaling projects "
+                    + "\(gb(scaling.bytesAtCeiling)) at its ceiling of "
+                    + "\(scaling.measuredCeiling) \(scaling.axis), but admission reserves "
+                    + "\(gb(split.transient)) — the reserve does not cover the declared "
+                    + "envelope (FIT-2). Raise peakActivationBytes / the lane hint, or lower "
+                    + "measuredCeiling to what the reserve was measured at.")
+            }
+        }
         packages[packageID] = Entry(registration: registration,
                                     configuration: configuration,
                                     persistent: split.persistent,
-                                    transient: split.transient)
+                                    transient: split.transient,
+                                    scaling: scaling)
         for capability in admittedCapabilities {
             backing[capability, default: []].append(packageID)
             defaults[capability] = packageID
@@ -815,7 +948,7 @@ public actor MLXServeEngine {
         }
         let capability = request.capability
         let id = try resolve(capability, package)
-        try checkDeclaredControls(request, id: id)
+        try preflight(request, id: id)
         var requeues = 0
         while true {
             // A user cancel that lands between attempts (e.g. during a requeue wait, where the
@@ -992,7 +1125,7 @@ public actor MLXServeEngine {
         do {
             try Task.checkCancellation()   // entry boundary (caller may cancel pre-admission)
             let id = try resolve(capability, package)
-            try checkDeclaredControls(request, id: id)
+            try preflight(request, id: id)
 
             await lockAdmission()
             let instance: any ModelPackage
@@ -1103,7 +1236,7 @@ public actor MLXServeEngine {
                                package: PackageID? = nil) async throws -> STTLiveHandle {
         try Task.checkCancellation()
         let id = try resolve(.stt, package)
-        try checkDeclaredControls(request, id: id)
+        try preflight(request, id: id)
         // The advertisement half of LIV-1, enforced before anything is loaded: a package whose
         // surface does not declare a discipline has no live plane to open, even if the type
         // happens to conform.
@@ -1407,6 +1540,33 @@ public actor MLXServeEngine {
     /// the plane simply never sees the field. The failure this prevents is specific: a dub cue
     /// sent with `targetDuration` to a package with no duration control returns audio of the
     /// wrong length, and nothing in the response says why.
+    /// The pre-admission gate `run`, `stream`, and `transcribeLive` share — the 1.38.0
+    /// declared-control check plus the 1.41.0 workload ceiling. Both refuse BEFORE weights are
+    /// touched, and one site means the three doors cannot drift.
+    private func preflight(_ request: any CapabilityRequest, id: PackageID) throws {
+        try checkDeclaredControls(request, id: id)
+        try checkDeclaredWorkloadCeiling(request, id: id)
+    }
+
+    /// Pre-flight workload-ceiling check (contract 1.41.0, AB-A-0069). When the resolved
+    /// package declares `ActivationScaling` AND its configuration maps this request to units
+    /// (`WorkloadDeclaring`) AND those units exceed `measuredCeiling`, the request is refused
+    /// here — before admission — instead of being admitted against a reserve that was never
+    /// sized for it. A configuration that cannot map the request (`nil`) is never refused:
+    /// unknowable is not the same as over.
+    private func checkDeclaredWorkloadCeiling(_ request: any CapabilityRequest,
+                                              id: PackageID) throws {
+        guard let entry = packages[id], let scaling = entry.scaling,
+              let declaring = entry.configuration as? WorkloadDeclaring,
+              let units = declaring.workloadUnits(for: request)
+        else { return }
+        guard scaling.covers(units) else {
+            throw EngineError.workloadExceedsDeclaredCeiling(
+                package: id, axis: scaling.axis, requested: units,
+                ceiling: scaling.measuredCeiling)
+        }
+    }
+
     private func checkDeclaredControls(_ request: any CapabilityRequest, id: PackageID) throws {
         guard let surface = packages[id]?.registration.manifest.surfaces
             .first(where: { $0.capability == request.capability })

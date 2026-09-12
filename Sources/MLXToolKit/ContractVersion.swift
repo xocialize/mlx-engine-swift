@@ -764,5 +764,70 @@ public enum ContractVersion {
     //     `T2VContract.descriptor`, one new struct, and one new `SurfaceControls` case — an enum
     //     consumers already switch with `@unknown default` (the 1.38.0 note). Pre-1.40 descriptor
     //     JSON decodes unchanged; no existing construction site changes.
-    public static let current = SemanticVersion(major: 1, minor: 40, patch: 0)
+    // 1.41.0 (2026-09-11, additive): ACTIVATION AS A FUNCTION OF WORKLOAD — closes AB-A-0069
+    //   (mlx-audio; the follow-up AB-A-0014 ask 4 asked for), decided in AB-D-0075.
+    //   `QuantFootprint.peakActivationBytes` is a scalar, `machineFitAdvisory` (1.36.0) compares
+    //   it against live availability, and for a whole class of packages activation is a FUNCTION
+    //   of a run-time input — session length (VibeVoice-ASR-Streaming: 0.182 GB/min on
+    //   `phys_footprint`, unbounded), a caller-settable token budget (mage-vl: 6.5 GB declared at
+    //   4096, 14.19 GB measured at 8192), output geometry (LTX max128: 48.59 GB inside its cap,
+    //   97.54 outside it). The advisory inherited each declaration's error exactly and produced a
+    //   confident number that was wrong. Five instances, resolved by hand five times, because the
+    //   contract could not express the shape.
+    //   • `ActivationScaling` (axis · baseBytes · bytesPerUnit · measuredCeiling) on
+    //     `QuantFootprint.activationScaling` (per quant, beside the scalar — never instead of it)
+    //     and `FootprintConfigured.activationScalingHint` (per lane, wins — a tier's geometry cap
+    //     and a configuration's token budget are lane properties, the 1.35.0 hint rule). A
+    //     first-order model, `base + slope × units`, and the largest workload it was MEASURED at.
+    //     The three rules live on the type: the line sits on or above every measured point up to
+    //     the ceiling (convex curves declare the chord through the ceiling point); the ceiling is
+    //     the largest workload measured, never the largest imaginable; and the reserve covers the
+    //     model at the ceiling. Deliberately NOT the maximum a package can be driven to — a
+    //     60-minute-meeting envelope would refuse the package on machines that run a short clip.
+    //   • `WorkloadAxis` — OPEN (`RunPhase` idiom): `audioSeconds` / `tokens` / `visualTokens` /
+    //     `outputPixels` / `pixelFrames` / `frames` as canonical constants; a package mints a new
+    //     unit without a contract bump and no exhaustive enum grows a case. Capability-neutral —
+    //     not a member on any shared descriptor (the 1.38.0 rule).
+    //   • `WorkloadDeclaring` — on the CONFIGURATION, `as?`-detected at registration like
+    //     `FootprintConfigured`, NOT on the instance like `StreamEmitting`: the ceiling check runs
+    //     BEFORE admission, and the instance does not exist yet. `workloadUnits(for:) -> Double?`
+    //     maps a request to the declared axis; mage-vl answers its `visualTokenBudget` for every
+    //     request (the budget IS the workload), VibeVoice the audio seconds of an `STTRequest`;
+    //     `nil` = unknowable (a live session at open time) and is never refused.
+    //   • ENGINE-ENFORCED CEILING: `run` / `stream` / `transcribeLive` share one `preflight`
+    //     (the 1.38.0 `checkDeclaredControls` site, so the three doors cannot drift) and refuse a
+    //     workload beyond `measuredCeiling` with `EngineError.workloadExceedsDeclaredCeiling`
+    //     before weights are touched — the ask's option (b): a caller cannot raise an input past
+    //     what the declaration was measured at and be admitted against a number that no longer
+    //     applies.
+    //   • `machineFitAdvisory(_:package:workload:)` — option (a): the declared model evaluated at
+    //     THIS workload in place of the resolved transient, same ADDITIONAL-bytes arithmetic, with
+    //     `MachineFitAdvisory.workload: WorkloadFit?` (units, ceiling, `withinCeiling`, projected
+    //     vs reserved activation) and `.activationScaling` (both defaulted). Beyond the ceiling
+    //     it answers `fits == false` whatever the machine has — the engine will refuse that run —
+    //     with the extrapolation shown. A package declaring no scaling THROWS
+    //     `EngineError.activationScalingUndeclared` rather than answering with the scalar: an
+    //     unevaluated workload that reads as "fits" is the false green the harness lesson exists
+    //     to prevent. `declaredActivationScaling(_:package:)` + `workloadUnits(for:package:)` let
+    //     a host compose the question from what it holds. The scalar form is unchanged for every
+    //     package; for a declaring one its message names the ceiling.
+    //   • RESERVE SEMANTICS UNCHANGED. Admission still reserves the resolved scalar or lane hint.
+    //     Rejected: reserving `max(scalar, model@ceiling)` (over-reserves the config-level case —
+    //     mage-vl at budget 4096 charged the 8192 figure, the VibeVoice objection); refusing a run
+    //     whose projection exceeds the reserve inside the ceiling (over-strict for a first-order
+    //     model; exceeding the reserve is R-MEM-1's domain, not a known-crash class per
+    //     AB-D-0038); re-sizing the per-run reserve from the workload (changes admission — file a
+    //     follow-up against AB-D-0075 when a package needs it); cutting a live session at the
+    //     ceiling (loses audio nobody can replay — advisory for open-ended sessions).
+    //   • `MLXServeConformance.FootprintConformance` — the FIT gate: FIT-1 well-formed, FIT-2 the
+    //     reserve covers the model at the ceiling, FIT-3 a scaling configuration adopts
+    //     `WorkloadDeclaring`. The engine logs `[Footprint]` at registration when the RESOLVED
+    //     pair violates FIT-1/2 and never refuses registration (the 1.28.0 stance: a
+    //     declaration-shape error is a conformance failure, not a runtime brick).
+    //   Additive: one defaulted member + init argument on `QuantFootprint`, one defaulted
+    //     requirement on `FootprintConfigured` (extension default), two defaulted members + init
+    //     arguments on `MachineFitAdvisory`, two new `EngineError` cases (error enum — consumers
+    //     `catch`, the 1.39.0 precedent), three new types, one new protocol, one overload. No
+    //     existing construction site changes; pre-1.41 footprint JSON decodes unchanged.
+    public static let current = SemanticVersion(major: 1, minor: 41, patch: 0)
 }

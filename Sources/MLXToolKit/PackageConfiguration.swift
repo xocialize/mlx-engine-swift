@@ -44,11 +44,19 @@ public protocol FootprintConfigured {
     /// back to the matched `QuantFootprint.peakActivationBytes`. Pairs with `residentBytesHint`: the hint
     /// is the persistent weights, this is the transient peak.
     var peakActivationBytesHint: UInt64? { get }
+    /// The selected lane's activation-scaling declaration (1.41.0, additive; AB-A-0069) — wins
+    /// over `QuantFootprint.activationScaling` exactly as the other hints win over their
+    /// quant-keyed counterparts, because the envelope is usually a LANE property: an LTX tier's
+    /// geometry cap, a VLM configuration's token budget. Pairs with `peakActivationBytesHint`:
+    /// a lane that raises its cap re-declares both, and the reserve must still cover the model
+    /// at the lane's ceiling (FIT-2). `nil` (the default) falls through.
+    var activationScalingHint: ActivationScaling? { get }
 }
 
 public extension FootprintConfigured {
     var peakActivationBytesHint: UInt64? { nil }
     var expectedWeightReadBytesPerRunHint: UInt64? { nil }
+    var activationScalingHint: ActivationScaling? { nil }
 }
 
 /// Opt-in for configs whose `load()` adapts to the memory it's actually given — e.g. choosing a lighter

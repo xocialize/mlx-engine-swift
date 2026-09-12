@@ -54,7 +54,8 @@ public struct MachineMemory: Sendable, Equatable {
 public struct MachineFitAdvisory: Sendable, Equatable {
     public let package: String
     /// The engine's projected whole-working-set peak: current residency + this package's
-    /// resolved (persistent + transient) split.
+    /// resolved (persistent + transient) split — or, when asked with `workload:`, the
+    /// declared scaling model evaluated at that workload in place of the transient (1.41.0).
     public let projectedPeakBytes: UInt64
     /// This process's current `phys_footprint` at the time of the call.
     public let currentProcessBytes: UInt64
@@ -66,9 +67,17 @@ public struct MachineFitAdvisory: Sendable, Equatable {
     public let fits: Bool
     /// Engine-composed, host-renderable sentence with the numbers.
     public let message: String
+    /// The activation-scaling declaration the engine resolved for the package (lane hint over
+    /// quant-keyed), when it declares one (1.41.0). `nil` = the scalar is the whole declaration.
+    public let activationScaling: ActivationScaling?
+    /// Present only when the advisory was asked with `workload:` (1.41.0): the workload the
+    /// projection used, whether it is inside the declared ceiling, and what the model projects
+    /// for it against what admission reserves. `nil` on the scalar form.
+    public let workload: WorkloadFit?
 
     public init(package: String, projectedPeakBytes: UInt64, currentProcessBytes: UInt64,
-                additionalBytes: UInt64, machine: MachineMemory, fits: Bool, message: String) {
+                additionalBytes: UInt64, machine: MachineMemory, fits: Bool, message: String,
+                activationScaling: ActivationScaling? = nil, workload: WorkloadFit? = nil) {
         self.package = package
         self.projectedPeakBytes = projectedPeakBytes
         self.currentProcessBytes = currentProcessBytes
@@ -76,6 +85,41 @@ public struct MachineFitAdvisory: Sendable, Equatable {
         self.machine = machine
         self.fits = fits
         self.message = message
+        self.activationScaling = activationScaling
+        self.workload = workload
+    }
+}
+
+/// The workload half of a `MachineFitAdvisory` asked with `workload:` (1.41.0, AB-A-0069) — the
+/// answer to "will THIS job fit?" rather than "does the author's representative case fit?".
+///
+/// `withinCeiling == false` is decisive on its own: the engine refuses that workload at
+/// admission (`EngineError.workloadExceedsDeclaredCeiling`), so the advisory's `fits` is false
+/// regardless of memory, and `projectedActivationBytes` is an EXTRAPOLATION shown so the host can
+/// say how far out of envelope the job is — never a number anything admits on.
+public struct WorkloadFit: Sendable, Equatable {
+    public let axis: WorkloadAxis
+    /// The workload the advisory was asked for, in units of `axis`.
+    public let units: Double
+    /// The declaration's `measuredCeiling`.
+    public let measuredCeiling: Double
+    /// `units <= measuredCeiling`.
+    public let withinCeiling: Bool
+    /// `baseBytes + bytesPerUnit × units` — what the projection used in place of the reserve.
+    public let projectedActivationBytes: UInt64
+    /// What admission reserves for this package regardless of workload (the resolved scalar or
+    /// lane hint). `projectedActivationBytes` above this inside the ceiling means the reserve
+    /// does not cover the declaration — the FIT-2 finding, surfaced per job.
+    public let reservedActivationBytes: UInt64
+
+    public init(axis: WorkloadAxis, units: Double, measuredCeiling: Double, withinCeiling: Bool,
+                projectedActivationBytes: UInt64, reservedActivationBytes: UInt64) {
+        self.axis = axis
+        self.units = units
+        self.measuredCeiling = measuredCeiling
+        self.withinCeiling = withinCeiling
+        self.projectedActivationBytes = projectedActivationBytes
+        self.reservedActivationBytes = reservedActivationBytes
     }
 }
 
