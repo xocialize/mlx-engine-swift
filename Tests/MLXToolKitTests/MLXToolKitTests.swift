@@ -504,6 +504,19 @@ final class MLXToolKitTests: XCTestCase {
                        .rejectedPortCode("GPL-3.0-only"))
     }
 
+    func testNetEaseYoudaoModelUseLicenseIsPermissive() {
+        // Confucius4-R2T2's weights ship under the NetEase Youdao Model Use License Agreement,
+        // clause-for-clause the allowlisted bilibili template (AB-L-0135) — a separate identifier
+        // only because the licensor differs. It must admit under the DEFAULT .permissiveOnly, with
+        // no acknowledgement flow and no advisory, or ML[X] Audio Studio cannot load the package.
+        XCTAssertEqual(SPDXLicense.neteaseYoudaoModelUse.identifier,
+                       "LicenseRef-NetEase-Youdao-Model-Use")
+        XCTAssertTrue(SPDXLicense.neteaseYoudaoModelUse.isPermissive)
+        XCTAssertFalse(SPDXLicense.neteaseYoudaoModelUse.isEvalAcknowledged)
+        let decl = LicenseDeclaration(weightLicense: .neteaseYoudaoModelUse, portCodeLicense: .mit)
+        XCTAssertEqual(LicensePolicy.permissiveOnly.evaluate(decl), .admitted)
+    }
+
     func testTTSRequestCarriesCanonicalSurface() {
         let req = TTSRequest(text: "hello", voice: VoiceSelector(.named("nova")), mode: .expressive)
         XCTAssertEqual(TTSRequest.capability, .tts)
