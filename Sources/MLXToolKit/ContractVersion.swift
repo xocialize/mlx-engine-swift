@@ -863,5 +863,51 @@ public enum ContractVersion {
     //   Additive: one `EngineError` case (error enum — consumers `catch`), one computed member on
     //     `WorkloadFit`, one defaulted private parameter. No construction site changes; every
     //     scalar-only package and every unmappable request admits exactly as before.
-    public static let current = SemanticVersion(major: 1, minor: 42, patch: 0)
+    // 1.43.0 (2026-09-22, additive): EXTERNAL GPU TENANTS — memory in this process the engine did
+    //   not allocate, declared so admission can see it (AB-R-0289 / AB-R-0292, Forge Canvas M3,
+    //   PRD §6.3(6)). Measured first: a 24 MP canvas document holding ~1.36 GB left
+    //   `admissibility(for:configuration:)` byte-identical with and without it resident; only the
+    //   R-MEM-1 phys_footprint pass noticed, as UNEXPLAINED memory. The canvas's footprint splits
+    //   the way a package's does — ~850 MB persistent (layer-texture cache + pooled working
+    //   textures, releasable on demand, rebuilt pixel-identical) and ~300–500 MB transient per
+    //   render (upload staging + readback).
+    //   • `MLXServeEngine.registerExternalTenant(id:persistentBytes:transientBytes:
+    //     onShrinkRequest:) -> ExternalTenant` — a handle with synchronous, lock-guarded
+    //     `update(persistentBytes:transientBytes:)` (callable from a render thread, in any order
+    //     with runs in flight), `setShrinkHandler`, and `withdraw()`; dropping the handle
+    //     withdraws. The handle is the whole seam — numbers in, one closure out — so the tenant's
+    //     own module never imports the engine (ForgeCanvasKit stays engine-agnostic; the app
+    //     layer bridges). Re-registering a live id withdraws the earlier tenant.
+    //   • ACCOUNTING. Persistent counts in residency (Σ persistent). Transient is ADDED to the
+    //     packages' one serialized reserve, not folded into its max: the max rule rests on
+    //     `@InferenceActor` serializing package runs, and a tenant is not on that actor — a
+    //     compositor renders whenever the user scrolls, including during a model's activation
+    //     peak, so "competes for the max" would under-reserve by exactly the overlap case. Both
+    //     flow into admission, `prepare`, `admissibility`, `machineFitAdvisory`, the
+    //     `BudgetAware` stamp, and `MemorySnapshot` (`externalBytes`, `externalTenants`;
+    //     `residentBytes` / `transientReserveBytes` stay the packages' own, `availableBytes`
+    //     subtracts all three, `underPressure` counts tenant persistent).
+    //   • SHRINK REQUESTS, TENANTS FIRST. An admission whose accounting is over budget asks
+    //     tenants before evicting any package — a cache rebuilds in milliseconds, weights in
+    //     seconds to minutes. Largest declaration first, for the remaining deficit, each tenant
+    //     at most ONCE per admission, each bounded by `ExternalTenantPolicy.shrinkTimeout`
+    //     (default 2 s; a handler still running is cancelled and never awaited). The engine then
+    //     re-reads the DECLARATION — the handler's return value is advisory and logged when it
+    //     disagrees. A run on an already-resident package is an admission too when a tenant grew
+    //     past the budget after it loaded.
+    //   • `EngineError.externalTenantsHoldMemory(required:external:budget:)` — the working set
+    //     fits the budget alone but not beside what tenants still declare, even with every
+    //     package evicted; refused BEFORE anything is evicted (the 1.42.0 rule). Distinct from
+    //     `exceedsMemoryBudget`: the fix is releasing the tenant's memory, not a smaller model.
+    //   Not covered, deliberately: tenant bytes are not wired (HV1 tickets carry MLX allocations
+    //     only), and the R-MEM-1 real-pressure pass does not ask tenants — their memory is now
+    //     explained, and that pass reclaims the engine's own idle residents. Growth is never
+    //     refused (the engine cannot refuse an allocation it does not make); it is accounted
+    //     from the next admission on.
+    //   Additive: one new public type family (`ExternalTenant`, `ExternalFootprint`,
+    //     `ExternalTenantPolicy`, `ExternalShrinkHandler`), one defaulted engine init argument,
+    //     two defaulted `MemorySnapshot` members + init arguments, one `EngineError` case (error
+    //     enum — consumers `catch`, the 1.39.0 precedent). With no tenant registered every
+    //     admission, snapshot and advisory is byte-identical to 1.42.0.
+    public static let current = SemanticVersion(major: 1, minor: 43, patch: 0)
 }

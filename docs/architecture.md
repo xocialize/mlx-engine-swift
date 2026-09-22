@@ -92,6 +92,19 @@ reclaim, not stack — the engine, not the caller, owns this.
   ladder). A run whose reserve cannot fit even alone is refused before anything is evicted or
   loaded (`workloadExceedsMemoryBudget`). This is why VibeVoice no longer needs a session-envelope
   lane enum to serve 16 GB and 128 GB machines from one declaration.
+- **Account for GPU memory the engine did not allocate (contract 1.43.0, AB-R-0289 / AB-R-0292).**
+  A Metal compositor in the same process (Forge Canvas: ~850 MB persistent layer cache + ~300–500 MB
+  per-render staging at 24 MP) was invisible to admission — only R-MEM-1 saw it, as unexplained
+  footprint. `registerExternalTenant(id:…)` returns a lock-guarded handle the tenant's host updates
+  synchronously; its **persistent** bytes count in residency, its **transient** bytes are **added**
+  to the serialized reserve (a tenant is not on `@InferenceActor`, so its render can overlap a
+  model's peak — folding it into the max would under-reserve exactly that overlap). An over-budget
+  admission asks tenants to shrink **first** (a cache rebuilds in ms, weights in s–min), once each,
+  largest first, bounded by `ExternalTenantPolicy.shrinkTimeout`, then re-reads their declarations;
+  if the working set still cannot fit beside them with every package evicted it is refused
+  (`externalTenantsHoldMemory`) before anything is evicted, else the usual ladder runs.
+  `MemorySnapshot.externalBytes` / `.externalTenants` surface it. Tenant bytes are not wired, and
+  the R-MEM-1 pass does not ask tenants.
 - **Wire the accounted working set during runs — and only during runs (HV1, v0.42.0).** The
   engine maps its accounting onto mlx-swift's process-global `WiredMemoryManager`: each resident's
   persistent weights hold a **`.reservation`** ticket (participates in limit computation, never

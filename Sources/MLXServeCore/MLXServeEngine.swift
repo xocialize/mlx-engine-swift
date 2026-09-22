@@ -79,6 +79,14 @@ public enum EngineError: Error, Sendable, Equatable {
     /// `workloadExceedsDeclaredCeiling`). `requested` is in units of `axis`.
     case workloadExceedsMemoryBudget(package: PackageID, axis: WorkloadAxis, requested: Double,
                                      required: UInt64, budget: UInt64)
+    /// The working set fits the budget on its own, but not beside what EXTERNAL tenants declare
+    /// (contract 1.43.0) — even after they were asked to shrink, and even with every package
+    /// evicted. `required` is the package's persistent weights plus the transient this admission
+    /// reserves; `external` is the tenants' declared total at refusal (persistent + transient).
+    /// Refused BEFORE anything was evicted or loaded. Distinct from `exceedsMemoryBudget`: the
+    /// machine can run this package — releasing the tenant's memory (closing a document,
+    /// dropping a cache) is the fix, not a smaller model.
+    case externalTenantsHoldMemory(required: UInt64, external: UInt64, budget: UInt64)
 }
 
 /// Engine-side identity for a registered package — lets several packages back the SAME
@@ -223,6 +231,14 @@ public actor MLXServeEngine {
     /// Policy for those sessions (idle watchdog).
     private let liveSessionPolicy: LiveSessionPolicy
 
+    /// Non-package GPU tenants sharing this process (contract 1.43.0), by registration token.
+    /// The engine holds each tenant's STATE, not its handle — the app dropping the handle is what
+    /// ends the tenancy; a withdrawn state reads `.zero` and is pruned lazily.
+    private var externalTenantStates: [UInt64: ExternalTenantState] = [:]
+    private var externalTenantClock: UInt64 = 0
+    /// Shrink-request bounds for those tenants.
+    private let externalTenantPolicy: ExternalTenantPolicy
+
     /// Admission serialization (V3): `lockAdmission`/`unlockAdmission` make each admission
     /// (headroom → construct → load → charge → run-handle registration) one critical section.
     /// Actor reentrancy would otherwise interleave two admissions at their awaits — e.g. a
@@ -323,6 +339,7 @@ public actor MLXServeEngine {
                 wiredLimit: WiredLimitConfiguration = WiredLimitConfiguration(),
                 preemption: PreemptionPolicy = PreemptionPolicy(),
                 liveSessions: LiveSessionPolicy = LiveSessionPolicy(),
+                externalTenants: ExternalTenantPolicy = ExternalTenantPolicy(),
                 physFootprint: @Sendable @escaping () -> UInt64? = HostMemory.physFootprint,
                 hubMetadata: (any HubMetadataProviding)? = nil,
                 materializer: (any WeightMaterializing)? = nil,
@@ -337,6 +354,7 @@ public actor MLXServeEngine {
         self.wiredLimit = wiredLimit
         self.preemption = preemption
         self.liveSessionPolicy = liveSessions
+        self.externalTenantPolicy = externalTenants
         self.physFootprint = physFootprint
         // One token resolution for BOTH hub call sites (AB-A-0016 ask 3). A listing that
         // authenticates while the download that follows it does not is how a gated repo enumerates
@@ -834,20 +852,153 @@ public actor MLXServeEngine {
         }
         let real = physFootprint()
         let realCeiling = UInt64(Double(governor.budgetBytes) * governor.highWatermark)
-        // Reserve-aware available: budget − Σ persistent − one transient reserve.
-        let reserve = transientReserve()
-        let used = governor.residentBytes &+ reserve
+        // Reserve-aware available: budget − Σ persistent − one transient reserve − everything
+        // external tenants declare (1.43.0). The package fields stay the packages' own.
+        let reserve = packageTransientReserve()
+        let external = externalDeclared()
+        let used = governor.residentBytes &+ reserve &+ external.totalBytes
         let available = governor.budgetBytes > used ? governor.budgetBytes &- used : 0
+        let held = governor.residentBytes &+ external.persistentBytes
         return MemorySnapshot(
             budgetBytes: governor.budgetBytes,
             residentBytes: governor.residentBytes,
             availableBytes: available,
-            underPressure: governor.underPressure,
+            underPressure: Double(held) >= Double(governor.budgetBytes) * governor.highWatermark,
             residents: byCapability,
             realResidentBytes: real,
             underRealPressure: (real ?? 0) > realCeiling,
-            transientReserveBytes: reserve
+            transientReserveBytes: reserve,
+            externalBytes: external.totalBytes,
+            externalTenants: liveExternalTenants().reduce(into: [:]) { byID, tenant in
+                let f = tenant.footprint
+                let prior = byID[tenant.id] ?? .zero
+                byID[tenant.id] = ExternalFootprint(
+                    persistentBytes: prior.persistentBytes &+ f.persistentBytes,
+                    transientBytes: prior.transientBytes &+ f.transientBytes)
+            }
         )
+    }
+
+    // MARK: - External GPU tenants (contract 1.43.0, AB-R-0289 / AB-R-0292)
+
+    /// Declare a non-package tenant of the GPU this engine shares — a Metal compositor, a
+    /// renderer, anything in this process holding GPU memory the engine did not allocate. Until a
+    /// tenant declares itself its memory is invisible to admission (AB-R-0289: a 24 MP document's
+    /// ~1.36 GB left `admissibility` unchanged; only R-MEM-1 saw it, as unexplained footprint).
+    ///
+    /// **Accounting.** The tenant's `persistentBytes` count in residency like a package's weights.
+    /// Its `transientBytes` are reserved IN ADDITION to the packages' one serialized transient —
+    /// they do not compete for the max. The max rule rests on `@InferenceActor` serializing
+    /// package runs: two package peaks never coexist. A tenant is not on that actor — a
+    /// compositor's render (upload staging, readback) runs whenever the user scrolls, including
+    /// during a model's activation peak — so folding it into the max would under-reserve by
+    /// exactly the overlap case. Both flow into admission, `admissibility`, `prepare`,
+    /// `machineFitAdvisory`, the `BudgetAware` stamp, and `memory` (`externalBytes`,
+    /// `externalTenants`).
+    ///
+    /// **Shrink requests.** When an admission — a fresh load, or a run whose reserve no longer
+    /// fits — finds the accounting over budget, the engine asks tenants FIRST, before evicting
+    /// any package: a tenant's cache rebuilds in milliseconds, a model's weights in seconds to
+    /// minutes. Tenants are asked largest-first for the remaining deficit, each bounded by
+    /// `ExternalTenantPolicy.shrinkTimeout`, each at most once per admission; after each, the
+    /// engine re-reads the DECLARATION (the handler must `update` before it returns). Then, if
+    /// the working set cannot fit beside what the tenants still declare even with every package
+    /// evicted, admission is refused with `EngineError.externalTenantsHoldMemory` before anything
+    /// is evicted; otherwise the usual eviction ladder closes what remains. A handler that
+    /// releases nothing costs one call, never a loop.
+    ///
+    /// **Not covered.** Tenant bytes are not wired (the HV1 tickets carry MLX allocations only),
+    /// and the R-MEM-1 real-pressure pass does not ask tenants — their memory is now explained,
+    /// and that pass reclaims the engine's own idle residents.
+    ///
+    /// Registering an `id` that is already live withdraws the earlier tenant (the `register`
+    /// replacement rule). Keep the returned handle: dropping it withdraws the tenant.
+    public func registerExternalTenant(id: String,
+                                       persistentBytes: UInt64 = 0,
+                                       transientBytes: UInt64 = 0,
+                                       onShrinkRequest: ExternalShrinkHandler? = nil)
+        -> ExternalTenant
+    {
+        pruneWithdrawnExternalTenants()
+        for (token, state) in externalTenantStates where state.id == id {
+            state.withdraw()
+            externalTenantStates[token] = nil
+        }
+        let state = ExternalTenantState(
+            id: id,
+            footprint: ExternalFootprint(persistentBytes: persistentBytes,
+                                         transientBytes: transientBytes),
+            handler: onShrinkRequest)
+        externalTenantClock &+= 1
+        externalTenantStates[externalTenantClock] = state
+        return ExternalTenant(state: state)
+    }
+
+    /// Each live external tenant's current declaration, by id.
+    public var externalTenants: [String: ExternalFootprint] { memory.externalTenants }
+
+    private func liveExternalTenants() -> [ExternalTenantState] {
+        externalTenantStates.values.filter { !$0.isWithdrawn }
+    }
+
+    private func pruneWithdrawnExternalTenants() {
+        externalTenantStates = externalTenantStates.filter { !$0.value.isWithdrawn }
+    }
+
+    /// Σ over live tenants, read fresh — the declaration is lock-guarded on the tenant's side, so
+    /// this is the value as of THIS accounting step.
+    private func externalDeclared() -> ExternalFootprint {
+        externalTenantStates.values.reduce(into: ExternalFootprint.zero) { sum, state in
+            let f = state.footprint   // `.zero` once withdrawn
+            sum.persistentBytes &+= f.persistentBytes
+            sum.transientBytes &+= f.transientBytes
+        }
+    }
+
+    /// Ask tenants for `deficit` bytes, largest declaration first, until the declared drop covers
+    /// it or every tenant with a handler has been asked once. Bounded per call by the policy's
+    /// timeout; never loops on a tenant that releases nothing.
+    private func requestExternalShrink(_ deficit: UInt64) async {
+        pruneWithdrawnExternalTenants()
+        var remaining = deficit
+        let tenants = liveExternalTenants()
+            .sorted { $0.footprint.totalBytes > $1.footprint.totalBytes }
+        for tenant in tenants where remaining > 0 {
+            guard let handler = tenant.handler else { continue }
+            let before = tenant.footprint.totalBytes
+            let reported = await ExternalShrinkRequest.run(
+                handler, requested: remaining, timeout: externalTenantPolicy.shrinkTimeout)
+            let after = tenant.footprint.totalBytes
+            let released = before > after ? before - after : 0
+            if let reported, reported > released {
+                print("[ExternalTenant] \(tenant.id) reported releasing \(reported) B but its "
+                    + "declaration dropped \(released) B — the declaration is what admission "
+                    + "counts; update() before returning from the shrink handler.")
+            } else if reported == nil {
+                print("[ExternalTenant] \(tenant.id) shrink request timed out after "
+                    + "\(externalTenantPolicy.shrinkTimeout); counting its declaration as-is.")
+            }
+            remaining = remaining > released ? remaining - released : 0
+        }
+    }
+
+    /// The external-tenant step of an admission (1.43.0), run BEFORE any package is evicted:
+    /// ask tenants for the deficit, then refuse when the working set cannot fit beside what they
+    /// still declare even with every package gone — evicting residents only to refuse would
+    /// throw away weights for nothing. When no tenant is registered this is free and never
+    /// throws.
+    private func claimFromExternalTenants(persistent p: UInt64, transient t: UInt64,
+                                          keeping id: PackageID) async throws {
+        guard !externalTenantStates.isEmpty else { return }
+        let required = accountedRequired(persistent: p, transient: t, excluding: id)
+        if required > governor.budgetBytes {
+            await requestExternalShrink(required - governor.budgetBytes)
+        }
+        let external = externalDeclared().totalBytes
+        if p &+ t &+ external > governor.budgetBytes {
+            throw EngineError.externalTenantsHoldMemory(required: p &+ t, external: external,
+                                                        budget: governor.budgetBytes)
+        }
     }
 
     /// Resident packages and the bytes charged for each (the package-keyed memory view).
@@ -1522,16 +1673,25 @@ public actor MLXServeEngine {
 
     // MARK: - Memory accounting (serialized-inference reserve)
 
-    /// Σ persistent resident weights, optionally excluding one id (the incoming, not yet charged).
+    /// Σ persistent resident weights, optionally excluding one id (the incoming, not yet charged),
+    /// plus every external tenant's declared persistent bytes (1.43.0).
     private func residency(excluding skip: PackageID? = nil) -> UInt64 {
         residentFootprint.reduce(0) { $1.key == skip ? $0 : $0 &+ $1.value }
+            &+ externalDeclared().persistentBytes
     }
 
     /// The single transient activation headroom to reserve: `max(peakActivation)` across residents,
     /// since only one model runs at a time — and, since 1.42.0, across the runs IN FLIGHT, whose
     /// per-run reserve may exceed their package's idle scalar (`runReserve(for:id:)`). `extra`
-    /// folds in an incoming model's transient; `skip` excludes one id.
+    /// folds in an incoming model's transient; `skip` excludes one id. External tenants'
+    /// transients (1.43.0) are ADDED on top — they are not serialized with package runs.
     private func transientReserve(extra: UInt64 = 0, excluding skip: PackageID? = nil) -> UInt64 {
+        packageTransientReserve(extra: extra, excluding: skip) &+ externalDeclared().transientBytes
+    }
+
+    /// The packages' own serialized reserve: the max over residents and in-flight runs.
+    private func packageTransientReserve(extra: UInt64 = 0,
+                                         excluding skip: PackageID? = nil) -> UInt64 {
         var m = extra
         for (id, t) in residentTransient where id != skip { m = max(m, t) }
         for run in activeRuns.values where run.id != skip { m = max(m, run.transientBytes) }
@@ -1683,6 +1843,14 @@ public actor MLXServeEngine {
             // ladder as a fresh admission — a resident package is not a free pass past the budget.
             if let reserve, reserve.transient > (residentTransient[id] ?? 0) {
                 try await makeRunHeadroom(id, reserve: reserve, conduct: conduct)
+            } else if let reserve, !externalTenantStates.isEmpty,
+                      accountedRequired(persistent: residentFootprint[id] ?? 0,
+                                        transient: reserve.transient,
+                                        excluding: id) > governor.budgetBytes {
+                // A tenant grew past the budget after this package was admitted (1.43.0): the
+                // run is an admission too, so it asks the tenants and makes headroom exactly
+                // as a fresh one would rather than running on an over-committed budget.
+                try await makeRunHeadroom(id, reserve: reserve, conduct: conduct)
             }
             touch(id)
             return existing
@@ -1719,6 +1887,10 @@ public actor MLXServeEngine {
             if runTransient > transient, !governor.fitsBudget(persistent &+ runTransient) {
                 throw runBudgetRefusal(id, persistent: persistent, reserve: reserve!)
             }
+            // External tenants first (1.43.0): cheapest memory to rebuild, and the refusal when
+            // they still hold too much comes before any package is evicted.
+            try await claimFromExternalTenants(persistent: persistent, transient: runTransient,
+                                               keeping: id)
             await makeHeadroom(persistent: persistent, transient: runTransient, keeping: id,
                                conduct: conduct)
 
@@ -2032,6 +2204,8 @@ public actor MLXServeEngine {
         guard governor.fitsBudget(persistent &+ reserve.transient) else {
             throw runBudgetRefusal(id, persistent: persistent, reserve: reserve)
         }
+        try await claimFromExternalTenants(persistent: persistent, transient: reserve.transient,
+                                           keeping: id)
         await makeHeadroom(persistent: persistent, transient: reserve.transient, keeping: id,
                            conduct: conduct)
     }

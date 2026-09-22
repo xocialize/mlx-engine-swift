@@ -149,11 +149,21 @@ public struct MemorySnapshot: Sendable, Equatable {
     /// residents, since serialized inference runs one at a time. `residentBytes + transientReserveBytes`
     /// is the engine's accounted peak; `availableBytes` already subtracts both.
     public let transientReserveBytes: UInt64
+    /// Everything EXTERNAL tenants declare — persistent plus transient, summed over tenants
+    /// (contract 1.43.0). Not in `residentBytes` or `transientReserveBytes`, which stay the
+    /// packages' own; `availableBytes` subtracts all three, so
+    /// `residentBytes + transientReserveBytes + externalBytes + availableBytes == budgetBytes`
+    /// whenever the budget is not over-committed.
+    public let externalBytes: UInt64
+    /// Each live external tenant's current declaration, by the id it registered under.
+    public let externalTenants: [String: ExternalFootprint]
 
     public init(budgetBytes: UInt64, residentBytes: UInt64, availableBytes: UInt64,
                 underPressure: Bool, residents: [Capability: UInt64],
                 realResidentBytes: UInt64? = nil, underRealPressure: Bool = false,
-                transientReserveBytes: UInt64 = 0) {
+                transientReserveBytes: UInt64 = 0,
+                externalBytes: UInt64 = 0,
+                externalTenants: [String: ExternalFootprint] = [:]) {
         self.budgetBytes = budgetBytes
         self.residentBytes = residentBytes
         self.availableBytes = availableBytes
@@ -162,5 +172,7 @@ public struct MemorySnapshot: Sendable, Equatable {
         self.realResidentBytes = realResidentBytes
         self.underRealPressure = underRealPressure
         self.transientReserveBytes = transientReserveBytes
+        self.externalBytes = externalBytes
+        self.externalTenants = externalTenants
     }
 }

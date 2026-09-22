@@ -21,6 +21,10 @@ public struct EngineMemoryView: View {
             row("Budget", snapshot.budgetBytes)
             row("Resident (weights)", snapshot.residentBytes)
             row("Transient reserve", snapshot.transientReserveBytes)   // the headline 1.14 signal
+            if snapshot.externalBytes > 0 {                            // 1.43.0 external tenants
+                row("External (" + snapshot.externalTenants.keys.sorted().joined(separator: ", ")
+                    + ")", snapshot.externalBytes)
+            }
             row("Available", snapshot.availableBytes)
             if let real = snapshot.realResidentBytes {
                 HStack {
