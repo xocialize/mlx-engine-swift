@@ -936,5 +936,25 @@ public enum ContractVersion {
     //     before, asked once, bounded; `physFootprint()` nil → the declared-byte pass only.
     //   Additive: no API change — behaviour of an existing pass, observable only with a tenant
     //     registered AND real pressure over the watermark.
-    public static let current = SemanticVersion(major: 1, minor: 44, patch: 0)
+    // 1.45.0 (2026-09-22, additive): A RESIDENT RUN UNDER REAL PRESSURE ASKS TENANTS TOO
+    //   (AB-A-0093 reply 3). 1.44.0's tenants-first R-MEM-1 lives in `makeHeadroom`, and a run on
+    //   an already-resident package reaches that only when its reserve grows or a tenant pushes
+    //   the DECLARED sum over budget. The forge probe (M5 Max, `CanvasContention --rmem-drill`)
+    //   measured the gap: after `prepare`, phys was 15,537 MB against a 13,661 MB ceiling, and the
+    //   edit run got no shrink request and completed with the canvas holding 852 MB. That is the
+    //   steady state AB-R-0299 measured on the 24 GB M5 Pro: one model running again and again
+    //   beside the canvas, with no admission to trigger anything.
+    //   • A resident run whose headroom path does not fire now checks phys_footprint when a tenant
+    //     is registered. Over the ceiling, it asks tenants for the overage under the same policy
+    //     (largest first, bounded, once each per run, declared drop credited). The run's
+    //     activation peak lands on top of that reading, and a tenant's cache is the cheapest
+    //     memory there is.
+    //   • It evicts NOTHING. Idle residents are still reclaimed only at admissions: extending
+    //     eviction to every run would change the no-tenant engine, and a resident's reload costs
+    //     seconds to minutes against a handler call.
+    //   • Unchanged: no tenant → the run takes no footprint reading at all (identical to 1.44.0);
+    //     under the ceiling → no request.
+    //   Additive: no API change. The cost under sustained pressure is one bounded handler call
+    //     per run.
+    public static let current = SemanticVersion(major: 1, minor: 45, patch: 0)
 }

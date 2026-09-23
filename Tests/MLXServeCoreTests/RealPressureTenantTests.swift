@@ -282,3 +282,70 @@ private func canvas(_ engine: MLXServeEngine, log: EventLog, keeps: UInt64,
     #expect(Set(await engine.residentPackages.keys) == ["a", "b"])
     _ = tenant
 }
+
+// MARK: - Steady state: a resident run under real pressure (1.45.0)
+
+// The drill on the forge side (AB-A-0093 reply 3): one model resident beside the canvas, the
+// declared sum fits, phys sits over the ceiling, and the model runs again and again. No
+// admission happens, so before 1.45.0 nothing asked the canvas. Now each run asks it first, and
+// evicts nothing, not even an idle co-resident.
+@Test func aResidentRunUnderRealPressureAsksTheTenantAndEvictsNothing() async throws {
+    let log = EventLog()
+    let real = RealMemory(0)
+    let engine = engine(real)
+    try await register(engine, "a", log: log)
+    try await register(engine, "b", log: log)
+    try await engine.prepare(.llm, package: "a")
+    try await engine.prepare(.llm, package: "b")                   // idle co-resident
+    let tenant = await canvas(engine, log: log, keeps: 300)        // releases nothing
+    real.set(900)
+
+    let response = try await engine.run(LLMRequest(prompt: "x"), package: "a")
+    #expect((response as? LLMResponse)?.text == "a")
+    #expect(log.events == ["shrink:50"])                           // asked, nothing evicted
+    #expect(Set(await engine.residentPackages.keys) == ["a", "b"])
+    _ = tenant
+}
+
+// Each run is its own request: asked once per run, credited within it. Nothing is carried
+// between runs.
+@Test func eachResidentRunUnderRealPressureAsksOnce() async throws {
+    let log = EventLog()
+    let real = RealMemory(0)
+    let engine = engine(real)
+    try await register(engine, "a", log: log)
+    try await engine.prepare(.llm, package: "a")
+    let tenant = await canvas(engine, log: log, keeps: 0)          // sheds everything
+    real.set(900)                                                  // and the reading lags
+    _ = try await engine.run(LLMRequest(prompt: "x"), package: "a")
+    _ = try await engine.run(LLMRequest(prompt: "x"), package: "a")
+    #expect(log.events == ["shrink:50", "shrink:50"])
+    #expect(tenant.footprint == .zero)
+}
+
+@Test func aResidentRunUnderTheCeilingDoesNotAskTheTenant() async throws {
+    let log = EventLog()
+    let real = RealMemory(850)                                     // AT the ceiling, not over
+    let engine = engine(real)
+    try await register(engine, "a", log: log)
+    try await engine.prepare(.llm, package: "a")
+    let tenant = await canvas(engine, log: log, keeps: 0)
+    _ = try await engine.run(LLMRequest(prompt: "x"), package: "a")
+    #expect(log.events.isEmpty)
+    _ = tenant
+}
+
+// With no tenant, a resident run takes no footprint reading at all, so it is identical to 1.44.0.
+@Test func withoutTenantsAResidentRunTakesNoFootprintReading() async throws {
+    let log = EventLog()
+    let real = RealMemory(900)
+    let engine = engine(real)
+    try await register(engine, "a", log: log)
+    try await register(engine, "b", log: log)
+    try await engine.prepare(.llm, package: "b")
+    try await engine.prepare(.llm, package: "a")                   // evicts b (real pressure)
+    let before = real.reads
+    _ = try await engine.run(LLMRequest(prompt: "x"), package: "a")
+    #expect(real.reads == before)
+    #expect(log.events == ["unload:b"])
+}

@@ -111,6 +111,10 @@ reclaim, not stack — the engine, not the caller, owns this.
   to `phys_footprint` only once the command buffer holding it retires (≤ 250 ms), so an immediate
   re-read would evict a model for memory already gone. Eviction runs while
   `real − credited > ceiling`; the credit lasts one admission. No tenant → the pass is unchanged.
+  **From 1.45.0 a run on an already-resident package asks too.** With a tenant registered, a run
+  under real pressure asks it for the overage even when no admission fires: this is the steady
+  state of one model running again and again beside a canvas (AB-A-0093 reply 3). That path
+  evicts nothing; idle residents are still reclaimed only at admissions.
 - **Wire the accounted working set during runs — and only during runs (HV1, v0.42.0).** The
   engine maps its accounting onto mlx-swift's process-global `WiredMemoryManager`: each resident's
   persistent weights hold a **`.reservation`** ticket (participates in limit computation, never

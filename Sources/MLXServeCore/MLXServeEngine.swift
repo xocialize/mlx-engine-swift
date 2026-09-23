@@ -851,7 +851,7 @@ public actor MLXServeEngine {
             if let bytes = residentFootprint[id] { byCapability[capability] = bytes }
         }
         let real = physFootprint()
-        let realCeiling = UInt64(Double(governor.budgetBytes) * governor.highWatermark)
+        let realCeiling = realPressureCeiling
         // Reserve-aware available: budget − Σ persistent − one transient reserve − everything
         // external tenants declare (1.43.0). The package fields stay the packages' own.
         let reserve = packageTransientReserve()
@@ -914,6 +914,9 @@ public actor MLXServeEngine {
     /// freed texture to `phys_footprint` only once the last command buffer holding it retires
     /// (≤ 250 ms, AB-A-0093), so an immediate re-read would see nothing and evict a model for
     /// memory that is already gone. The credit lasts one admission; the next re-reads fresh.
+    /// From 1.45.0 a run on an already-resident package under real pressure asks tenants the same
+    /// way, even when no admission happens (the steady state of one model beside a canvas). That
+    /// path evicts nothing.
     ///
     /// **Not covered.** Tenant bytes are not wired (the HV1 tickets carry MLX allocations only).
     ///
@@ -1877,6 +1880,16 @@ public actor MLXServeEngine {
                 // run is an admission too, so it asks the tenants and makes headroom exactly
                 // as a fresh one would rather than running on an over-committed budget.
                 try await makeRunHeadroom(id, reserve: reserve, conduct: conduct)
+            } else if !externalTenantStates.isEmpty, let real = physFootprint(),
+                      real > realPressureCeiling {
+                // Steady-state real pressure (1.45.0, AB-A-0093): the declared sum fits, but the
+                // process sits over the R-MEM-1 ceiling with this model resident beside a tenant
+                // — and this run's activation peak lands on top of it. Ask the tenants (the
+                // cheapest memory there is), credited as at admission; evict NOTHING here: idle
+                // residents are reclaimed at admissions, as before. Without tenants this branch
+                // does not even read the footprint.
+                var shrunk = ExternalShrinkLedger()
+                _ = await creditedRealReading(real, ceiling: realPressureCeiling, shrunk: &shrunk)
             }
             touch(id)
             return existing
@@ -2283,21 +2296,36 @@ public actor MLXServeEngine {
 
         // (2) R-MEM-1: real-memory pressure trigger. Tenants first, credited by their declared
         // drop (the real reading lags a Metal release); then idle LRU residents.
-        let ceiling = UInt64(Double(governor.budgetBytes) * governor.highWatermark)
+        let ceiling = realPressureCeiling
         while let real = physFootprint() {
-            var effective = real > shrunk.releasedBytes ? real - shrunk.releasedBytes : 0
-            if effective > ceiling, !shrunk.askedUnderRealPressure,
-               !externalTenantStates.isEmpty {
-                shrunk.askedUnderRealPressure = true
-                await requestExternalShrink(effective - ceiling, ledger: &shrunk)
-                effective = real > shrunk.releasedBytes ? real - shrunk.releasedBytes : 0
-            }
+            let effective = await creditedRealReading(real, ceiling: ceiling, shrunk: &shrunk)
             guard effective > ceiling else { break }
             guard let victim = lruIdleVictim(excluding: id) else {
                 break // reclaimed everything we can; remaining pressure is external
             }
             await evictResident(victim)
         }
+    }
+
+    /// The R-MEM-1 ceiling: `budget × highWatermark`, compared against `phys_footprint`.
+    private var realPressureCeiling: UInt64 {
+        UInt64(Double(governor.budgetBytes) * governor.highWatermark)
+    }
+
+    /// R-MEM-1's tenant step (1.44.0): `real` net of the declared bytes tenants dropped during
+    /// this admission. When that is still over `ceiling`, and the admission has not yet asked under
+    /// real pressure, the tenants not yet asked are asked for the overage first, then the reading
+    /// is re-credited. `phys_footprint` lags a Metal release, so the DECLARED drop is what counts
+    /// here. Without tenants this makes no request, and without a credit it returns `real`.
+    private func creditedRealReading(_ real: UInt64, ceiling: UInt64,
+                                     shrunk: inout ExternalShrinkLedger) async -> UInt64 {
+        var effective = real > shrunk.releasedBytes ? real - shrunk.releasedBytes : 0
+        if effective > ceiling, !shrunk.askedUnderRealPressure, !externalTenantStates.isEmpty {
+            shrunk.askedUnderRealPressure = true
+            await requestExternalShrink(effective - ceiling, ledger: &shrunk)
+            effective = real > shrunk.releasedBytes ? real - shrunk.releasedBytes : 0
+        }
+        return effective
     }
 
     /// The least-recently-used **idle** resident other than `id`, or nil if none remain.
