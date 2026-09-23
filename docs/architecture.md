@@ -115,6 +115,11 @@ reclaim, not stack — the engine, not the caller, owns this.
   under real pressure asks it for the overage even when no admission fires: this is the steady
   state of one model running again and again beside a canvas (AB-A-0093 reply 3). That path
   evicts nothing; idle residents are still reclaimed only at admissions.
+  **From 1.46.0 the tenant is told why (AB-A-0097).** A request-form handler receives an
+  `ExternalShrinkRequest` (`requestedBytes`, `reason`, `package`): `.admission` for both passes of
+  an admission (a cache drop is what lets the model in), `.runUnderRealPressure` for the 1.45.0
+  run path (nothing is loading; a cache re-uploaded next frame buys nothing). The bytes-only
+  handler is wrapped and unchanged.
 - **Wire the accounted working set during runs — and only during runs (HV1, v0.42.0).** The
   engine maps its accounting onto mlx-swift's process-global `WiredMemoryManager`: each resident's
   persistent weights hold a **`.reservation`** ticket (participates in limit computation, never

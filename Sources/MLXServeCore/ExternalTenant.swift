@@ -27,7 +27,58 @@ public struct ExternalFootprint: Sendable, Equatable, Hashable {
 ///
 /// Bounded by `ExternalTenantPolicy.shrinkTimeout`: a handler still running at the deadline is
 /// cancelled and treated as having released nothing it has not declared.
+///
+/// The request-only form. It still works unchanged; from 1.46.0 it is wrapped into an
+/// `ExternalShrinkRequestHandler` that ignores the reason. A tenant whose right answer depends on
+/// WHY it is asked registers the request form instead.
 public typealias ExternalShrinkHandler = @Sendable (_ requestedBytes: UInt64) async -> UInt64
+
+/// One request from the engine to an external tenant to give memory back, with the reason
+/// (contract 1.46.0, AB-A-0097). The obligations are `ExternalShrinkHandler`'s: `update` the
+/// declaration before returning; the return value is advisory; the call is bounded by
+/// `ExternalTenantPolicy.shrinkTimeout`.
+public struct ExternalShrinkRequest: Sendable, Equatable, Hashable {
+    /// Why the engine is asking. What is worth shedding differs (AB-R-0303 / AB-R-0304).
+    public enum Reason: Sendable, Equatable, Hashable {
+        /// A package is being admitted and needs room: a fresh load (`prepare`, or a run that
+        /// loads its package), or a run on a resident package whose reserve no longer fits the
+        /// declared budget. The alternative to the tenant's bytes is evicting or refusing a
+        /// model, so dropping caches is worth it. Covers both the declared-byte pass and the
+        /// R-MEM-1 real-pressure pass of that admission.
+        case admission
+        /// A run on an ALREADY-resident package found the process over the R-MEM-1 ceiling
+        /// while the declared accounting fits (1.45.0). The engine evicts nothing on this path,
+        /// and nothing is being loaded: the tenant should shed only what it will not
+        /// immediately need again. A cache it re-uploads on its next frame buys nothing.
+        case runUnderRealPressure
+    }
+
+    /// The deficit the engine is trying to close: bytes over the budget (declared pass) or over
+    /// the R-MEM-1 ceiling (real-pressure passes). The tenant may release more, less, or nothing.
+    public let requestedBytes: UInt64
+    public let reason: Reason
+    /// The package being admitted or run, when there is one.
+    public let package: PackageID?
+
+    public init(requestedBytes: UInt64, reason: Reason, package: PackageID? = nil) {
+        self.requestedBytes = requestedBytes
+        self.reason = reason
+        self.package = package
+    }
+}
+
+/// The request form of the shrink handler (contract 1.46.0): as `ExternalShrinkHandler`, but
+/// given the whole `ExternalShrinkRequest`, so the tenant can decide what to shed by the reason.
+public typealias ExternalShrinkRequestHandler =
+    @Sendable (_ request: ExternalShrinkRequest) async -> UInt64
+
+extension ExternalShrinkRequest {
+    /// The legacy form, wrapped: the reason and package are dropped, `requestedBytes` passed.
+    static func wrap(_ handler: ExternalShrinkHandler?) -> ExternalShrinkRequestHandler? {
+        guard let handler else { return nil }
+        return { request in await handler(request.requestedBytes) }
+    }
+}
 
 /// How the engine treats external GPU tenants (contract 1.43.0).
 public struct ExternalTenantPolicy: Sendable, Equatable {
@@ -46,7 +97,7 @@ public struct ExternalTenantPolicy: Sendable, Equatable {
 /// `MLXServeEngine.registerExternalTenant(id:persistentBytes:transientBytes:onShrinkRequest:)`.
 ///
 /// The handle is the WHOLE seam: numbers in (`update`), a closure for the engine to call
-/// (`onShrinkRequest`), and `withdraw`. The tenant's own module never imports the engine — the
+/// (`onShrinkRequest`, either form), and `withdraw`. The tenant's own module never imports the engine — the
 /// app layer that owns both holds this handle and bridges them.
 ///
 /// Thread-safe and synchronous: `update` takes a lock, not an actor hop, so it can be called from
@@ -78,7 +129,16 @@ public final class ExternalTenant: Sendable {
     public func update(_ footprint: ExternalFootprint) { state.update(footprint) }
 
     /// Install, replace, or clear (`nil`) the handler the engine calls to ask for memory back.
-    public func setShrinkHandler(_ handler: ExternalShrinkHandler?) { state.setHandler(handler) }
+    public func setShrinkHandler(_ handler: ExternalShrinkHandler?) {
+        state.setHandler(ExternalShrinkRequest.wrap(handler))
+    }
+
+    /// Install, replace, or clear (`nil`) the request-form handler (1.46.0): it receives the
+    /// reason the engine is asking. Replaces a handler installed in either form.
+    @_disfavoredOverload
+    public func setShrinkHandler(_ handler: ExternalShrinkRequestHandler?) {
+        state.setHandler(handler)
+    }
 
     /// The current declaration (`.zero` once withdrawn).
     public var footprint: ExternalFootprint { state.footprint }
@@ -96,30 +156,30 @@ final class ExternalTenantState: @unchecked Sendable {
     let id: String
     private let lock = NSLock()
     private var _footprint: ExternalFootprint
-    private var _handler: ExternalShrinkHandler?
+    private var _handler: ExternalShrinkRequestHandler?
     private var _withdrawn = false
 
-    init(id: String, footprint: ExternalFootprint, handler: ExternalShrinkHandler?) {
+    init(id: String, footprint: ExternalFootprint, handler: ExternalShrinkRequestHandler?) {
         self.id = id
         self._footprint = footprint
         self._handler = handler
     }
 
     var footprint: ExternalFootprint { lock.withLock { _withdrawn ? .zero : _footprint } }
-    var handler: ExternalShrinkHandler? { lock.withLock { _withdrawn ? nil : _handler } }
+    var handler: ExternalShrinkRequestHandler? { lock.withLock { _withdrawn ? nil : _handler } }
     var isWithdrawn: Bool { lock.withLock { _withdrawn } }
 
     func update(_ footprint: ExternalFootprint) {
         lock.withLock { if !_withdrawn { _footprint = footprint } }
     }
 
-    func setHandler(_ handler: ExternalShrinkHandler?) {
+    func setHandler(_ handler: ExternalShrinkRequestHandler?) {
         lock.withLock { if !_withdrawn { _handler = handler } }
     }
 
     func withdraw() {
         // Drop the handler outside the lock: releasing it may run arbitrary deinit code.
-        let released: ExternalShrinkHandler? = lock.withLock {
+        let released: ExternalShrinkRequestHandler? = lock.withLock {
             _withdrawn = true
             _footprint = .zero
             defer { _handler = nil }
@@ -132,14 +192,15 @@ final class ExternalTenantState: @unchecked Sendable {
 /// One shrink request raced against its deadline. Whichever finishes first resumes the waiting
 /// admission; a handler that outlives the deadline is cancelled and its eventual answer ignored —
 /// the engine never awaits it, which is what keeps an unresponsive tenant from hanging admission.
-enum ExternalShrinkRequest {
-    static func run(_ handler: @escaping ExternalShrinkHandler, requested: UInt64,
+enum ExternalShrinkCall {
+    static func run(_ handler: @escaping ExternalShrinkRequestHandler,
+                    request: ExternalShrinkRequest,
                     timeout: Duration) async -> UInt64? {
         let race = Race()
         return await withCheckedContinuation { (continuation: CheckedContinuation<UInt64?, Never>) in
             race.arm(continuation)
             let work = Task {
-                let released = await handler(requested)
+                let released = await handler(request)
                 race.finish(released)
             }
             let timer = Task {

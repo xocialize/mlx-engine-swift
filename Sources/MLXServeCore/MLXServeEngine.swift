@@ -918,6 +918,15 @@ public actor MLXServeEngine {
     /// way, even when no admission happens (the steady state of one model beside a canvas). That
     /// path evicts nothing.
     ///
+    /// **Why it is asked (1.46.0, AB-A-0097).** Register with a request-form handler
+    /// (`ExternalShrinkRequestHandler`) to receive an `ExternalShrinkRequest`: the bytes, the
+    /// `reason`, and the package. `.admission` — a package is being admitted (both passes of a
+    /// fresh load, and a run whose reserve no longer fits the declared budget): a cache drop is
+    /// what lets it in. `.runUnderRealPressure` — the 1.45.0 path above, on which nothing is
+    /// loaded or evicted: shed only what will not be needed again on the next frame. The
+    /// bytes-only `ExternalShrinkHandler` form is unchanged; it is wrapped and never sees the
+    /// reason.
+    ///
     /// **Not covered.** Tenant bytes are not wired (the HV1 tickets carry MLX allocations only).
     ///
     /// Registering an `id` that is already live withdraws the earlier tenant (the `register`
@@ -928,6 +937,28 @@ public actor MLXServeEngine {
                                        onShrinkRequest: ExternalShrinkHandler? = nil)
         -> ExternalTenant
     {
+        addExternalTenant(id: id, persistentBytes: persistentBytes,
+                          transientBytes: transientBytes,
+                          handler: ExternalShrinkRequest.wrap(onShrinkRequest))
+    }
+
+    /// `registerExternalTenant` with a request-form handler (1.46.0, AB-A-0097): the handler
+    /// receives an `ExternalShrinkRequest` carrying the reason the engine is asking — an
+    /// admission, or a resident run under real pressure — and the package, so the tenant can
+    /// decide what is worth shedding. Everything else is the bytes-only form's contract.
+    @_disfavoredOverload
+    public func registerExternalTenant(id: String,
+                                       persistentBytes: UInt64 = 0,
+                                       transientBytes: UInt64 = 0,
+                                       onShrinkRequest: ExternalShrinkRequestHandler?)
+        -> ExternalTenant
+    {
+        addExternalTenant(id: id, persistentBytes: persistentBytes,
+                          transientBytes: transientBytes, handler: onShrinkRequest)
+    }
+
+    private func addExternalTenant(id: String, persistentBytes: UInt64, transientBytes: UInt64,
+                                   handler: ExternalShrinkRequestHandler?) -> ExternalTenant {
         pruneWithdrawnExternalTenants()
         for (token, state) in externalTenantStates where state.id == id {
             state.withdraw()
@@ -937,7 +968,7 @@ public actor MLXServeEngine {
             id: id,
             footprint: ExternalFootprint(persistentBytes: persistentBytes,
                                          transientBytes: transientBytes),
-            handler: onShrinkRequest)
+            handler: handler)
         externalTenantClock &+= 1
         externalTenantStates[externalTenantClock] = state
         return ExternalTenant(state: state)
@@ -967,8 +998,11 @@ public actor MLXServeEngine {
     /// What one admission has asked of its external tenants (1.44.0): who was asked — each at most
     /// once per admission, across the declared-byte pass and the R-MEM-1 pass — and the
     /// declared bytes they dropped, which R-MEM-1 credits against a `phys_footprint` reading that
-    /// has not caught up yet.
+    /// has not caught up yet. Since 1.46.0 it also carries why the tenants are asked and for which
+    /// package, which every request it makes passes on (AB-A-0097).
     struct ExternalShrinkLedger {
+        let reason: ExternalShrinkRequest.Reason
+        let package: PackageID?
         var asked: Set<ObjectIdentifier> = []
         var releasedBytes: UInt64 = 0
         /// Whether the R-MEM-1 pass has made its one round of requests.
@@ -977,7 +1011,8 @@ public actor MLXServeEngine {
 
     /// Ask tenants for `deficit` bytes, largest declaration first, until the declared drop covers
     /// it or every tenant with a handler has been asked once. Tenants the `ledger` shows as asked
-    /// in this admission are skipped; the declared drop is added to it. Bounded per call by the
+    /// in this admission are skipped; the declared drop is added to it. Each request carries the
+    /// ledger's reason and package (1.46.0). Bounded per call by the
     /// policy's timeout; never loops on a tenant that releases nothing.
     private func requestExternalShrink(_ deficit: UInt64,
                                        ledger: inout ExternalShrinkLedger) async {
@@ -990,8 +1025,10 @@ public actor MLXServeEngine {
             guard let handler = tenant.handler else { continue }
             ledger.asked.insert(ObjectIdentifier(tenant))
             let before = tenant.footprint.totalBytes
-            let reported = await ExternalShrinkRequest.run(
-                handler, requested: remaining, timeout: externalTenantPolicy.shrinkTimeout)
+            let request = ExternalShrinkRequest(requestedBytes: remaining, reason: ledger.reason,
+                                                package: ledger.package)
+            let reported = await ExternalShrinkCall.run(
+                handler, request: request, timeout: externalTenantPolicy.shrinkTimeout)
             let after = tenant.footprint.totalBytes
             let released = before > after ? before - after : 0
             if let reported, reported > released {
@@ -1011,12 +1048,13 @@ public actor MLXServeEngine {
     /// ask tenants for the deficit, then refuse when the working set cannot fit beside what they
     /// still declare even with every package gone — evicting residents only to refuse would
     /// throw away weights for nothing. When no tenant is registered this is free and never
-    /// throws. Returns the admission's ledger, which `makeHeadroom`'s R-MEM-1 pass continues.
+    /// throws. Returns the admission's ledger, which `makeHeadroom`'s R-MEM-1 pass continues —
+    /// so both passes ask with `.admission` for `id`.
     private func claimFromExternalTenants(persistent p: UInt64, transient t: UInt64,
                                           keeping id: PackageID) async throws
         -> ExternalShrinkLedger
     {
-        var ledger = ExternalShrinkLedger()
+        var ledger = ExternalShrinkLedger(reason: .admission, package: id)
         guard !externalTenantStates.isEmpty else { return ledger }
         let required = accountedRequired(persistent: p, transient: t, excluding: id)
         if required > governor.budgetBytes {
@@ -1887,8 +1925,9 @@ public actor MLXServeEngine {
                 // — and this run's activation peak lands on top of it. Ask the tenants (the
                 // cheapest memory there is), credited as at admission; evict NOTHING here: idle
                 // residents are reclaimed at admissions, as before. Without tenants this branch
-                // does not even read the footprint.
-                var shrunk = ExternalShrinkLedger()
+                // does not even read the footprint. The tenants are told so (1.46.0): nothing
+                // is being loaded, so a cache they would re-upload next frame buys nothing.
+                var shrunk = ExternalShrinkLedger(reason: .runUnderRealPressure, package: id)
                 _ = await creditedRealReading(real, ceiling: realPressureCeiling, shrunk: &shrunk)
             }
             touch(id)

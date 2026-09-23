@@ -956,5 +956,29 @@ public enum ContractVersion {
     //     under the ceiling → no request.
     //   Additive: no API change. The cost under sustained pressure is one bounded handler call
     //     per run.
-    public static let current = SemanticVersion(major: 1, minor: 45, patch: 0)
+    // 1.46.0 (2026-09-22, additive): A TENANT IS TOLD WHY IT IS ASKED TO SHRINK (AB-A-0097).
+    //   `ExternalShrinkHandler` passed only `requestedBytes`, and the right answer depends on why.
+    //   At an admission, dropping a canvas's layer cache is what lets the model load. On a 1.45.0
+    //   resident run under real pressure it buys nothing: the canvas is on screen and re-uploads
+    //   the cache next frame. Measured on the 24 GB M5 Pro (AB-R-0303 / AB-R-0304): one ~345–358 ms
+    //   re-upload frame per pressure episode, declared bytes bouncing 1,332 → 481 → 1,332 MB, and
+    //   pressure never clearing because the model alone is over the line. The steady 615 MB
+    //   overage there falls between the working set (463 MB) and working set + cache (852 MB), so
+    //   a bytes-only "drop the cache when it closes the gap" rule still fires on runs.
+    //   • `ExternalShrinkRequest { requestedBytes, reason, package }`, `Reason` =
+    //     `.admission` | `.runUnderRealPressure`, and `ExternalShrinkRequestHandler =
+    //     (ExternalShrinkRequest) async -> UInt64`.
+    //   • `registerExternalTenant(id:persistentBytes:transientBytes:onShrinkRequest:)` and
+    //     `ExternalTenant.setShrinkHandler(_:)` gain request-form overloads
+    //     (`@_disfavoredOverload`, so an existing `{ requested in … }` / `{ _ in … }` closure
+    //     still resolves to the bytes-only form). The bytes-only form is wrapped: same bytes, same
+    //     calls, same order.
+    //   • `.admission`: both passes of a fresh load (`prepare`, or a run that loads), and a run on
+    //     a resident package whose reserve no longer fits the declared budget (1.42.0 / 1.43.0).
+    //     `.runUnderRealPressure`: the 1.45.0 path only, which evicts nothing. `package` is the
+    //     package being admitted or run.
+    //   • The internal race helper formerly named `ExternalShrinkRequest` is `ExternalShrinkCall`.
+    //   Additive: new types and overloads only. Which tenants are asked, for how much, and when,
+    //     is unchanged; with no tenant nothing is built, identical to 1.45.0.
+    public static let current = SemanticVersion(major: 1, minor: 46, patch: 0)
 }
