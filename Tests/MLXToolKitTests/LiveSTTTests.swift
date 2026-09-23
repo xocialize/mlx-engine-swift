@@ -127,6 +127,17 @@ final class LiveSTTTests: XCTestCase {
         XCTAssertNil(STTSessionRequest().language)
     }
 
+    func testSessionRequestPlanIsOptionalAndOpenEndedByDefault() {
+        // nil = the pre-1.47.0 session exactly: nothing to map, nothing to reserve, no end but
+        // the caller's.
+        XCTAssertNil(STTSessionRequest().plannedDuration)
+        let planned = STTSessionRequest(language: "en-US", context: ["MLXEngine"],
+                                        plannedDuration: 2_400)
+        XCTAssertEqual(planned.plannedDuration, 2_400)
+        XCTAssertEqual(planned.language, "en-US")
+        XCTAssertEqual(planned.context, ["MLXEngine"])
+    }
+
     func testPushOutcomeNamesEachReasonAudioWasDropped() {
         // Four cases, not the designed two. Every one of the three failures is something a
         // caller does differently: back off (`.overrun`), convert (`.unsupportedSampleRate`),

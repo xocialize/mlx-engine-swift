@@ -149,13 +149,44 @@ public struct STTSessionRequest: CapabilityRequest {
     /// session — mid-session vocabulary changes are not a thing any candidate model supports,
     /// and inventing the surface before one does is how contracts rot.
     public let context: [String]?
+    /// The longest this session is planned to run, in seconds of AUDIO (contract 1.47.0,
+    /// AB-A-0100). `nil`, the default, opens an open-ended session exactly as before 1.47.0.
+    ///
+    /// A plan gives the workload plane (1.41.0 / 1.42.0) something to act on at open time, when
+    /// the audio does not exist yet. Three things follow, all engine-side:
+    ///
+    /// 1. **Refusal past the ceiling.** When the package's configuration maps the plan
+    ///    (`WorkloadDeclaring.workloadUnits(for:)` answering it for an `STTSessionRequest`), a
+    ///    plan beyond the declared `measuredCeiling` is refused BEFORE admission
+    ///    (`EngineError.workloadExceedsDeclaredCeiling`), exactly as a file that long would be.
+    /// 2. **A reserve sized for the plan, held for the session.** The session is admitted
+    ///    against `max(scalar, projectedBytes(at: plan))` for its whole lifetime instead of
+    ///    riding the package's idle reserve, so a 40-minute plan is admitted, or refused
+    ///    (`EngineError.workloadExceedsMemoryBudget`), on what it will actually need.
+    /// 3. **An end at the plan.** The engine counts the audio the session ACCEPTS. The push that
+    ///    reaches the plan is accepted up to it (samples past it are dropped), the session is
+    ///    `finish()`ed — a normal final chunk, the transcript up to the plan kept — and every
+    ///    later push answers `.ended`. `STTLiveHandle.endReason` then reads
+    ///    `.reachedPlannedDuration`.
+    ///
+    /// (3) applies to every package. (1) and (2) need the package to map the plan: one that does
+    /// not is admitted on its idle reserve as before, and still ends at the plan. A package
+    /// reads the plan only through its configuration's `WorkloadDeclaring`; its session need
+    /// not act on it, because ending the session is the engine's job.
+    ///
+    /// Seconds of audio, not wall-clock — the axis `processedSeconds` reports, and what the
+    /// declared activation line grows with — so a paused feed does not spend the plan. Must be
+    /// positive and finite; the engine refuses anything else before admission.
+    public let plannedDuration: TimeInterval?
     public let mode: Mode?
     public let metaData: MetaData
 
     public init(language: String? = nil, context: [String]? = nil,
+                plannedDuration: TimeInterval? = nil,
                 mode: Mode? = nil, metaData: MetaData = [:]) {
         self.language = language
         self.context = context
+        self.plannedDuration = plannedDuration
         self.mode = mode
         self.metaData = metaData
     }
@@ -184,8 +215,9 @@ public struct STTSessionRequest: CapabilityRequest {
 /// `finish()` flushes the tail, emits exactly one `isFinal` chunk and ends `updates`.
 /// `cancel()` abandons: `updates` ends with `CancellationError` and no final chunk. Dropping
 /// the session ends it (the abandoned-stream rule). Sessions obtained from
-/// `MLXServeEngine.transcribeLive` hold residency until one of those happens or the engine's
-/// idle timeout fires.
+/// `MLXServeEngine.transcribeLive` hold residency until one of those happens, the engine's
+/// idle timeout fires, or — for a request with a `plannedDuration` (1.47.0) — the engine calls
+/// `finish()` at the plan. That last one reaches the session as an ordinary `finish()`.
 public protocol STTSession: AnyObject, Sendable {
     /// Chunks as they are decoded. Ends after the `isFinal` chunk, with `CancellationError`
     /// when cancelled, or with the failure that ended the session.

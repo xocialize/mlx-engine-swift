@@ -66,8 +66,9 @@ public enum EngineError: Error, Sendable, Equatable {
     /// Past `ceiling` the declared model is an extrapolation and the reserve admission holds was
     /// never sized for it; a caller cannot raise an input past what the declaration was measured
     /// at and be admitted against a number that no longer applies. Shorten the workload
-    /// (segment the audio, lower the budget, reduce the geometry) or choose a package whose
-    /// declaration covers it. `requested` and `ceiling` are in units of `axis`.
+    /// (segment the audio, lower the budget, reduce the geometry, plan a shorter live session —
+    /// `STTSessionRequest.plannedDuration`, 1.47.0) or choose a package whose declaration covers
+    /// it. `requested` and `ceiling` are in units of `axis`.
     case workloadExceedsDeclaredCeiling(package: PackageID, axis: WorkloadAxis,
                                         requested: Double, ceiling: Double)
     /// THIS run's reserve does not fit the budget even alone (1.42.0, AB-A-0075). Admission sizes
@@ -76,7 +77,8 @@ public enum EngineError: Error, Sendable, Equatable {
     /// package's persistent weights plus that per-run reserve, against `budget`. Nothing was
     /// evicted and nothing loaded. Shorten the workload, or run it on a machine with the room —
     /// the ceiling is not the problem (a beyond-ceiling workload is
-    /// `workloadExceedsDeclaredCeiling`). `requested` is in units of `axis`.
+    /// `workloadExceedsDeclaredCeiling`). `requested` is in units of `axis`. A planned live
+    /// session (1.47.0) is refused with this too, when its reserve at the plan cannot fit.
     case workloadExceedsMemoryBudget(package: PackageID, axis: WorkloadAxis, requested: Double,
                                      required: UInt64, budget: UInt64)
     /// The working set fits the budget on its own, but not beside what EXTERNAL tenants declare
@@ -221,6 +223,13 @@ public actor MLXServeEngine {
         /// When the caller last fed this session — the watchdog's input, and the governor's
         /// tie-breaker when it has to choose a session to sacrifice.
         let activity: LiveActivityClock
+        /// The transient this session was admitted against, held for its whole lifetime
+        /// (1.47.0): `runReserve(for:id:)` of a PLANNED session — `max(scalar, projection at the
+        /// plan)` when the package maps the plan. It rides `packageTransientReserve` exactly as
+        /// an in-flight run's per-run reserve does, so every admission during the session
+        /// accounts for it. `0` for an open-ended session, which rides its package's idle reserve
+        /// (`residentTransient`) exactly as before.
+        let reservedTransientBytes: UInt64
         /// Set on the engine actor BEFORE the session is ended by the engine, so the pump's
         /// terminal classification can tell governor preemption from a caller cancel — the
         /// `ActiveRun.preempted` trick, transposed.
@@ -1463,6 +1472,15 @@ public actor MLXServeEngine {
     ///   (`LiveSessionPolicy.idleTimeout` → `EngineError.liveSessionIdle`).
     /// - The declared-control pre-flight runs here exactly as it does on `run()`: an
     ///   undeclared `context` is refused before admission.
+    /// - **A planned session (`STTSessionRequest.plannedDuration`, 1.47.0)** is refused before
+    ///   admission when its package maps the plan past the declared ceiling
+    ///   (`workloadExceedsDeclaredCeiling`, the shared `preflight`); is admitted against
+    ///   `runReserve(for:id:)` — `max(scalar, projectedBytes(at: plan))` — and holds that reserve
+    ///   until it ends, refused with `workloadExceedsMemoryBudget` when the package plus that
+    ///   reserve cannot fit the budget even alone; and is `finish()`ed by the engine when its
+    ///   accepted audio reaches the plan (`STTLiveHandle.endReason == .reachedPlannedDuration`).
+    ///   A plan that is not positive and finite is refused before admission. `nil` changes
+    ///   nothing: the session opens exactly as before 1.47.0.
     ///
     /// Per-buffer compute runs under the package's residency wired reservation, not under an
     /// `.active` ticket: the engine does not bracket a session's inference, so it has no window
@@ -1471,6 +1489,14 @@ public actor MLXServeEngine {
                                package: PackageID? = nil) async throws -> STTLiveHandle {
         try Task.checkCancellation()
         let id = try resolve(.stt, package)
+        if let planned = request.plannedDuration, !(planned.isFinite && planned > 0) {
+            // Before `preflight`: a NaN plan would otherwise reach the ceiling check and be
+            // refused as a workload of NaN seconds, and a non-positive one would open a session
+            // that ends at its first push.
+            throw PackageError.unsupportedRequestFeature(
+                "plannedDuration \(planned) — a plan is a positive, finite number of seconds of "
+                    + "audio; pass nil for an open-ended session")
+        }
         try preflight(request, id: id)
         // The advertisement half of LIV-1, enforced before anything is loaded: a package whose
         // surface does not declare a discipline has no live plane to open, even if the type
@@ -1478,12 +1504,16 @@ public actor MLXServeEngine {
         guard declaredLiveDiscipline(id) != nil else {
             throw EngineError.liveTranscriptionUnsupported(id)
         }
+        // What THIS session reserves for its lifetime (1.47.0): the 1.42.0 per-run rule at the
+        // plan. An open-ended session passes no reserve, so its admission is exactly the 1.39.0
+        // one: it rides the package's idle scalar.
+        let reserve = request.plannedDuration == nil ? nil : runReserve(for: request, id: id)
 
         await lockAdmission()
         let session: any STTSession
         do {
             let instance = try await resident(
-                id, conduct: preemption.enabled ? .preempting : .idleOnly)
+                id, conduct: preemption.enabled ? .preempting : .idleOnly, reserve: reserve)
             guard let live = instance as? any LiveTranscribing else {
                 throw EngineError.liveTranscriptionUnsupported(id)
             }
@@ -1496,6 +1526,7 @@ public actor MLXServeEngine {
         runTokenClock &+= 1
         let token = runTokenClock
         let activity = LiveActivityClock()
+        let gate = LivePlanGate(plannedSeconds: request.plannedDuration)
         let (updates, continuation) = AsyncThrowingStream.makeStream(of: STTStreamChunk.self)
 
         // No `await` from here to the `liveSessions[token] =` below: the actor cannot be
@@ -1515,6 +1546,9 @@ public actor MLXServeEngine {
             if let surfaced {
                 continuation.finish(throwing: surfaced)
             } else {
+                // Recorded BEFORE the stream ends, so a consumer reading `endReason` after its
+                // `for try await` loop always sees it.
+                gate.noteEndedCleanly()
                 continuation.finish()
             }
         }
@@ -1539,7 +1573,8 @@ public actor MLXServeEngine {
             : nil
 
         liveSessions[token] = LiveSessionRecord(
-            id: id, session: session, pump: pump, watchdog: watchdog, activity: activity)
+            id: id, session: session, pump: pump, watchdog: watchdog, activity: activity,
+            reservedTransientBytes: reserve?.transient ?? 0)
         touch(id)
         unlockAdmission()
 
@@ -1552,10 +1587,22 @@ public actor MLXServeEngine {
             expectedSampleRate: session.expectedSampleRate,
             onPush: { samples, rate in
                 activity.touch()
-                return session.push(samples, sampleRate: rate)
+                let (outcome, reachedPlan) = gate.push(samples, sampleRate: rate, into: session)
+                if reachedPlan {
+                    // The engine's end at the plan (1.47.0): an ordinary `finish()`, so the tail is
+                    // flushed and the final chunk delivered. Called off the audio thread, because
+                    // `finish()` is not held to `push`'s copy-only rule. The gate already answers
+                    // `.ended` to every push that arrives before this runs.
+                    Task.detached { session.finish() }
+                }
+                return outcome
             },
-            onFinish: { session.finish() },
-            onCancel: { session.cancel() })
+            onFinish: {
+                gate.noteCallerFinish()
+                session.finish()
+            },
+            onCancel: { session.cancel() },
+            endReason: { gate.endReason })
     }
 
     /// The `liveDiscipline` declared by `id`'s `stt` surface, or nil when it declares none.
@@ -1749,19 +1796,24 @@ public actor MLXServeEngine {
 
     /// The single transient activation headroom to reserve: `max(peakActivation)` across residents,
     /// since only one model runs at a time — and, since 1.42.0, across the runs IN FLIGHT, whose
-    /// per-run reserve may exceed their package's idle scalar (`runReserve(for:id:)`). `extra`
-    /// folds in an incoming model's transient; `skip` excludes one id. External tenants'
+    /// per-run reserve may exceed their package's idle scalar (`runReserve(for:id:)`), and since
+    /// 1.47.0 across the open PLANNED live sessions, whose reserve is held for their lifetime.
+    /// `extra` folds in an incoming model's transient; `skip` excludes one id. External tenants'
     /// transients (1.43.0) are ADDED on top — they are not serialized with package runs.
     private func transientReserve(extra: UInt64 = 0, excluding skip: PackageID? = nil) -> UInt64 {
         packageTransientReserve(extra: extra, excluding: skip) &+ externalDeclared().transientBytes
     }
 
-    /// The packages' own serialized reserve: the max over residents and in-flight runs.
+    /// The packages' own serialized reserve: the max over residents, in-flight runs, and open
+    /// live sessions (an open-ended session contributes 0 — it rides its resident's scalar).
     private func packageTransientReserve(extra: UInt64 = 0,
                                          excluding skip: PackageID? = nil) -> UInt64 {
         var m = extra
         for (id, t) in residentTransient where id != skip { m = max(m, t) }
         for run in activeRuns.values where run.id != skip { m = max(m, run.transientBytes) }
+        for live in liveSessions.values where live.id != skip {
+            m = max(m, live.reservedTransientBytes)
+        }
         return m
     }
 
@@ -1806,8 +1858,10 @@ public actor MLXServeEngine {
     /// Per-run reserve sizing (1.42.0): `max(scalar, projectedBytes(at: workload))` when the
     /// resolved package declares `ActivationScaling` AND its configuration maps this request
     /// (`WorkloadDeclaring`); the resolved scalar (or lane hint) otherwise — an unmappable request
-    /// (a live session at open time, a request type the package does not map) and a scalar-only
-    /// package reserve exactly what they did before.
+    /// (a request type the package does not map, a planned session whose package does not map
+    /// the plan) and a scalar-only package reserve exactly what they did before. A PLANNED live
+    /// session (1.47.0) is sized here too, at its `plannedDuration`, and holds the result for its
+    /// lifetime; an open-ended one is never sized (`transcribeLive` passes no reserve).
     ///
     /// Why `max` and not the projection alone: the scalar is the author's representative case,
     /// measured, and a projection below it says only that the line is a first-order model —

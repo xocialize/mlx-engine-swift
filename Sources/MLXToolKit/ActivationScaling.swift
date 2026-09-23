@@ -157,13 +157,20 @@ public struct ActivationScaling: Sendable, Codable, Equatable {
 /// (`QuantConfigured`, `FootprintConfigured`, `ModelStorable`, `BudgetAware`; `as?`-detected at
 /// registration), and the configuration is also where config-level workloads live: mage-vl
 /// answers `Double(visualTokenBudget)` for every request, because the budget IS the workload;
-/// VibeVoice answers the audio duration of an `STTRequest`.
+/// VibeVoice answers the audio duration of an `STTRequest` (and, from 1.47.0, can answer a
+/// session's `plannedDuration`).
 ///
-/// `nil` means "unknowable for this request" — a live `STTSessionRequest` at open time, a request
-/// type the package does not map — and is never refused. For an open-ended session the ceiling is
-/// advisory: the host asks `machineFitAdvisory(_:package:workload:)` with the expected length
-/// before opening it. The engine does not cut a session mid-speech; that loses audio nobody can
-/// replay.
+/// `nil` means "unknowable for this request" — an open-ended `STTSessionRequest` (no
+/// `plannedDuration`), a request type the package does not map — and is never refused.
+///
+/// **Live sessions (1.47.0, AB-A-0100).** A package whose axis is the session's length answers
+/// `STTSessionRequest.plannedDuration` for a planned session — converted to its own axis if that
+/// is not `.audioSeconds` — and `nil` for an open-ended one. With the plan mapped, the engine
+/// refuses a session planned past the ceiling before admission, reserves
+/// `max(scalar, projectedBytes(at: plan))` for the session's whole lifetime, and finishes the
+/// session at the plan (the transcript up to it is kept). An open-ended session is never cut:
+/// its ceiling stays advisory (the host asks `machineFitAdvisory(_:package:workload:)` with the
+/// expected length), because ending a session nobody planned loses audio nobody can replay.
 public protocol WorkloadDeclaring {
     func workloadUnits(for request: any CapabilityRequest) -> Double?
 }

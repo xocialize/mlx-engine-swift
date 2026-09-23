@@ -839,7 +839,8 @@ public enum ContractVersion {
     //     the resolved package declares `ActivationScaling` AND its configuration maps the request
     //     (`WorkloadDeclaring`); the scalar otherwise. Applied at `run` and `stream` (the `.active`
     //     wired ticket carries it; `transcribeLive` opens on the scalar — a session's workload is
-    //     nil at open time). The scalar stays the IDLE reserve (`residentTransient`) and what
+    //     nil at open time; SUPERSEDED for a planned session in 1.47.0, which reserves at its
+    //     `plannedDuration` for its lifetime). The scalar stays the IDLE reserve (`residentTransient`) and what
     //     registration checks, so a package keeps fitting the machines its representative case
     //     fits; a run that needs more reserves more for exactly its duration — the in-flight
     //     transient rides `transientReserve` alongside the residents', so a co-admission during
@@ -980,5 +981,52 @@ public enum ContractVersion {
     //   • The internal race helper formerly named `ExternalShrinkRequest` is `ExternalShrinkCall`.
     //   Additive: new types and overloads only. Which tenants are asked, for how much, and when,
     //     is unchanged; with no tenant nothing is built, identical to 1.45.0.
-    public static let current = SemanticVersion(major: 1, minor: 46, patch: 0)
+    // 1.47.0 (2026-09-22, additive): A LIVE SESSION DECLARES A PLANNED DURATION — the 1.41.0 /
+    //   1.42.0 workload plane reaches `transcribeLive` (AB-A-0100, mlx-audio). Measured on
+    //   mlx-vibevoice-asr-swift v0.2.0 against 0.61.0: a session's length is unknowable at open, so
+    //   its workload mapped to nil, the ceiling never fired ("unknowable is not the same as over"),
+    //   and the session was admitted with NO run reserve. It rode the idle scalar (4.60 GB), which
+    //   VibeVoice's own measured line (3.385 GB + 0.1105 GB/min, ceiling 2400 s) passes at ~11 min;
+    //   from there it ran on activation the governor never reserved, and nothing ended it at the
+    //   ceiling (`LiveSessionPolicy` has only the idle timeout). ML[X] Audio Studio M13-C budgets
+    //   this in the app (AB-D-0096); every other live host would have to re-derive the arithmetic.
+    //   • `STTSessionRequest.plannedDuration: TimeInterval?` — seconds of AUDIO, defaulted nil.
+    //     Packages map it through the existing `WorkloadDeclaring.workloadUnits(for:)` (no new
+    //     protocol), so the shared `preflight` refuses a session planned past the ceiling
+    //     (`workloadExceedsDeclaredCeiling`) before admission, exactly as it refuses a file.
+    //   • Admission at `runReserve(for:id:)` — `max(scalar, projectedBytes(at: plan))` — HELD FOR
+    //     THE SESSION'S LIFETIME: the session record's `reservedTransientBytes` rides
+    //     `packageTransientReserve` as an in-flight run's per-run reserve does, so every admission
+    //     during the session accounts for it (and `MemorySnapshot.transientReserveBytes` shows it);
+    //     it returns to the idle scalar when the session ends. A plan whose reserve cannot fit even
+    //     alone → `workloadExceedsMemoryBudget` before anything is evicted or loaded; a resident
+    //     package makes headroom under the same eviction ladder as a fresh admission (1.42.0).
+    //   • END AT THE PLAN, held at `push` rather than at the pump. The engine counts ACCEPTED
+    //     audio (overrun, wrong-rate and post-end pushes do not spend the plan). The push that
+    //     reaches the plan is accepted up to it (its samples past the plan are dropped) and reads
+    //     `.accepted`; the engine then calls `finish()` off the audio thread (`finish()` is not held
+    //     to `push`'s copy-only rule), so the tail flushes and the final chunk arrives exactly as
+    //     for a caller's `finish()`; every later push answers `.ended`. The ask suggested the pump
+    //     (`processedSeconds >= plan`), but the pump only sees a chunk when the package emits one,
+    //     a silent stretch may emit none, and by then audio past the plan would already be buffered
+    //     with the model's activation growing past the reserve sized for the plan. Held at `push`,
+    //     the model never receives a sample past the plan.
+    //   • `STTLiveHandle.endReason: LiveSessionEndReason?` (`.finishedByCaller` /
+    //     `.reachedPlannedDuration`) says which CLEAN end it was: nil while open, and for
+    //     cancellation or failure, which keep the terminal throw. Set before `updates` finishes.
+    //   • The end applies to every package. The refusal and the reserve need the package to map the
+    //     plan: one that does not is admitted on its idle reserve and still ends at the plan. A plan
+    //     that is not positive and finite → `PackageError.unsupportedRequestFeature` before
+    //     admission. The 1.41.0 rejection of "cutting a live session at the ceiling" stands for an
+    //     OPEN-ENDED session, which is never cut; a planned one is finished, not cancelled, at a
+    //     length its caller chose, and the transcript up to it is kept.
+    //   Not covered, deliberately: an open-ended session still rides the idle scalar (nil is
+    //     1.46.0 exactly); and a session's reserve joins the serialized MAX, as a run's does, although
+    //     a growing KV cache persists between buffers. A batch run of another package interleaved
+    //     with an open session can therefore overlap it; R-MEM-1 is the backstop, as it was for the
+    //     pre-1.47 live plane at the scalar.
+    //   Additive: one defaulted member + init argument on `STTSessionRequest`, one new enum, one
+    //     computed member + one defaulted init argument on `STTLiveHandle`. No existing
+    //     construction site changes; a nil plan admits, reserves and ends exactly as in 1.46.0.
+    public static let current = SemanticVersion(major: 1, minor: 47, patch: 0)
 }

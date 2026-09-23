@@ -82,7 +82,8 @@ reclaim, not stack — the engine, not the caller, owns this.
   workload:)` evaluates the model at a specific job (beyond the ceiling: `fits == false`,
   extrapolation shown; a scalar-only package throws `activationScalingUndeclared` rather than
   answering with a number nobody measured against a workload). A `nil` workload is never refused;
-  for an open-ended live session the ceiling is advisory (the engine does not cut a session).
+  for an open-ended live session the ceiling is advisory (the engine does not cut an open-ended
+  session). A *planned* session is held to it (1.47.0, below).
 - **Size the reserve per run (contract 1.42.0, AB-A-0075).** Admission reserves
   `max(scalar, projectedBytes(at: workload))` when the package declares scaling and its
   configuration maps the request — the scalar is the author's REPRESENTATIVE case (what
@@ -92,6 +93,19 @@ reclaim, not stack — the engine, not the caller, owns this.
   ladder). A run whose reserve cannot fit even alone is refused before anything is evicted or
   loaded (`workloadExceedsMemoryBudget`). This is why VibeVoice no longer needs a session-envelope
   lane enum to serve 16 GB and 128 GB machines from one declaration.
+- **Plan a live session (contract 1.47.0, AB-A-0100).** A session's audio does not exist when it
+  opens, so until 1.47.0 its workload was unknowable: no ceiling, no per-run reserve (it rode the
+  idle scalar, which VibeVoice's line passes at ~11 min), and no end but the caller's.
+  `STTSessionRequest.plannedDuration` (seconds of audio) gives the plane something to act on. A
+  package whose configuration maps the plan (`WorkloadDeclaring`) has a plan past its ceiling
+  refused before admission, and the session is admitted against the per-run reserve at the plan
+  and HOLDS it for its lifetime: the session record rides the serialized reserve the way an
+  in-flight run does, so every admission during the session accounts for it. Every planned
+  session, mapped or not, is `finish()`ed by the engine when its *accepted* audio reaches the plan.
+  That is enforced at `push`, not by watching chunks, so the model never receives a sample past the
+  plan: the push that crosses it is accepted up to it, later pushes answer `.ended`, and the final
+  chunk is a normal one. `STTLiveHandle.endReason` names the clean end (`.finishedByCaller` /
+  `.reachedPlannedDuration`). An open-ended session (nil) is unchanged.
 - **Account for GPU memory the engine did not allocate (contract 1.43.0, AB-R-0289 / AB-R-0292).**
   A Metal compositor in the same process (Forge Canvas: ~850 MB persistent layer cache + ~300–500 MB
   per-render staging at 24 MP) was invisible to admission — only R-MEM-1 saw it, as unexplained
