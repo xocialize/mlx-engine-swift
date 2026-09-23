@@ -901,7 +901,8 @@ public enum ContractVersion {
     //     `exceedsMemoryBudget`: the fix is releasing the tenant's memory, not a smaller model.
     //   Not covered, deliberately: tenant bytes are not wired (HV1 tickets carry MLX allocations
     //     only), and the R-MEM-1 real-pressure pass does not ask tenants — their memory is now
-    //     explained, and that pass reclaims the engine's own idle residents. Growth is never
+    //     explained, and that pass reclaims the engine's own idle residents (SUPERSEDED in 1.44.0:
+    //     R-MEM-1 asks tenants first too, AB-A-0093). Growth is never
     //     refused (the engine cannot refuse an allocation it does not make); it is accounted
     //     from the next admission on.
     //   Additive: one new public type family (`ExternalTenant`, `ExternalFootprint`,
@@ -909,5 +910,31 @@ public enum ContractVersion {
     //     two defaulted `MemorySnapshot` members + init arguments, one `EngineError` case (error
     //     enum — consumers `catch`, the 1.39.0 precedent). With no tenant registered every
     //     admission, snapshot and advisory is byte-identical to 1.42.0.
-    public static let current = SemanticVersion(major: 1, minor: 43, patch: 0)
+    // 1.44.0 (2026-09-22, additive): R-MEM-1 ASKS EXTERNAL TENANTS FIRST (AB-A-0093; measured on a
+    //   24 GB M5 Pro in AB-R-0299). Mage-Flow-Edit-Turbo int8 (13.5 GB resident) + a 24 MP Forge
+    //   Canvas tenant (852 MB persistent + 481 MB transient) read phys_footprint 15.2 GB against
+    //   the 14.6 GB R-MEM-1 ceiling for the whole session. The canvas's handler sheds 852 MB in
+    //   0.04 ms, but the real-pressure pass never asked it: with one package the pressure was
+    //   never relieved; with two it would have evicted the idle model instead.
+    //   • The R-MEM-1 pass (`makeHeadroom` step 2) now asks tenants BEFORE evicting any idle
+    //     resident — the same policy as the declared-byte pass: the real overage
+    //     (`phys_footprint − budget × highWatermark`), largest declaration first, bounded by
+    //     `ExternalTenantPolicy.shrinkTimeout`, each tenant at most ONCE per admission ACROSS both
+    //     passes (a tenant the declared-byte pass already asked is not asked again).
+    //   • DECLARED-DROP CREDIT. `phys_footprint` does not drop the moment a Metal tenant frees
+    //     textures: a release landing right after a frame reads 0 MB immediately and the full
+    //     852 MB by 250 ms, while that frame's command buffer retires (AB-A-0093 reply). An
+    //     immediate re-read would evict the model for memory that is already gone — the bug being
+    //     fixed. So the declared bytes tenants dropped during THIS admission (either pass) are
+    //     credited against the real reading, and eviction runs only while
+    //     `real − credited > ceiling`. The credit lasts one admission; the next reads fresh. The
+    //     trade: once the drop is visible, the credit double-counts it for the rest of that
+    //     admission — at worst one admission under-evicts by the credited bytes, then R-MEM-1
+    //     sees the true reading again.
+    //   • Unchanged: no tenant → no request, no credit, no extra phys_footprint read (the pass is
+    //     identical to 1.43.0); a handler that releases nothing → the idle-LRU eviction as
+    //     before, asked once, bounded; `physFootprint()` nil → the declared-byte pass only.
+    //   Additive: no API change — behaviour of an existing pass, observable only with a tenant
+    //     registered AND real pressure over the watermark.
+    public static let current = SemanticVersion(major: 1, minor: 44, patch: 0)
 }

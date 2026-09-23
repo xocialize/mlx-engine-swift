@@ -103,8 +103,14 @@ reclaim, not stack — the engine, not the caller, owns this.
   largest first, bounded by `ExternalTenantPolicy.shrinkTimeout`, then re-reads their declarations;
   if the working set still cannot fit beside them with every package evicted it is refused
   (`externalTenantsHoldMemory`) before anything is evicted, else the usual ladder runs.
-  `MemorySnapshot.externalBytes` / `.externalTenants` surface it. Tenant bytes are not wired, and
-  the R-MEM-1 pass does not ask tenants.
+  `MemorySnapshot.externalBytes` / `.externalTenants` surface it. Tenant bytes are not wired.
+- **R-MEM-1 asks tenants first too (contract 1.44.0, AB-A-0093 / AB-R-0299).** Over the
+  high-watermark on the real `phys_footprint`, tenants not yet asked in this admission are asked
+  for the overage before any idle resident is evicted, and the declared bytes tenants dropped
+  during the admission are **credited** against the real reading — Metal returns a freed texture
+  to `phys_footprint` only once the command buffer holding it retires (≤ 250 ms), so an immediate
+  re-read would evict a model for memory already gone. Eviction runs while
+  `real − credited > ceiling`; the credit lasts one admission. No tenant → the pass is unchanged.
 - **Wire the accounted working set during runs — and only during runs (HV1, v0.42.0).** The
   engine maps its accounting onto mlx-swift's process-global `WiredMemoryManager`: each resident's
   persistent weights hold a **`.reservation`** ticket (participates in limit computation, never

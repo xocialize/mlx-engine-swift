@@ -907,9 +907,15 @@ public actor MLXServeEngine {
     /// is evicted; otherwise the usual eviction ladder closes what remains. A handler that
     /// releases nothing costs one call, never a loop.
     ///
-    /// **Not covered.** Tenant bytes are not wired (the HV1 tickets carry MLX allocations only),
-    /// and the R-MEM-1 real-pressure pass does not ask tenants — their memory is now explained,
-    /// and that pass reclaims the engine's own idle residents.
+    /// **Real pressure (1.44.0, AB-A-0093).** The R-MEM-1 pass asks tenants first too: when the
+    /// process's `phys_footprint` is over the high-watermark, tenants not yet asked in this
+    /// admission are asked for the real overage before any idle resident is evicted. Their
+    /// DECLARED drop during the admission is credited against the real reading — Metal returns a
+    /// freed texture to `phys_footprint` only once the last command buffer holding it retires
+    /// (≤ 250 ms, AB-A-0093), so an immediate re-read would see nothing and evict a model for
+    /// memory that is already gone. The credit lasts one admission; the next re-reads fresh.
+    ///
+    /// **Not covered.** Tenant bytes are not wired (the HV1 tickets carry MLX allocations only).
     ///
     /// Registering an `id` that is already live withdraws the earlier tenant (the `register`
     /// replacement rule). Keep the returned handle: dropping it withdraws the tenant.
@@ -955,16 +961,31 @@ public actor MLXServeEngine {
         }
     }
 
+    /// What one admission has asked of its external tenants (1.44.0): who was asked — each at most
+    /// once per admission, across the declared-byte pass and the R-MEM-1 pass — and the
+    /// declared bytes they dropped, which R-MEM-1 credits against a `phys_footprint` reading that
+    /// has not caught up yet.
+    struct ExternalShrinkLedger {
+        var asked: Set<ObjectIdentifier> = []
+        var releasedBytes: UInt64 = 0
+        /// Whether the R-MEM-1 pass has made its one round of requests.
+        var askedUnderRealPressure = false
+    }
+
     /// Ask tenants for `deficit` bytes, largest declaration first, until the declared drop covers
-    /// it or every tenant with a handler has been asked once. Bounded per call by the policy's
-    /// timeout; never loops on a tenant that releases nothing.
-    private func requestExternalShrink(_ deficit: UInt64) async {
+    /// it or every tenant with a handler has been asked once. Tenants the `ledger` shows as asked
+    /// in this admission are skipped; the declared drop is added to it. Bounded per call by the
+    /// policy's timeout; never loops on a tenant that releases nothing.
+    private func requestExternalShrink(_ deficit: UInt64,
+                                       ledger: inout ExternalShrinkLedger) async {
         pruneWithdrawnExternalTenants()
         var remaining = deficit
         let tenants = liveExternalTenants()
+            .filter { !ledger.asked.contains(ObjectIdentifier($0)) }
             .sorted { $0.footprint.totalBytes > $1.footprint.totalBytes }
         for tenant in tenants where remaining > 0 {
             guard let handler = tenant.handler else { continue }
+            ledger.asked.insert(ObjectIdentifier(tenant))
             let before = tenant.footprint.totalBytes
             let reported = await ExternalShrinkRequest.run(
                 handler, requested: remaining, timeout: externalTenantPolicy.shrinkTimeout)
@@ -979,6 +1000,7 @@ public actor MLXServeEngine {
                     + "\(externalTenantPolicy.shrinkTimeout); counting its declaration as-is.")
             }
             remaining = remaining > released ? remaining - released : 0
+            ledger.releasedBytes &+= released
         }
     }
 
@@ -986,19 +1008,23 @@ public actor MLXServeEngine {
     /// ask tenants for the deficit, then refuse when the working set cannot fit beside what they
     /// still declare even with every package gone — evicting residents only to refuse would
     /// throw away weights for nothing. When no tenant is registered this is free and never
-    /// throws.
+    /// throws. Returns the admission's ledger, which `makeHeadroom`'s R-MEM-1 pass continues.
     private func claimFromExternalTenants(persistent p: UInt64, transient t: UInt64,
-                                          keeping id: PackageID) async throws {
-        guard !externalTenantStates.isEmpty else { return }
+                                          keeping id: PackageID) async throws
+        -> ExternalShrinkLedger
+    {
+        var ledger = ExternalShrinkLedger()
+        guard !externalTenantStates.isEmpty else { return ledger }
         let required = accountedRequired(persistent: p, transient: t, excluding: id)
         if required > governor.budgetBytes {
-            await requestExternalShrink(required - governor.budgetBytes)
+            await requestExternalShrink(required - governor.budgetBytes, ledger: &ledger)
         }
         let external = externalDeclared().totalBytes
         if p &+ t &+ external > governor.budgetBytes {
             throw EngineError.externalTenantsHoldMemory(required: p &+ t, external: external,
                                                         budget: governor.budgetBytes)
         }
+        return ledger
     }
 
     /// Resident packages and the bytes charged for each (the package-keyed memory view).
@@ -1889,10 +1915,10 @@ public actor MLXServeEngine {
             }
             // External tenants first (1.43.0): cheapest memory to rebuild, and the refusal when
             // they still hold too much comes before any package is evicted.
-            try await claimFromExternalTenants(persistent: persistent, transient: runTransient,
-                                               keeping: id)
+            var shrunk = try await claimFromExternalTenants(persistent: persistent,
+                                                            transient: runTransient, keeping: id)
             await makeHeadroom(persistent: persistent, transient: runTransient, keeping: id,
-                               conduct: conduct)
+                               conduct: conduct, shrunk: &shrunk)
 
             // Stamp the headroom this model is loading into onto a BudgetAware config (for memory-adaptive
             // dtype), computed AFTER eviction so it reflects the real available room. Mirrors how
@@ -2192,7 +2218,12 @@ public actor MLXServeEngine {
     /// idle LRU residents until real pressure clears or none remain. Conservative and bounded:
     /// it only reclaims our own idle residents (never the incoming `id`), and stops when
     /// nothing's left to evict, so external (non-engine) memory pressure can't loop. Degrades to
-    /// the declared-byte pass when no host reading is available.
+    /// the declared-byte pass when no host reading is available. External tenants are asked
+    /// FIRST here too (1.44.0, AB-A-0093): before the first eviction, tenants not yet asked in
+    /// this admission are asked for the overage, and the declared bytes tenants dropped during
+    /// the admission (`shrunk`, either pass) are credited against the real reading —
+    /// `phys_footprint` lags a Metal tenant's release — so eviction runs only while
+    /// `real − credited > ceiling`. No tenants: no request, no credit, no extra reading.
     /// The per-run headroom for a package that is ALREADY resident (1.42.0): its own persistent
     /// weights are charged already, so the accounting question is whether Σ residency + one
     /// transient reserve at THIS run's size fits — evicting idle LRU (and, under a preempting
@@ -2204,10 +2235,10 @@ public actor MLXServeEngine {
         guard governor.fitsBudget(persistent &+ reserve.transient) else {
             throw runBudgetRefusal(id, persistent: persistent, reserve: reserve)
         }
-        try await claimFromExternalTenants(persistent: persistent, transient: reserve.transient,
-                                           keeping: id)
+        var shrunk = try await claimFromExternalTenants(persistent: persistent,
+                                                        transient: reserve.transient, keeping: id)
         await makeHeadroom(persistent: persistent, transient: reserve.transient, keeping: id,
-                           conduct: conduct)
+                           conduct: conduct, shrunk: &shrunk)
     }
 
     /// The refusal for a per-run reserve that cannot fit even alone: names the WORKLOAD when the
@@ -2225,7 +2256,8 @@ public actor MLXServeEngine {
     }
 
     private func makeHeadroom(persistent p: UInt64, transient t: UInt64, keeping id: PackageID,
-                              conduct: AdmissionConduct = .idleOnly) async {
+                              conduct: AdmissionConduct = .idleOnly,
+                              shrunk: inout ExternalShrinkLedger) async {
         // (1) Declared-byte headroom under the serialized-inference accounting (Σ persistent + one
         // max transient). Idle LRU first; a running victim only as a last resort.
         while accountedRequired(persistent: p, transient: t, excluding: id) > governor.budgetBytes {
@@ -2249,9 +2281,18 @@ public actor MLXServeEngine {
             break // nothing left to evict (or reclaim)
         }
 
-        // (2) R-MEM-1: real-memory pressure trigger.
+        // (2) R-MEM-1: real-memory pressure trigger. Tenants first, credited by their declared
+        // drop (the real reading lags a Metal release); then idle LRU residents.
         let ceiling = UInt64(Double(governor.budgetBytes) * governor.highWatermark)
-        while let real = physFootprint(), real > ceiling {
+        while let real = physFootprint() {
+            var effective = real > shrunk.releasedBytes ? real - shrunk.releasedBytes : 0
+            if effective > ceiling, !shrunk.askedUnderRealPressure,
+               !externalTenantStates.isEmpty {
+                shrunk.askedUnderRealPressure = true
+                await requestExternalShrink(effective - ceiling, ledger: &shrunk)
+                effective = real > shrunk.releasedBytes ? real - shrunk.releasedBytes : 0
+            }
+            guard effective > ceiling else { break }
             guard let victim = lruIdleVictim(excluding: id) else {
                 break // reclaimed everything we can; remaining pressure is external
             }
