@@ -1028,5 +1028,44 @@ public enum ContractVersion {
     //   Additive: one defaulted member + init argument on `STTSessionRequest`, one new enum, one
     //     computed member + one defaulted init argument on `STTLiveHandle`. No existing
     //     construction site changes; a nil plan admits, reserves and ends exactly as in 1.46.0.
-    public static let current = SemanticVersion(major: 1, minor: 47, patch: 0)
+    // 1.48.0 (2026-09-26, additive): LAYERED DESIGN — a new `Capability.layerDecompose`, and native
+    //   alpha on text-to-image. Both are introduced by Ming-Image-0.1-Design / -Design-Layer
+    //   (ming-image-swift, AB-T-0181; parity-gated end to end, AB-R-0338 / AB-R-0341). The consumer is
+    //   a signage editor, which needs two things the contract could not express: importing a flat
+    //   design as editable layers, and generating an asset that drops onto a layout with its own alpha.
+    //   • `Capability.layerDecompose` (`CanonicalOutput.image`) with `LayerDecomposeRequest` /
+    //     `LayerDecomposeResponse` / `LayerDecomposeContract`. It takes one image, an optional
+    //     per-layer `spec`, a `layerCount` and a `resolution` hint. It returns `layers: [Image]`,
+    //     FRONT-MOST FIRST, as straight-alpha RGBA PNGs at one size, plus the model's own
+    //     `composite` frame when it produces one. It is not `matting` (one foreground alpha), not
+    //     `promptSegment` (one indicated object), and not `imageEdit` (one image back): the output is
+    //     a stack whose ORDER is the semantics, driven by a count and spec none of those take.
+    //     `spec` and `layerCount` are typed rather than `metaData` because they are what a planner
+    //     varies. The model's prompt grammar ("Decompose this image into N layers.") stays inside
+    //     the package.
+    //   • `T2IRequest.background: T2IBackground?` (`.opaque` | `.transparent`), defaulted nil. With
+    //     `.transparent`, the model generates on a transparent canvas and returns straight-alpha
+    //     RGBA whose alpha is its OWN output, not a post-hoc matte. It is DECLARATION-GATED by the
+    //     1.40.0 `initAudio` rule. An ignored `.transparent` returns an OPAQUE image, which a caller
+    //     composites as a full-canvas rectangle over its layout, and nothing in the response flags
+    //     it short of reading the alpha. The gate has three parts:
+    //       – `T2IControls(supportsTransparentBackground:)` on `ToolDescriptor.controls`, as
+    //         `SurfaceControls.textToImage`, read via `t2iControls`;
+    //       – `T2IContract.descriptor(controls:)` derives the `background` ParameterSchema from the
+    //         declaration;
+    //       – `MLXServeEngine.run` refuses an undeclared `.transparent` before admission, with
+    //         `PackageError.unsupportedRequestFeature` (`checkDeclaredControls`).
+    //     `.opaque` and nil are every model's behaviour and are never gated.
+    //   • How a package produces alpha is its own business, and not a prompt suffix a caller should
+    //     carry. Ming's measured recipe (AB-R-0341) is a trigger phrase, a retry with a second phrase
+    //     when the alpha comes back opaque, and an alpha floor: 5/6 usable on the gate set, where the
+    //     phrase first chosen from drifted reference renders scores 3/6. So the field is canonical
+    //     rather than `metaData["transparent"]`, the key MLXMingImage carried before 1.48.0, which
+    //     only its own callers could find.
+    //   Additive: one enum case and one contract file; one defaulted member and init argument on
+    //     `T2IRequest`; one defaulted argument on `T2IContract.descriptor`; one new enum, one new
+    //     struct, and one new `SurfaceControls` case (consumers switch it with `@unknown default`,
+    //     the 1.38.0 note). Pre-1.48 descriptor JSON decodes unchanged, and no existing
+    //     construction site changes.
+    public static let current = SemanticVersion(major: 1, minor: 48, patch: 0)
 }

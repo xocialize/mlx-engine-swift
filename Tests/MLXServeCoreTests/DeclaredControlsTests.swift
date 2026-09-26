@@ -133,6 +133,58 @@ private final class A2VCapableT2VPackage: ModelPackage {
     }
 }
 
+/// A t2i package that declares nothing (every t2i package shipping before contract 1.48.0).
+@InferenceActor
+private final class PlainT2IPackage: ModelPackage {
+    typealias Configuration = StandardConfiguration
+    nonisolated static var manifest: PackageManifest {
+        controlsManifest(surfaces: [T2IContract.descriptor(name: "plain-t2i", summary: "m")])
+    }
+    nonisolated init(configuration: StandardConfiguration) {}
+    func load() async throws {}
+    func unload() async {}
+    func run(_ request: any CapabilityRequest) async throws -> any CapabilityResponse {
+        T2IResponse(image: Image(format: .png, data: Data(count: 8)))
+    }
+}
+
+/// The Ming-Image-0.1-Design shape: generates native alpha on request (contract 1.48.0).
+@InferenceActor
+private final class AlphaCapableT2IPackage: ModelPackage {
+    typealias Configuration = StandardConfiguration
+    nonisolated static var manifest: PackageManifest {
+        controlsManifest(surfaces: [T2IContract.descriptor(
+            name: "alpha-t2i", summary: "m", controls: T2IControls(supportsTransparentBackground: true))])
+    }
+    nonisolated init(configuration: StandardConfiguration) {}
+    func load() async throws {}
+    func unload() async {}
+    func run(_ request: any CapabilityRequest) async throws -> any CapabilityResponse {
+        T2IResponse(image: Image(format: .png, data: Data(count: 8)))
+    }
+}
+
+/// A layerDecompose package (contract 1.48.0): returns one layer per requested count, front-most
+/// first, tagged by index so the order can be checked end to end.
+@InferenceActor
+private final class MockLayerPackage: ModelPackage {
+    typealias Configuration = StandardConfiguration
+    nonisolated static var manifest: PackageManifest {
+        controlsManifest(surfaces: [LayerDecomposeContract.descriptor(name: "layers", summary: "m")])
+    }
+    nonisolated init(configuration: StandardConfiguration) {}
+    func load() async throws {}
+    func unload() async {}
+    func run(_ request: any CapabilityRequest) async throws -> any CapabilityResponse {
+        guard let r = request as? LayerDecomposeRequest else {
+            throw PackageError.unsupportedCapability(request.capability)
+        }
+        return LayerDecomposeResponse(
+            layers: (0..<(r.layerCount ?? 5)).map { Image(format: .png, data: Data([UInt8($0)])) },
+            composite: r.image)
+    }
+}
+
 private func controlsManifest(surfaces: [ToolDescriptor]) -> PackageManifest {
     PackageManifest(
         license: LicenseDeclaration(weightLicense: .apache2, portCodeLicense: .apache2),
@@ -290,4 +342,52 @@ private func unsupportedFeature(_ error: any Error) -> String? {
     try await engine.register(PackageRegistration.of(A2VCapableT2VPackage.self),
                               configuration: mockConfig())
     _ = try await engine.run(T2VRequest(prompt: "p", initAudio: Audio(data: Data(count: 44))))
+}
+
+// MARK: - textToImage background (contract 1.48.0)
+
+// The failure this exists to prevent: an asset asked for with a transparent background, sent to a
+// package that cannot make alpha, comes back OPAQUE and is composited as a full-canvas rectangle,
+// with nothing in the response saying so.
+@Test func transparentBackgroundAgainstAPackageWithoutAlphaIsRefusedBeforeTheRun() async throws {
+    let engine = MLXServeEngine()
+    try await engine.register(PackageRegistration.of(PlainT2IPackage.self),
+                              configuration: mockConfig())
+    do {
+        _ = try await engine.run(T2IRequest(prompt: "a red enamel badge", background: .transparent))
+        Issue.record("expected unsupportedRequestFeature")
+    } catch {
+        #expect(unsupportedFeature(error)?.contains("background") == true)
+    }
+}
+
+// Opaque is every model's behaviour: asking for it explicitly, or not at all, is never gated.
+@Test func opaqueOrUnsetBackgroundIsNeverGated() async throws {
+    let engine = MLXServeEngine()
+    try await engine.register(PackageRegistration.of(PlainT2IPackage.self),
+                              configuration: mockConfig())
+    _ = try await engine.run(T2IRequest(prompt: "p", background: .opaque))
+    _ = try await engine.run(T2IRequest(prompt: "p"))
+}
+
+@Test func transparentBackgroundPassesAgainstADeclaringPackage() async throws {
+    let engine = MLXServeEngine()
+    try await engine.register(PackageRegistration.of(AlphaCapableT2IPackage.self),
+                              configuration: mockConfig())
+    _ = try await engine.run(T2IRequest(prompt: "p", background: .transparent))
+}
+
+// MARK: - layerDecompose (contract 1.48.0)
+
+// The new capability routes like any other, and the engine carries the package's layer order
+// (front-most first) through untouched.
+@Test func layerDecomposeRoutesAndKeepsLayerOrder() async throws {
+    let engine = MLXServeEngine()
+    try await engine.register(PackageRegistration.of(MockLayerPackage.self),
+                              configuration: mockConfig())
+    let flat = Image(format: .png, data: Data(count: 8), width: 1920, height: 1080)
+    let response = try await engine.run(LayerDecomposeRequest(image: flat, layerCount: 3))
+    let layers = try #require(response as? LayerDecomposeResponse)
+    #expect(layers.layers.map(\.data) == [Data([0]), Data([1]), Data([2])])
+    #expect(layers.composite == flat)
 }

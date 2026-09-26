@@ -145,6 +145,8 @@ public enum SurfaceControls: Sendable, Codable, Equatable {
     case stt(STTControls)
     /// The a2v declaration for `T2VRequest.initAudio` (contract 1.40.0, AB-A-0023).
     case textToVideo(T2VControls)
+    /// The native-alpha declaration for `T2IRequest.background` (contract 1.48.0).
+    case textToImage(T2IControls)
 }
 
 /// Self-description a package publishes so the registry — and any out-of-process tool client, such
@@ -221,6 +223,14 @@ extension ToolDescriptor {
         return nil
     }
 
+    /// The `textToImage` control declaration, or nil when this surface declares none
+    /// (contract 1.48.0). `t2iControls?.supportsTransparentBackground == true` is what admits
+    /// `T2IRequest.background == .transparent`.
+    public var t2iControls: T2IControls? {
+        if case .textToImage(let declared) = controls { return declared }
+        return nil
+    }
+
     /// Whether a declared controls block matches this surface's capability. `false` is a package
     /// bug: the block would describe a surface the descriptor does not name.
     public var controlsMatchCapability: Bool {
@@ -229,6 +239,7 @@ extension ToolDescriptor {
         case .tts: return capability == .tts
         case .stt: return capability == .stt
         case .textToVideo: return capability == .textToVideo
+        case .textToImage: return capability == .textToImage
         }
     }
 }

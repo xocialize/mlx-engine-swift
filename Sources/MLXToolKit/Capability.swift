@@ -158,6 +158,15 @@ public enum Capability: String, Codable, Sendable, CaseIterable, Hashable {
     /// instruction-driven and free to invent content; from `imageColorize` — adds chroma to
     /// greyscale rather than redistributing luminance.)
     case imageRelight
+    /// **Layer decomposition** — one flattened design `Image` → an ordered stack of RGBA layers
+    /// (front-most first, straight alpha, all at one size) that composites back to it, plus the
+    /// model's full-canvas composite when it produces one. Driven by an optional per-layer `spec` and
+    /// a `layerCount`. The canonical consumer is an editor's "import a flat design as editable layers".
+    /// Contract 1.48.0; introduced by Ming-Image-0.1-Design-Layer.
+    ///
+    /// (Distinct from `matting` — one foreground alpha; from `promptSegment` — one indicated object;
+    /// from `imageEdit` — one edited image: this returns the whole design as layers.)
+    case layerDecompose
 }
 
 /// The fixed output artifact kind for a capability. Not negotiable per package (C2).
@@ -218,6 +227,7 @@ extension Capability {
         case .stt: return .text
         case .meshRig: return .mesh
         case .imageRelight: return .image
+        case .layerDecompose: return .image
         }
     }
 }

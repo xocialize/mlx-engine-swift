@@ -1931,6 +1931,17 @@ public actor MLXServeEngine {
                     + "supportsInitAudio, or drop the track")
         }
 
+        // Native alpha (contract 1.48.0): declaration-gated like a2v. An ignored `.transparent` comes
+        // back OPAQUE — a caller compositing it gets a full-canvas rectangle over its layout, and
+        // nothing in the response says so short of inspecting alpha.
+        if let t2i = request as? T2IRequest, t2i.background == .transparent,
+           surface.t2iControls?.supportsTransparentBackground != true {
+            throw PackageError.unsupportedRequestFeature(
+                "background(.transparent) — \(id) declares no native-alpha generation "
+                    + "(ToolDescriptor.t2iControls); choose a package that declares "
+                    + "supportsTransparentBackground, or generate opaque and matte the result")
+        }
+
         // BOTH stt entry points, one site (contract 1.39.0). `STTSessionRequest` is a
         // `CapabilityRequest` precisely so this refusal cannot drift between `run()` and
         // `transcribeLive()`: a caller must not get biasing on one door and silence on the other.
