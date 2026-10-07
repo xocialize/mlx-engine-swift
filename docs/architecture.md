@@ -281,10 +281,16 @@ offline contract builds are unaffected.
 
 - **Decision: the engine does not override it.** Production keeps MLX's default; bf16 / fp16 lanes are
   unaffected. The fp32 loss that shows up in production output is the Winograd window, and packages
-  fix it locally with their own exact conv route (`WinogradFreeConv2d` / a per-model `convRoute`,
-  shipped in the 14 image packages of AB-A-0119) at a cost they measure. A process-wide switch would
-  slow every package's fp32 GEMMs about 2.8× to fix what those routes already fix. The engine does no
-  inference math, and process-global numerics are not its call.
+  fix it locally at a cost they measure, with `MLXExactConv` (`mlx-exact-conv-swift` ≥ 0.1.0): its
+  `ExactConv.conv2d` sends a 3×3 conv in the window down mlx's implicit-GEMM path, exact on mlx-swift
+  0.31.x and 0.32.x for about +10 %. A process-wide switch would slow every package's fp32 GEMMs
+  about 2.8× to fix what that route already fixes. The engine does no inference math, and
+  process-global numerics are not its call.
+  - *Corrected 2026-10-07.* This first pointed at the 14 image releases of AB-A-0119 (2026-09-25).
+    Thirteen of them route through conv3d with kT = 1, which mlx-swift 0.32 splits back into the
+    Winograd conv2d (ml-explore/mlx#3785), so on 0.32 they are lossy again (gfpgan's route measured
+    1.01e-3 on 0.32.3). A package on mlx-swift 0.32 needs its MLXExactConv release, from the
+    2026-10-01 migration (`mlxengine-todo/wave-0.32-approval-batch.md` §B).
 - **Opting in is the host's.** Set `MLX_ENABLE_TF32=0` in the launch environment (the scheme, or the
   process's env), never with `setenv` at runtime: MLX reads it once, and the engine's init already
   touches MLX (R-MEM-2), so a later change is ignored silently.
