@@ -16,6 +16,28 @@ public struct VoiceSelector: Sendable, Codable, Equatable {
     public init(_ selection: Selection = .auto) { self.selection = selection }
 }
 
+/// One speaker's voice in a multi-speaker script (contract 1.49.0, AB-A-0136).
+///
+/// The pair a one-voice request carries as `TTSRequest.voice` + `referenceTranscript`, made
+/// repeatable. A scene renderer (Dia2-2B) conditions EACH speaker on its own voice prefix, and a
+/// scene only holds its voices when every speaker is prefixed: E23 measured 0.80 cosine to the
+/// references with both speakers prefixed, 0.44 with speaker 1 alone.
+///
+/// Reference word timings are deliberately NOT a member. Dia2 is their only consumer, so they ride
+/// its `metaData` (`referenceWords` / `speaker2Words`) until a second adopter needs them — the
+/// promotion rule `TTSRequest.referenceTranscript` records.
+public struct TTSSpeakerVoice: Sendable, Codable, Equatable {
+    public let voice: VoiceSelector
+    /// Transcript of this speaker's `.referenceAudio` clip. Ignored unless `voice` is
+    /// `.referenceAudio` — the `TTSRequest.referenceTranscript` rule, per speaker.
+    public let referenceTranscript: String?
+
+    public init(voice: VoiceSelector = VoiceSelector(), referenceTranscript: String? = nil) {
+        self.voice = voice
+        self.referenceTranscript = referenceTranscript
+    }
+}
+
 /// How an emotion is handed to a TTS surface (contract 1.38.0, E12).
 ///
 /// Deliberately shaped like `VoiceSelector.Selection`, its sibling in this file, because the
@@ -70,6 +92,23 @@ public struct TTSRequest: CapabilityRequest {
     /// package needed it (contract 1.1.0). Ignored unless `voice` is `.referenceAudio`;
     /// packages without an ICL path may ignore it (their cloning quality tier is theirs).
     public let referenceTranscript: String?
+    /// Voices for speakers 2…N of a multi-speaker script (contract 1.49.0, AB-A-0136). Speaker 1
+    /// stays `voice` + `referenceTranscript`, so every pre-1.49 request is a one-speaker request,
+    /// unchanged. Element k is the speaker whose turns carry the surface's
+    /// `ttsControls?.speakerTags[k + 1]`; read the whole cast, in order, as `speakers`.
+    ///
+    /// Promoted from `metaData` on the rule `referenceTranscript` records. Dia2-2B
+    /// (`mlx-dia2-tts-swift`) carried speaker 2 there first (`speaker2Audio` /
+    /// `speaker2Transcript`); ML[X] Audio Studio's Dub scene path is the second adopter, and would
+    /// otherwise have to hardcode which engine reads which key — the table 1.38.0 retired.
+    ///
+    /// DECLARATION-GATED, unlike `ImageTo3DRequest.additionalViews`, because an ignored voice is
+    /// wrong output rather than degraded output: the scene comes back in one voice, or with speaker
+    /// 2 in a voice nobody asked for, and nothing in the `.wav` says so. `MLXServeEngine.run`
+    /// refuses more voices than the surface declares (`TTSControls.maxSpeakers`) with
+    /// `PackageError.unsupportedRequestFeature`, before admission. Nil or empty asks for nothing
+    /// and is never refused.
+    public let additionalSpeakers: [TTSSpeakerVoice]?
     /// Optional emotion steering (contract 1.38.0, E12). Promoted from `metaData` on exactly the
     /// rule `referenceTranscript` records above — a second adopter arrived. IndexTTS2 shipped the
     /// first realization via `metaData` 2026-07-09; ML[X] Audio Studio's Dub section became the
@@ -92,6 +131,7 @@ public struct TTSRequest: CapabilityRequest {
     public init(text: String,
                 voice: VoiceSelector = VoiceSelector(),
                 referenceTranscript: String? = nil,
+                additionalSpeakers: [TTSSpeakerVoice]? = nil,
                 emotion: TTSEmotion? = nil,
                 targetDuration: TimeInterval? = nil,
                 mode: Mode? = nil,
@@ -99,10 +139,38 @@ public struct TTSRequest: CapabilityRequest {
         self.text = text
         self.voice = voice
         self.referenceTranscript = referenceTranscript
+        self.additionalSpeakers = additionalSpeakers
         self.emotion = emotion
         self.targetDuration = targetDuration
         self.mode = mode
         self.metaData = metaData
+    }
+
+    /// A multi-speaker request with the cast in script order (contract 1.49.0): `speakers[0]`
+    /// becomes `voice` + `referenceTranscript` and the rest `additionalSpeakers`, so the two
+    /// spellings build the same value. An empty cast is a default-voice request.
+    public init(text: String,
+                speakers: [TTSSpeakerVoice],
+                emotion: TTSEmotion? = nil,
+                targetDuration: TimeInterval? = nil,
+                mode: Mode? = nil,
+                metaData: MetaData = [:]) {
+        let first = speakers.first ?? TTSSpeakerVoice()
+        self.init(text: text,
+                  voice: first.voice,
+                  referenceTranscript: first.referenceTranscript,
+                  additionalSpeakers: speakers.count > 1 ? Array(speakers.dropFirst()) : nil,
+                  emotion: emotion,
+                  targetDuration: targetDuration,
+                  mode: mode,
+                  metaData: metaData)
+    }
+
+    /// The whole cast in script order: `voice` + `referenceTranscript` first — derived, so the two
+    /// can never disagree — then `additionalSpeakers`. Never empty; a one-voice request has one.
+    public var speakers: [TTSSpeakerVoice] {
+        [TTSSpeakerVoice(voice: voice, referenceTranscript: referenceTranscript)]
+            + (additionalSpeakers ?? [])
     }
 }
 
@@ -163,6 +231,16 @@ public enum TTSContract {
             parameters.append(ParameterSchema(
                 name: "targetDuration", kind: .number, required: false,
                 summary: "Target output length in seconds (native duration control)."))
+        }
+        // Contract 1.49.0: only a multi-speaker surface is offered the extra voices, and the
+        // planner is told the exact turn tags to write.
+        if let controls, controls.maxSpeakers > 1 {
+            parameters.append(ParameterSchema(
+                name: "additionalSpeakers", kind: .array, required: false,
+                summary: "Voices for the speakers after the first, in script order, each "
+                    + "{voice, referenceTranscript}; speaker 1 is voice + referenceTranscript. "
+                    + "Up to \(controls.maxSpeakers) speakers, tagged "
+                    + (controls.speakerTags ?? []).joined(separator: " / ") + "."))
         }
         return ToolDescriptor(
             name: name,

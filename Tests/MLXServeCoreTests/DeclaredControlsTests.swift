@@ -68,6 +68,25 @@ private final class FullControlTTSPackage: ModelPackage {
     }
 }
 
+/// The Dia2-2B shape (contract 1.49.0): a two-speaker scene renderer. It answers with the size of
+/// the cast it was handed, so a test sees what crossed the engine.
+@InferenceActor
+private final class SceneTTSPackage: ModelPackage {
+    typealias Configuration = StandardConfiguration
+    nonisolated static var manifest: PackageManifest {
+        controlsManifest(surfaces: [TTSContract.descriptor(
+            name: "scene-tts", summary: "m",
+            controls: TTSControls(speakerTags: ["[S1]", "[S2]"]))])
+    }
+    nonisolated init(configuration: StandardConfiguration) {}
+    func load() async throws {}
+    func unload() async {}
+    func run(_ request: any CapabilityRequest) async throws -> any CapabilityResponse {
+        let cast = (request as? TTSRequest)?.speakers.count ?? 0
+        return TTSResponse(audio: Audio(format: .wav, data: Data(repeating: UInt8(cast), count: 44)))
+    }
+}
+
 /// An STT package with no biasing surface (Nemotron's shape today).
 @InferenceActor
 private final class PlainSTTPackage: ModelPackage {
@@ -268,6 +287,71 @@ private func unsupportedFeature(_ error: any Error) -> String? {
     _ = try await engine.run(TTSRequest(text: "hi",
                                         metaData: ["emotion": .string("happy"),
                                                    "targetDuration": .double(3.5)]))
+}
+
+// MARK: - TTS multi-speaker cast (contract 1.49.0, AB-A-0136)
+
+private let speakerTwo = TTSSpeakerVoice(voice: VoiceSelector(.referenceAudio(Audio(data: Data([2])))),
+                                         referenceTranscript: "speaker two")
+
+// The failure this exists to prevent: a scene sent to a one-voice package comes back in one voice,
+// or with speaker 2 in a voice nobody asked for, and nothing in the response says so.
+@Test func aSecondVoiceAgainstASingleVoicePackageIsRefusedBeforeTheRun() async throws {
+    let engine = MLXServeEngine()
+    try await engine.register(PackageRegistration.of(PlainTTSPackage.self),
+                              configuration: mockConfig())
+    do {
+        _ = try await engine.run(TTSRequest(text: "[S1] a [S2] b", additionalSpeakers: [speakerTwo]))
+        Issue.record("expected unsupportedRequestFeature")
+    } catch {
+        #expect(unsupportedFeature(error)?.contains("additionalSpeakers") == true)
+        #expect(unsupportedFeature(error)?.contains("single-voice") == true)
+    }
+}
+
+@Test func aDeclaredCastReachesThePackage() async throws {
+    let engine = MLXServeEngine()
+    try await engine.register(PackageRegistration.of(SceneTTSPackage.self),
+                              configuration: mockConfig())
+    let response = try await engine.run(TTSRequest(
+        text: "[S1] a [S2] b", speakers: [TTSSpeakerVoice(), speakerTwo]))
+    let tts = try #require(response as? TTSResponse)
+    #expect(tts.audio.data.first == 2)
+}
+
+// The check is a count: declaring two speakers does not license a third voice.
+@Test func moreVoicesThanTheSurfaceDeclaresAreRefused() async throws {
+    let engine = MLXServeEngine()
+    try await engine.register(PackageRegistration.of(SceneTTSPackage.self),
+                              configuration: mockConfig())
+    do {
+        _ = try await engine.run(TTSRequest(
+            text: "[S1] a [S2] b [S3] c", speakers: [TTSSpeakerVoice(), speakerTwo, speakerTwo]))
+        Issue.record("expected unsupportedRequestFeature")
+    } catch {
+        #expect(unsupportedFeature(error)?.contains("3 voices") == true)
+        #expect(unsupportedFeature(error)?.contains("declares 2 speakers") == true)
+    }
+}
+
+// An empty list asks for nothing, so `additionalSpeakers: cast.isEmpty ? nil : cast` is never a
+// required incantation (the `context` rule).
+@Test func anEmptyAdditionalCastIsNotARefusal() async throws {
+    let engine = MLXServeEngine()
+    try await engine.register(PackageRegistration.of(PlainTTSPackage.self),
+                              configuration: mockConfig())
+    _ = try await engine.run(TTSRequest(text: "hi", additionalSpeakers: []))
+}
+
+// Dia2's interim path — speaker 2 in package metaData — passes untouched: the pre-flight never
+// reads metaData, so nothing shipping against 0.62.0 changes.
+@Test func theInterimSpeaker2MetaDataPathIsUnaffected() async throws {
+    let engine = MLXServeEngine()
+    try await engine.register(PackageRegistration.of(PlainTTSPackage.self),
+                              configuration: mockConfig())
+    _ = try await engine.run(TTSRequest(
+        text: "[S1] a [S2] b",
+        metaData: ["speaker2Audio": .string("UklGRg=="), "speaker2Transcript": .string("two")]))
 }
 
 // MARK: - STT

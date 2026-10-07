@@ -40,6 +40,9 @@ offline MAT / CAN gates and, if your package has an `MLXNN.Module` graph, the C1
 
 ## License (two layers — both must be declared)
 - **Weight license** (C7): the checkpoint, `weightLicense: SPDXLicense`.
+- **Bundled weight sets** (contract 1.49.0): if the package also loads weights under another
+  license — a codec, vocoder or encoder — list each such license in `additionalWeightLicenses`.
+  The gate judges every one, so do not reduce a bundle to a single license.
 - **Port-code license** (C8): your contribution itself, `portCodeLicense` — distinct from C7.
 - **Declaration is the requirement** (contract 1.28.0). A license outside the engine's policy no
   longer blocks loading by default; it is recorded as a `LicenseAdvisory` naming the layer and SPDX

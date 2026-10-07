@@ -1917,6 +1917,20 @@ public actor MLXServeEngine {
                     "targetDuration — \(id) declares no native duration control; synthesize "
                         + "without it and time-stretch the result instead")
             }
+            // Multi-speaker cast (contract 1.49.0, AB-A-0136): declaration-gated like a2v, because
+            // an ignored voice is wrong output — the scene in one voice, or speaker 2 in a voice
+            // nobody asked for — with nothing in the `.wav` to say so. An empty list asks for nothing.
+            if let extra = tts.additionalSpeakers, !extra.isEmpty {
+                let declared = surface.ttsControls?.maxSpeakers ?? 1
+                if extra.count + 1 > declared {
+                    throw PackageError.unsupportedRequestFeature(declared == 1
+                        ? "additionalSpeakers — \(id) is a single-voice surface (declares no "
+                            + "TTSControls.speakerTags); render each speaker's turns separately, or "
+                            + "choose a package that declares speakerTags"
+                        : "additionalSpeakers — \(extra.count + 1) voices, but \(id) declares "
+                            + "\(declared) speakers (TTSControls.speakerTags)")
+                }
+            }
         }
 
         // a2v (contract 1.40.0, AB-A-0023 / AB-A-0066): declaration-gated, unlike `initImage` /

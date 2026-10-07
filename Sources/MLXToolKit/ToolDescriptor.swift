@@ -48,7 +48,8 @@ public enum StreamGranularity: String, Sendable, Codable {
     case audioChunk
 }
 
-/// Emotion + duration controls a **`tts`** surface honors natively (contract 1.38.0, E12).
+/// Emotion + duration controls a **`tts`** surface honors natively (contract 1.38.0, E12), and
+/// since 1.49.0 the multi-speaker cast it renders in one take (`speakerTags`).
 ///
 /// The promotion trigger E12 set for itself is met: the plane "pends a 2nd adopter"
 /// (`mlxengine-audio/Docs/ENHANCEMENTS.md` § E12); IndexTTS2 shipped the first realization
@@ -80,10 +81,26 @@ public struct TTSControls: Sendable, Codable, Equatable {
     /// difference, which is why it is a declaration and not something a caller discovers by
     /// measuring the returned audio.
     public let supportsTargetDuration: Bool
+    /// The literal turn tags of a multi-speaker script, in speaker order (contract 1.49.0,
+    /// AB-A-0136): `speakerTags[k]` marks the turns spoken by `TTSRequest.speakers[k]`. Dia2-2B
+    /// declares `["[S1]", "[S2]"]`. Nil or empty = a single-voice surface, which is every pre-1.49
+    /// conformer. A surface declares distinct, non-empty tags.
+    ///
+    /// Literal strings rather than a count plus a template, because scene models do not share a
+    /// syntax and a planner writing the script needs the exact text the package splits turns on.
+    /// The count is the routing fact (`maxSpeakers`), and one list carries both, so they cannot
+    /// disagree. Optional, so descriptor JSON from 1.38–1.48 decodes unchanged.
+    public let speakerTags: [String]?
 
-    public init(emotionModes: [EmotionMode] = [], supportsTargetDuration: Bool = false) {
+    /// The most voices one request can carry on this surface: one per declared tag, at least 1.
+    /// `MLXServeEngine.run` refuses a `TTSRequest` whose `speakers` outnumber it.
+    public var maxSpeakers: Int { max(1, speakerTags?.count ?? 0) }
+
+    public init(emotionModes: [EmotionMode] = [], supportsTargetDuration: Bool = false,
+                speakerTags: [String]? = nil) {
         self.emotionModes = emotionModes
         self.supportsTargetDuration = supportsTargetDuration
+        self.speakerTags = speakerTags
     }
 }
 

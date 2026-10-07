@@ -1067,5 +1067,43 @@ public enum ContractVersion {
     //     struct, and one new `SurfaceControls` case (consumers switch it with `@unknown default`,
     //     the 1.38.0 note). Pre-1.48 descriptor JSON decodes unchanged, and no existing
     //     construction site changes.
-    public static let current = SemanticVersion(major: 1, minor: 48, patch: 0)
+    // 1.49.0 (2026-10-06, additive): THE MULTI-SPEAKER CAST + BUNDLED WEIGHT LICENSES — closes
+    //   AB-A-0136. Nari Labs Dia2-2B (`mlx-dia2-tts-swift`, E23 / AB-D-0110) is the fleet's first
+    //   two-speaker SCENE renderer: a script with `[S1]` / `[S2]` turns comes back as one `.wav`.
+    //   It conditions each speaker on its own voice prefix, and the request carried one voice.
+    //   • `TTSSpeakerVoice` (voice + referenceTranscript) and `TTSRequest.additionalSpeakers:
+    //     [TTSSpeakerVoice]?` — speakers 2…N. Speaker 1 stays `voice` + `referenceTranscript`, so a
+    //     pre-1.49 request is a one-speaker request. `speakers` reads the whole cast in order and
+    //     `init(text:speakers:…)` builds it from one list: the ask's "index 0 aliases `voice`"
+    //     shape, with the alias DERIVED rather than stored twice, so the two can never disagree.
+    //     Promoted on the `referenceTranscript` rule: Dia2 carried speaker 2 in `metaData` first
+    //     (`speaker2Audio` / `speaker2Transcript`), and Studio Dub's scene path is the second
+    //     adopter, which would otherwise hardcode which engine reads which key.
+    //   • `TTSControls.speakerTags: [String]?` — the literal turn tags in speaker order (Dia2:
+    //     `["[S1]", "[S2]"]`), with `maxSpeakers` derived from them. One list carries the routing
+    //     fact (how many voices) and the script syntax (what to write), so they cannot disagree.
+    //     `TTSContract.descriptor(controls:)` advertises `additionalSpeakers` only on a surface
+    //     that declares more than one speaker, and its summary names the tags.
+    //   • DECLARATION-GATED, by the 1.40.0 `initAudio` rule rather than the `additionalViews` one:
+    //     an ignored voice is wrong output (the scene in one voice, or speaker 2 unprompted), and
+    //     the response does not show it. `checkDeclaredControls` refuses more voices than
+    //     `maxSpeakers` with `PackageError.unsupportedRequestFeature` before admission, on `run`
+    //     and `stream` alike through the shared preflight. An empty list asks for nothing.
+    //   • NOT promoted, by the ask's own rule: reference word timings (Dia2 forces new-word frames
+    //     from them during the prefix warm-up). One consumer, so they stay in its `metaData`
+    //     (`referenceWords` / `speaker2Words`) until a second adopter appears.
+    //   • `LicenseDeclaration.additionalWeightLicenses: [SPDXLicense]?` + `weightLicenses` — a
+    //     bundle (Dia2-2B Apache-2.0 + Kyutai Mimi CC-BY-4.0) declares every weight license it
+    //     loads, and `LicensePolicy.evaluate` judges each, naming the failing one in
+    //     `.rejectedWeight`. The single field had been reduced per package in a source comment — to
+    //     the stricter license (Gepard, Audio8-Mini, LaMa) or to the primary's (Dia2) — which is
+    //     right only while every component sits on the same list. No new gate case:
+    //     `.rejectedWeight(license)` already names a license, and an advisory for a component
+    //     reads like one for the checkpoint.
+    //   Additive: one new struct; one defaulted member + init argument, one computed member and
+    //     one new init on `TTSRequest`; one defaulted member + init argument and one computed member
+    //     each on `TTSControls` and `LicenseDeclaration`, both of which still decode pre-1.49 JSON.
+    //     No existing construction site changes, and a request or declaration that sets none of
+    //     them behaves exactly as in 1.48.0.
+    public static let current = SemanticVersion(major: 1, minor: 49, patch: 0)
 }

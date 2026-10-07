@@ -49,6 +49,32 @@ private final class MockGPLPackage: ModelPackage {
     }
 }
 
+/// A bundle whose headline checkpoint is permissive but whose second weight set is not (contract
+/// 1.49.0) — the shape a single `weightLicense` used to hide.
+@InferenceActor
+private final class MockBundlePackage: ModelPackage {
+    typealias Configuration = StandardConfiguration
+    nonisolated static var manifest: PackageManifest {
+        PackageManifest(
+            license: LicenseDeclaration(weightLicense: .apache2,
+                                        additionalWeightLicenses: [.ccBy4, SPDXLicense("CC-BY-NC-4.0")],
+                                        portCodeLicense: .apache2),
+            provenance: Provenance(sourceRepo: "mock/bundle", revision: "main", tier: 1),
+            requirements: RequirementsManifest(
+                footprints: [QuantFootprint(quant: .int4, residentBytes: 1)],
+                requiredBackends: [.metalGPU]
+            ),
+            surfaces: [LLMContract.descriptor(name: "mock-bundle", summary: "mock")]
+        )
+    }
+    nonisolated init(configuration: StandardConfiguration) {}
+    func load() async throws {}
+    func unload() async {}
+    func run(_ request: any CapabilityRequest) async throws -> any CapabilityResponse {
+        LLMResponse(text: "mock", finishReason: .stop)
+    }
+}
+
 private func mockConfig() -> StandardConfiguration { StandardConfiguration(weightsRepo: "mock/mock") }
 
 /// A variant-multiplexed configuration: the manifest's provenance names the family primary
@@ -146,6 +172,34 @@ private final class MockVariantPackage: ModelPackage {
         #expect(error == .licenseRejected(.rejectedWeight(SPDXLicense("GPL-3.0"))))
         // Nothing registered, so nothing to advise about.
         #expect(await engine.licenseAdvisories.isEmpty)
+        #expect(await engine.registeredCapabilities.isEmpty)
+    } catch {
+        Issue.record("unexpected error: \(error)")
+    }
+}
+
+/// Contract 1.49.0: the gate judges every weight license a bundle declares. The advisory names the
+/// COMPONENT that falls outside the policy, not the permissive headline checkpoint.
+@Test func aBundledComponentOutsideThePolicyIsTheAdvisory() async throws {
+    let engine = MLXServeEngine()
+    try await engine.register(PackageRegistration.of(MockBundlePackage.self), configuration: mockConfig())
+    #expect(await engine.registeredCapabilities.contains(.llm))
+
+    let advisories = await engine.licenseAdvisories
+    #expect(advisories.count == 1)
+    let advisory = try #require(advisories.first)
+    #expect(advisory.layer == .weight)
+    #expect(advisory.license == SPDXLicense("CC-BY-NC-4.0"))
+    #expect(advisory.repo == "mock/bundle")
+}
+
+@Test func blockingEnforcementRejectsABundledComponent() async {
+    let engine = MLXServeEngine(licenseEnforcement: .blocking)
+    do {
+        try await engine.register(PackageRegistration.of(MockBundlePackage.self), configuration: mockConfig())
+        Issue.record("expected EngineError.licenseRejected")
+    } catch let error as EngineError {
+        #expect(error == .licenseRejected(.rejectedWeight(SPDXLicense("CC-BY-NC-4.0"))))
         #expect(await engine.registeredCapabilities.isEmpty)
     } catch {
         Issue.record("unexpected error: \(error)")

@@ -288,13 +288,36 @@ public struct LicenseAdvisory: Sendable, Equatable {
 
 /// The two-layer license declaration every package makes: the checkpoint's license (C7)
 /// and the contribution's own license (C8). Constantly conflated; kept explicit here.
+///
+/// **Bundles (contract 1.49.0, AB-A-0136).** A package that loads more than one weight set — a TTS
+/// model plus its codec, a denoiser plus its autoencoder — names the primary checkpoint's license
+/// in `weightLicense` and every OTHER license among its weights in `additionalWeightLicenses`, and
+/// the gate judges all of them. Before 1.49.0 there was room for one, so each package reduced its
+/// bundle in a source comment: some to the stricter license (Gepard, Audio8-Mini, LaMa), some to
+/// the primary checkpoint's (Dia2). Either reduction gives the right verdict when every component
+/// sits on the same list, and either one hides a component that does not — a permissive model
+/// declared over a non-commercial codec is admitted under `.permissiveOnly`. Those declarations stay
+/// valid; list the components at the next release.
 public struct LicenseDeclaration: Sendable, Codable, Equatable {
     public let weightLicense: SPDXLicense
+    /// Licenses of the OTHER weight sets the package loads, where they differ from the primary
+    /// checkpoint's (contract 1.49.0) — Dia2-2B is `.apache2` with Kyutai Mimi's `.ccBy4` here. Nil =
+    /// `weightLicense` covers every weight loaded, which is every pre-1.49 declaration. Optional, so
+    /// manifest JSON from before 1.49.0 decodes unchanged. Attribution the bundled licenses require
+    /// still ships with the weights (NOTICE / THIRD_PARTY_NOTICES); this field is what the gate and
+    /// a host read.
+    public let additionalWeightLicenses: [SPDXLicense]?
     public let portCodeLicense: SPDXLicense
-    public init(weightLicense: SPDXLicense, portCodeLicense: SPDXLicense) {
+
+    public init(weightLicense: SPDXLicense, additionalWeightLicenses: [SPDXLicense]? = nil,
+                portCodeLicense: SPDXLicense) {
         self.weightLicense = weightLicense
+        self.additionalWeightLicenses = additionalWeightLicenses
         self.portCodeLicense = portCodeLicense
     }
+
+    /// Every weight license the package loads, primary first. The gate judges each one.
+    public var weightLicenses: [SPDXLicense] { [weightLicense] + (additionalWeightLicenses ?? []) }
 }
 
 /// The result of the gate, designed to name *which layer* failed (the C8 legibility rule).
@@ -327,10 +350,12 @@ public enum LicenseGateResult: Sendable, Equatable {
 
 extension LicensePolicy {
     /// Evaluate both layers; report the first failing layer together with its license,
-    /// so a contributor learns *which* license and *which* layer to fix.
+    /// so a contributor learns *which* license and *which* layer to fix. The weight layer is every
+    /// license in `weightLicenses` (1.49.0), primary first, so the finding names the failing
+    /// component's license, not the bundle's headline one.
     public func evaluate(_ declaration: LicenseDeclaration) -> LicenseGateResult {
-        guard admits(declaration.weightLicense) else {
-            return .rejectedWeight(declaration.weightLicense)
+        if let failing = declaration.weightLicenses.first(where: { !admits($0) }) {
+            return .rejectedWeight(failing)
         }
         guard admits(declaration.portCodeLicense) else {
             return .rejectedPortCode(declaration.portCodeLicense)

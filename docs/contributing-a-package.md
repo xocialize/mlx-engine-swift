@@ -23,7 +23,9 @@ A contribution is one `ModelPackage` (the engine-owned model unit) declaring a
 
 ## License (two layers — both must be declared)
 
-- **Weight license** (C7): the checkpoint (`weightLicense`).
+- **Weight license** (C7): the checkpoint (`weightLicense`). If the package also loads weights under
+  another license (a codec, vocoder or encoder), list each such license in `additionalWeightLicenses`
+  (contract 1.49.0). The gate judges every one; do not reduce a bundle to a single license.
 - **Port-code license** (C8): your contribution (`portCodeLicense`).
 
 Declaring both, accurately, is the requirement. Since contract 1.28.0 the engine does **not** refuse
