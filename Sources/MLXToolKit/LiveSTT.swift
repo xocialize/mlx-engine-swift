@@ -74,7 +74,8 @@ public enum PushOutcome: Sendable, Equatable {
 ///
 /// **Partial-vs-final is a watermark, not a Bool.** `isFinal` marks the end of the SESSION, not
 /// the settledness of the text; `committedThrough` is what a caption UI needs — everything after
-/// it may still change, everything before it will not.
+/// it may still change, everything before it will not, and "will not change" includes "nothing
+/// more will arrive" (AB-A-0106).
 public struct STTStreamChunk: Sendable, Codable, Equatable {
     /// The transcript this chunk delivers — the whole thing so far under
     /// `.cumulative`, only the new text under `.incremental`. Which one is the surface's
@@ -95,15 +96,29 @@ public struct STTStreamChunk: Sendable, Codable, Equatable {
     /// has no known length — a percentage would need a total that does not exist. Non-decreasing
     /// across a session.
     public let processedSeconds: Double
-    /// Audio time before which the transcript will **not** be revised. For a cache-aware model
-    /// with a provisional tail, `processedSeconds - rightContextSeconds`; for a model that
-    /// commits every chunk (and for an append-only greedy decoder), `processedSeconds`.
+    /// Audio time before which the transcript is **final**: no text for that audio will be
+    /// revised, and none is still to come. A completeness promise, not only a revision one
+    /// (AB-A-0106): it is what lets a caption UI place text on the audio timeline, and an
+    /// `.incremental` surface's text is never revised anyway. For a cache-aware model with a
+    /// provisional tail, `processedSeconds - rightContextSeconds`; for a model that commits every
+    /// chunk (and for a greedy decoder that emits each token as it decodes it),
+    /// `processedSeconds`.
     ///
     /// A THIRD shape exists (VibeVoice-ASR-Streaming, AB-A-0068): a chunked decoder that reads
     /// `chunk + lookahead` never revises yet still trails — `committedThrough = (N+1)·chunkSeconds`,
     /// `processedSeconds = min(committed + lookahead, pushed)`, meeting at `finish()`. Append-only
     /// does NOT imply equality. And a zero-padded tail window must not advance the watermark by a
     /// whole chunk; LIV-4 sees that as `processedSeconds` going backwards.
+    ///
+    /// A FOURTH shape (R2T2's stable-prefix protocol, AB-A-0106): an append-only decoder that
+    /// WITHHOLDS a variable provisional tail — the text after its uncertainty marker, plus its last
+    /// unfixed token — and delivers it one or more chunks later. It never revises, yet words for
+    /// audio before `processedSeconds` are still arriving, so `processedSeconds` overstates the
+    /// watermark. Measured: words landed 0.24 s past it at the median and 0.72 s at most with the
+    /// language given, and seconds while the language was being auto-detected. Report
+    /// `max(0, processedSeconds − L)`, where `L` is a MEASURED bound on how late a word arrives (at
+    /// least the measured maximum, recorded with the measurement), and hold at 0 until the first
+    /// commit. Append-only means "never revised"; it never meant "complete".
     ///
     /// `nil` = the package makes no commitment guarantee — and **nil-ness is constant for the
     /// lifetime of a session** (LIV-4). A package that commits, commits from chunk 0, so a
