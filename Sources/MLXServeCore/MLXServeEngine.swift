@@ -1956,6 +1956,24 @@ public actor MLXServeEngine {
                     + "supportsTransparentBackground, or generate opaque and matte the result")
         }
 
+        // speechEdit (contract 1.50.0, AB-A-0137): every edit is declaration-gated — the operation,
+        // and for emotion / style the label too when the surface declares a vocabulary. The check
+        // runs here, before a multi-GB load, rather than inside the package after it.
+        if let speech = request as? SpeechEditRequest {
+            let kind = speech.edit.kind
+            guard let declared = surface.speechEditControls, declared.operations.contains(kind) else {
+                throw PackageError.unsupportedRequestFeature(
+                    "edit(.\(kind.rawValue)) — \(id) declares no such speech edit "
+                        + "(ToolDescriptor.speechEditControls)")
+            }
+            let vocabulary = declared.vocabulary(for: kind)
+            if let label = speech.edit.label, !vocabulary.isEmpty, !vocabulary.contains(label) {
+                throw PackageError.unsupportedRequestFeature(
+                    "edit(.\(kind.rawValue)(\"\(label)\")) — not one of the \(kind.rawValue) labels "
+                        + "\(id) declares (SpeechEditControls)")
+            }
+        }
+
         // BOTH stt entry points, one site (contract 1.39.0). `STTSessionRequest` is a
         // `CapabilityRequest` precisely so this refusal cannot drift between `run()` and
         // `transcribeLive()`: a caller must not get biasing on one door and silence on the other.

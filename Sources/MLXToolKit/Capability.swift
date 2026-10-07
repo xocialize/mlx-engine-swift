@@ -167,6 +167,15 @@ public enum Capability: String, Codable, Sendable, CaseIterable, Hashable {
     /// (Distinct from `matting` — one foreground alpha; from `promptSegment` — one indicated object;
     /// from `imageEdit` — one edited image: this returns the whole design as layers.)
     case layerDecompose
+    /// **Speech editing** — an existing speech take (`Audio`) + its transcript → the SAME words in the
+    /// SAME voice, re-delivered per one `SpeechEditOperation`: another emotion or speaking style,
+    /// inserted non-verbal sounds, denoised, or with its silences trimmed. Contract 1.50.0; introduced
+    /// by Step-Audio-EditX.
+    ///
+    /// (Distinct from `tts` — there is no text to synthesise, the take IS the input; from `audioPolish`
+    /// — signal-domain mastering that preserves content by construction, whereas this REGENERATES the
+    /// take, so its words need checking afterwards; from `audioSeparation` — that splits a mix.)
+    case speechEdit
 }
 
 /// The fixed output artifact kind for a capability. Not negotiable per package (C2).
@@ -228,6 +237,7 @@ extension Capability {
         case .meshRig: return .mesh
         case .imageRelight: return .image
         case .layerDecompose: return .image
+        case .speechEdit: return .audio
         }
     }
 }

@@ -164,6 +164,9 @@ public enum SurfaceControls: Sendable, Codable, Equatable {
     case textToVideo(T2VControls)
     /// The native-alpha declaration for `T2IRequest.background` (contract 1.48.0).
     case textToImage(T2IControls)
+    /// What a speech-edit surface can do: operations, label vocabularies, the longest take
+    /// (contract 1.50.0, AB-A-0137). Required on every `speechEdit` surface.
+    case speechEdit(SpeechEditControls)
 }
 
 /// Self-description a package publishes so the registry — and any out-of-process tool client, such
@@ -197,7 +200,8 @@ public struct ToolDescriptor: Sendable, Codable, Equatable {
     public let streaming: StreamGranularity?
     /// Per-capability **routing-time** declarations (contract 1.38.0, additive). `nil` = this
     /// surface declares none, which is every pre-1.38 conformer. Read it through the
-    /// `ttsControls` / `sttControls` / `t2vControls` accessors below.
+    /// `ttsControls` / `sttControls` / `t2vControls` / `t2iControls` / `speechEditControls`
+    /// accessors below.
     public let controls: SurfaceControls?
 
     public init(name: String,
@@ -248,6 +252,14 @@ extension ToolDescriptor {
         return nil
     }
 
+    /// The `speechEdit` control declaration, or nil when this surface declares none (contract
+    /// 1.50.0). A `SpeechEditRequest` is admitted only for an operation it lists, and for an
+    /// emotion / style label inside a declared vocabulary.
+    public var speechEditControls: SpeechEditControls? {
+        if case .speechEdit(let declared) = controls { return declared }
+        return nil
+    }
+
     /// Whether a declared controls block matches this surface's capability. `false` is a package
     /// bug: the block would describe a surface the descriptor does not name.
     public var controlsMatchCapability: Bool {
@@ -257,6 +269,7 @@ extension ToolDescriptor {
         case .stt: return capability == .stt
         case .textToVideo: return capability == .textToVideo
         case .textToImage: return capability == .textToImage
+        case .speechEdit: return capability == .speechEdit
         }
     }
 }

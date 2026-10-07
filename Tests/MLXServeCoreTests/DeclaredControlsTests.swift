@@ -183,6 +183,64 @@ private final class AlphaCapableT2IPackage: ModelPackage {
     }
 }
 
+/// The Step-Audio-EditX shape (contract 1.50.0): closed emotion / style vocabularies plus the label-free
+/// operations. It answers with the text the take should carry, so a test sees the edit arrive intact.
+@InferenceActor
+private final class SpeechEditPackage: ModelPackage {
+    typealias Configuration = StandardConfiguration
+    nonisolated static var manifest: PackageManifest {
+        controlsManifest(surfaces: [SpeechEditContract.descriptor(
+            name: "editx", summary: "m",
+            controls: SpeechEditControls(operations: [.emotion, .style, .paralinguistic, .denoise],
+                                         emotionLabels: ["happy", "remove"],
+                                         styleLabels: ["whisper"],
+                                         paralinguisticTags: ["[Laughter]"]))])
+    }
+    nonisolated init(configuration: StandardConfiguration) {}
+    func load() async throws {}
+    func unload() async {}
+    func run(_ request: any CapabilityRequest) async throws -> any CapabilityResponse {
+        guard let edit = request as? SpeechEditRequest else {
+            throw PackageError.unsupportedCapability(request.capability)
+        }
+        let target: String
+        if case .paralinguistic(let tagged) = edit.edit { target = tagged } else { target = edit.transcript }
+        return SpeechEditResponse(audio: Audio(format: .wav, data: Data(count: 44)), transcript: target)
+    }
+}
+
+/// An open-vocabulary editor: emotion only, any label.
+@InferenceActor
+private final class OpenEmotionEditPackage: ModelPackage {
+    typealias Configuration = StandardConfiguration
+    nonisolated static var manifest: PackageManifest {
+        controlsManifest(surfaces: [SpeechEditContract.descriptor(
+            name: "open-edit", summary: "m", controls: SpeechEditControls(operations: [.emotion]))])
+    }
+    nonisolated init(configuration: StandardConfiguration) {}
+    func load() async throws {}
+    func unload() async {}
+    func run(_ request: any CapabilityRequest) async throws -> any CapabilityResponse {
+        SpeechEditResponse(audio: Audio(format: .wav, data: Data(count: 44)), transcript: "t")
+    }
+}
+
+/// A speechEdit surface built without the contract helper, so it declares nothing.
+@InferenceActor
+private final class UndeclaredEditPackage: ModelPackage {
+    typealias Configuration = StandardConfiguration
+    nonisolated static var manifest: PackageManifest {
+        controlsManifest(surfaces: [ToolDescriptor(name: "bare-edit", capability: .speechEdit,
+                                                   summary: "m")])
+    }
+    nonisolated init(configuration: StandardConfiguration) {}
+    func load() async throws {}
+    func unload() async {}
+    func run(_ request: any CapabilityRequest) async throws -> any CapabilityResponse {
+        SpeechEditResponse(audio: Audio(format: .wav, data: Data(count: 44)), transcript: "t")
+    }
+}
+
 /// A layerDecompose package (contract 1.48.0): returns one layer per requested count, front-most
 /// first, tagged by index so the order can be checked end to end.
 @InferenceActor
@@ -474,4 +532,72 @@ private let speakerTwo = TTSSpeakerVoice(voice: VoiceSelector(.referenceAudio(Au
     let layers = try #require(response as? LayerDecomposeResponse)
     #expect(layers.layers.map(\.data) == [Data([0]), Data([1]), Data([2])])
     #expect(layers.composite == flat)
+}
+
+// MARK: - speechEdit (contract 1.50.0, AB-A-0137)
+
+private let take = Audio(format: .wav, data: Data(count: 44))
+
+// The new capability routes like any other, and the edit reaches the package intact.
+@Test func aDeclaredSpeechEditRoutesAndCarriesItsTarget() async throws {
+    let engine = MLXServeEngine()
+    try await engine.register(PackageRegistration.of(SpeechEditPackage.self),
+                              configuration: mockConfig())
+    let response = try await engine.run(SpeechEditRequest(
+        audio: take, transcript: "Great, the weather",
+        edit: .paralinguistic(targetTranscript: "Great[Laughter], the weather")))
+    let edited = try #require(response as? SpeechEditResponse)
+    #expect(edited.transcript == "Great[Laughter], the weather")
+
+    _ = try await engine.run(SpeechEditRequest(audio: take, transcript: "t", edit: .emotion("remove")))
+    _ = try await engine.run(SpeechEditRequest(audio: take, transcript: "t", edit: .denoise))
+}
+
+// The check is per operation: this surface declares no silence trimming.
+@Test func anUndeclaredSpeechEditIsRefusedBeforeTheRun() async throws {
+    let engine = MLXServeEngine()
+    try await engine.register(PackageRegistration.of(SpeechEditPackage.self),
+                              configuration: mockConfig())
+    do {
+        _ = try await engine.run(SpeechEditRequest(audio: take, transcript: "t", edit: .trimSilence))
+        Issue.record("expected unsupportedRequestFeature")
+    } catch {
+        #expect(unsupportedFeature(error)?.contains("trimSilence") == true)
+    }
+}
+
+// A declared vocabulary is closed: a label outside it never reaches the package (or its weights).
+@Test func aLabelOutsideTheDeclaredVocabularyIsRefused() async throws {
+    let engine = MLXServeEngine()
+    try await engine.register(PackageRegistration.of(SpeechEditPackage.self),
+                              configuration: mockConfig())
+    do {
+        _ = try await engine.run(SpeechEditRequest(audio: take, transcript: "t", edit: .style("shout")))
+        Issue.record("expected unsupportedRequestFeature")
+    } catch {
+        #expect(unsupportedFeature(error)?.contains("shout") == true)
+        #expect(unsupportedFeature(error)?.contains("style") == true)
+    }
+}
+
+// An empty vocabulary is open: the package judges the label.
+@Test func anOpenVocabularyAdmitsAnyLabel() async throws {
+    let engine = MLXServeEngine()
+    try await engine.register(PackageRegistration.of(OpenEmotionEditPackage.self),
+                              configuration: mockConfig())
+    _ = try await engine.run(SpeechEditRequest(audio: take, transcript: "t", edit: .emotion("wistful")))
+}
+
+// A speechEdit surface that declares nothing can run nothing — which is why the contract helper
+// requires the declaration.
+@Test func anUndeclaredSpeechEditSurfaceRefusesEveryEdit() async throws {
+    let engine = MLXServeEngine()
+    try await engine.register(PackageRegistration.of(UndeclaredEditPackage.self),
+                              configuration: mockConfig())
+    do {
+        _ = try await engine.run(SpeechEditRequest(audio: take, transcript: "t", edit: .denoise))
+        Issue.record("expected unsupportedRequestFeature")
+    } catch {
+        #expect(unsupportedFeature(error)?.contains("speechEditControls") == true)
+    }
 }

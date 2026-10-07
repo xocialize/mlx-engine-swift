@@ -1105,5 +1105,38 @@ public enum ContractVersion {
     //     each on `TTSControls` and `LicenseDeclaration`, both of which still decode pre-1.49 JSON.
     //     No existing construction site changes, and a request or declaration that sets none of
     //     them behaves exactly as in 1.48.0.
-    public static let current = SemanticVersion(major: 1, minor: 49, patch: 0)
+    // 1.50.0 (2026-10-07, additive): SPEECH EDITING — a new `Capability.speechEdit`, closing
+    //   AB-A-0137. Step-Audio-EditX (`mlx-step-audio-editx-swift`, E19 / AB-T-0202; Apache-2.0,
+    //   AB-R-0409) edits an EXISTING take: the same words in the same voice, re-delivered. No
+    //   capability fit — `tts` takes text, `audioPolish` is signal-domain mastering, `audioCodec` is a
+    //   round trip — and a `tts` mode could not have carried it, because a mode cannot change a
+    //   request's fields (the `imageInpaint`-beside-`imageEdit` reason). The consumer is Studio Dub's
+    //   inspector ("re-deliver as …").
+    //   • `SpeechEditRequest` (audio, transcript, edit, seed, mode, metaData) / `SpeechEditResponse`
+    //     (audio `.wav`, transcript) / `SpeechEditContract`; `CanonicalOutput.audio`. The response's
+    //     transcript is the text the take should carry (the input's, or the paralinguistic target),
+    //     which is what a downstream ASR content check compares against: the output is regenerated,
+    //     so nothing guarantees the words survive (AB-L-0119).
+    //   • `SpeechEditOperation` — `.emotion(String)` / `.style(String)` / `.paralinguistic(
+    //     targetTranscript:)` / `.denoise` / `.trimSilence` — shaped like `TTSEmotion`: its `kind` maps
+    //     1:1 onto the declared `SpeechEditControls.Operation`. Labels are open strings, the package's
+    //     vocabulary. NOT in the enum: speed (E19 V0: a DSP time-stretch beat the model's categorical
+    //     speed) and content replacement (the first provider cannot). A later kind is a new case at a
+    //     minor version, so consumers switch with `@unknown default`.
+    //   • `SpeechEditControls` as `SurfaceControls.speechEdit`, read via `speechEditControls`:
+    //     `operations`; `emotionLabels` / `styleLabels` (non-empty = the only labels admitted);
+    //     `paralinguisticTags` (advertised, since the engine does not parse transcripts); and
+    //     `maxInputSeconds` (enforced by the package: a longer take is refused, never truncated).
+    //     `SpeechEditContract.descriptor` REQUIRES the declaration and derives the `edit` parameter's
+    //     summary from it, so a speechEdit surface is born declared.
+    //   • ENGINE-ENFORCED like every control since 1.38.0: `checkDeclaredControls` refuses an
+    //     undeclared operation, or an emotion / style label outside a declared vocabulary, with
+    //     `PackageError.unsupportedRequestFeature` before admission — before a multi-GB load.
+    //   • Declined from the ask, by the `SurfaceControls` governing rule: a declared default sampling
+    //     temperature (a per-run knob of one model family, so `metaData`), and `generatedTokens` on the
+    //     response (observability, which rides `RunProgress`; a take that runs out of tokens is
+    //     refused, not returned short).
+    //   Additive: one capability case and one contract file; one `SurfaceControls` case and accessor.
+    //     Pre-1.50 descriptor JSON decodes unchanged, and no existing construction site changes.
+    public static let current = SemanticVersion(major: 1, minor: 50, patch: 0)
 }
