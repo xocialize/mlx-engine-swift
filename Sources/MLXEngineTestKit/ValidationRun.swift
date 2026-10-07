@@ -11,7 +11,14 @@ public struct ValidationRun: Sendable {
     public var engineResidentBytes: UInt64 = 0     // governor charge for this capability
     public var transientReserveBytes: UInt64 = 0   // the one shared activation reserve (1.14)
     public var baselineFootprint: UInt64 = 0       // phys before load
-    public var peakFootprint: UInt64 = 0           // max phys across load+run
+    /// Max phys across load+run: the kernel ledger's peak when the window raised it (exact), else the
+    /// sampler's (a lower bound). `peakSource` says which (AB-A-0134).
+    public var peakFootprint: UInt64 = 0
+    public var sampledPeakFootprint: UInt64 = 0    // the sampler's max alone; ≤ peakFootprint
+    /// `.kernelLedger` = `peakFootprint` (and so `activationBytes`) is exact. `.sampled` = this process
+    /// had already peaked higher before the run, so the number is a lower bound: re-measure in a fresh
+    /// process, the "one process per declarable number" rule.
+    public var peakSource: FootprintPeak.Source = .sampled
     public var residentFloorBytes: UInt64 = 0      // phys right after LOAD (pre-run) ≈ true weights resident
     public var postRunResidentBytes: UInt64 = 0    // phys after run+clearCache; > floor ⇒ live model retains intermediates
     public var coResidentBackers: [String] = []    // resident packages backing this capability
@@ -31,12 +38,14 @@ public struct ValidationRun: Sendable {
     public var retainedAfterRunBytes: UInt64 { postRunResidentBytes > residentFloorBytes ? postRunResidentBytes - residentFloorBytes : 0 }
 
     /// Machine-readable line for headless capture (mirrors the per-package MEM/SPLIT convention). `floor` is
-    /// post-load (true resident); `retain` flags post-run retention (≈0 = clean).
+    /// post-load (true resident); `retain` flags post-run retention (≈0 = clean); `peakSrc` is `kernel` when
+    /// `peak` is exact and `sampled` when it is a lower bound (appended last, so key-based parsers keep working).
     public func splitLogLine(_ label: String) -> String {
-        String(format: "[%@] SPLIT floor=%.2fGB peak=%.2fGB act=%.2fGB retain=%.2fGB engine=%.2fGB reserve=%.2fGB load=%.1fs run=%.1fs",
+        String(format: "[%@] SPLIT floor=%.2fGB peak=%.2fGB act=%.2fGB retain=%.2fGB engine=%.2fGB reserve=%.2fGB load=%.1fs run=%.1fs peakSrc=%@",
                label,
                gb(residentFloorBytes), gb(peakFootprint), gb(activationBytes), gb(retainedAfterRunBytes),
-               gb(engineResidentBytes), gb(transientReserveBytes), loadSeconds, runSeconds)
+               gb(engineResidentBytes), gb(transientReserveBytes), loadSeconds, runSeconds,
+               peakSource == .kernelLedger ? "kernel" : "sampled")
     }
     private func gb(_ b: UInt64) -> Double { Double(b) / 1_000_000_000 }
 }
@@ -70,6 +79,9 @@ public enum ValidationHarness {
         m.inputSummary = inputSummary
         m.baselineFootprint = HostMemory.physFootprint() ?? 0
         m.peakFootprint = m.baselineFootprint
+        // The kernel's lifetime peak as the window opens; compared with the reading after the run, it
+        // makes the peak exact whenever the run raised it (AB-A-0134).
+        let lifetimePeakBefore = HostMemory.physFootprintLifetimePeak()
 
         let sampler = MemorySampler()
         sampler.start(initial: m.baselineFootprint)
@@ -121,11 +133,19 @@ public enum ValidationHarness {
         let response = try await engine.run(request, package: packageID)
         m.runSeconds = Date().timeIntervalSince(runStart)
 
-        // Peak is the sampler's high-water DURING the run (post-load weights + activation). Post-run, read
-        // the resident AGAIN after clearCache: if it sits well above the post-load floor, the live model is
-        // retaining run intermediates (a retention leak surfaced as `retainedAfterRunBytes`) — distinct from
-        // the activation peak, and the real signal behind a stubborn floor.
-        m.peakFootprint = max(m.peakFootprint, sampler.peak, HostMemory.physFootprint() ?? 0)
+        // Peak is the high-water across load + run (post-load weights + activation). The sampler's alone
+        // under-reads: a spike shorter than its interval falls between ticks (AB-A-0134 measured 0.2–1.9 GB
+        // low at 150 ms on Nacre). The kernel ledger is exact, and it belongs to this window when the run
+        // raised it — `FootprintPeak.window`; otherwise the sampled value stands and `peakSource` says so.
+        // Post-run, read the resident AGAIN after clearCache: if it sits well above the post-load floor, the
+        // live model is retaining run intermediates (a retention leak surfaced as `retainedAfterRunBytes`) —
+        // distinct from the activation peak, and the real signal behind a stubborn floor.
+        m.sampledPeakFootprint = max(m.peakFootprint, sampler.peak, HostMemory.physFootprint() ?? 0)
+        let peak = FootprintPeak.window(sampled: m.sampledPeakFootprint,
+                                        lifetimePeakBefore: lifetimePeakBefore,
+                                        lifetimePeakAfter: HostMemory.physFootprintLifetimePeak())
+        m.peakFootprint = peak.bytes
+        m.peakSource = peak.source
         clearCache?()
         m.postRunResidentBytes = HostMemory.physFootprint() ?? 0
 

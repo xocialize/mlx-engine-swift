@@ -13,7 +13,7 @@ category app. These are the shared implementations so each app stops re-inventin
 | Seam | API |
 |---|---|
 | Memory split readout + transient reserve | `EngineMemoryView(snapshot:run:)` — budget · resident · **transientReserve** · available · real phys + pressure, and the measured floor/activation/peak split |
-| Peak sampler | `MemorySampler` — 150 ms `phys_footprint` poll (reuses `HostMemory.physFootprint`) |
+| Peak sampler | `MemorySampler` — 10 ms `phys_footprint` poll (reuses `HostMemory.physFootprint`). A polled peak is a lower bound; `ValidationHarness` takes the kernel's exact high-water (`HostMemory.physFootprintLifetimePeak`) whenever the run raised it, and `ValidationRun.peakSource` says which you got |
 | Phase-tagged trace | `PhaseTrace` — `mark("denoise")` → `peakByPhase` attribution (proves per-stage eviction) |
 | Reusable run harness | `ValidationHarness.run(...)` → `ValidationRun` (evict→register→prepare(timed)→run(timed)→capture; sampler + heartbeat + security-scoped grants). Generalized from the retired proving-ground app's `runFlow`. |
 | Admissibility / tier seam | `AdmissibilityTiers.check(...)` + `AdmissibilityTierView` — "does this variant fit a 16/32/64/128 GB Mac?" (pure; reuses `MemoryGovernor.footprintSplit`) |
@@ -36,7 +36,7 @@ import MLXEngineTestKit
 // 1. Run a package through the harness (uniform timing + split capture):
 let r = try await ValidationHarness.run(engine: engine, registration: P.registration,
             configuration: cfg, capability: .matting, request: req, heartbeatLabel: "matting")
-print(r.run.splitLogLine("birefnet"))          // [birefnet] SPLIT floor=… peak=… act=… engine=… reserve=…
+print(r.run.splitLogLine("birefnet"))          // [birefnet] SPLIT floor=… peak=… act=… engine=… reserve=… peakSrc=kernel
 
 // 2. Show the memory + split readout:
 EngineMemoryView(snapshot: await engine.memory, run: r.run)

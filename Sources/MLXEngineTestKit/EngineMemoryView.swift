@@ -40,7 +40,9 @@ public struct EngineMemoryView: View {
                 Text("Measured split").font(.caption).bold()
                 row("Resident floor (post-load)", run.residentFloorBytes)
                 row("Activation (peak−floor)", run.activationBytes)
-                row("Peak", run.peakFootprint)
+                // A sampled peak is a lower bound (AB-A-0134) — say so where the number is read.
+                row(run.peakSource == .kernelLedger ? "Peak" : "Peak (sampled, lower bound)",
+                    run.peakFootprint)
                 if run.retainedAfterRunBytes > 100_000_000 {   // >100 MB held past run = retention leak
                     row("⚠️ Retained after run", run.retainedAfterRunBytes)
                 }

@@ -4,13 +4,19 @@ import MLXServeCore
 /// Polls process `phys_footprint` on a background cadence so a run's **peak** working set is captured,
 /// not just the value at completion. Lifted from the retired proving-ground app's `MemorySampler`,
 /// generalized to reuse `HostMemory.physFootprint` (one reader, shared with the engine's R-MEM-1 path).
+///
+/// A polled peak is a **lower bound**: a spike between two ticks is never seen. At the old 150 ms default
+/// it read 0.2–1.9 GB under the kernel's high-water on every Nacre re-baseline run (AB-A-0134), so the
+/// default is now 10 ms, and `ValidationHarness` prefers the kernel ledger
+/// (`HostMemory.physFootprintLifetimePeak`) whenever the run raised it. Use this alone only where a lower
+/// bound is enough.
 @MainActor
 public final class MemorySampler {
     private var task: Task<Void, Never>?
     public private(set) var peak: UInt64 = 0
     private let intervalMs: Int
 
-    public init(intervalMs: Int = 150) { self.intervalMs = intervalMs }
+    public init(intervalMs: Int = 10) { self.intervalMs = intervalMs }
 
     public func start(initial: UInt64? = nil) {
         peak = initial ?? (HostMemory.physFootprint() ?? 0)
@@ -29,6 +35,8 @@ public final class MemorySampler {
 /// Phase-tagged memory trace: a sampler that also records named markers, so a peak can be **attributed
 /// to a stage** (encode / denoise / decode) — the seam that visually proves per-stage eviction. Call
 /// `mark(_:)` at phase boundaries; `samples` holds `(phase, phys, elapsed)` and `peakByPhase` rolls up.
+/// It keeps every sample, so it stays at 150 ms, and its per-phase peaks are lower bounds for the reason
+/// `MemorySampler` gives: good for attribution, not for a declared number.
 @MainActor
 public final class PhaseTrace {
     public struct Sample: Sendable { public let phase: String; public let bytes: UInt64; public let elapsed: TimeInterval }
