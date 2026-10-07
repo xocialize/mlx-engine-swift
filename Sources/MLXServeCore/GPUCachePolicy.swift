@@ -8,8 +8,9 @@ import MLX
 /// llm + embed + tts per turn, each run with new tensor shapes) ratchet the pool by GBs per
 /// interaction — it reads as a never-released leak in Activity Monitor (the MLXCompanion
 /// 43 GB staircase, 2026-07-05). The engine owns the GPU and the memory budget, so the pool
-/// policy lives here beside the governor: `MLXServeEngine` applies the resolved limit **once,
-/// at init**.
+/// policy lives here beside the governor: `MLXServeEngine` applies the resolved limit **at
+/// init**, and if that write fails, retries it before the first package load or run
+/// (`GPUCacheLimitState`, AB-A-0130).
 ///
 /// **Precedence is last-write-wins on the process-global setting.** The engine writes at
 /// construction; a host that sets `MLX.Memory.cacheLimit` (or the legacy
@@ -80,6 +81,121 @@ public struct GPUCacheConfiguration: Sendable, Equatable {
     }
 }
 
+/// The process's FIRST MLX call can fail in a `swift test` runner ("Failed to load the default
+/// metallib") while every later call succeeds and GPU work runs (AB-A-0130). Make that first call a
+/// harmless read, so the failure never lands on a write the engine depends on.
+enum MLXFirstTouch {
+    static func warmUp() { _ = try? MLX.withError { _ = Memory.activeMemory } }
+}
+
+/// The engine's pool-cap write and its outcome (AB-A-0130).
+///
+/// One failed attempt at init is not the last word. In a `swift test` runner the write can be the
+/// process's first MLX touch, which fails, while GPU work runs regardless, and an unapplied cap lets
+/// the pool grow without bound (23 GB in ForgeCore's live tests). So `MLXServeEngine` warms MLX up
+/// before the write, retries a failed write before the next package load or run (`applyIfPending`),
+/// and records the cap only once a write lands. Lock-protected, so the engine's `nonisolated`
+/// readers see the latest outcome without hopping the actor.
+final class GPUCacheLimitState: @unchecked Sendable {
+    enum Outcome: Equatable {
+        /// `.unmanaged` policy: the engine never writes.
+        case unmanaged
+        /// The engine's write landed.
+        case applied(UInt64)
+        /// A write failed; the next GPU work retries it first.
+        case pending(UInt64)
+        /// A host wrote its own cap after the engine's failed write. Last write wins
+        /// (`GPUCacheConfiguration`), so the engine stopped retrying.
+        case yielded
+    }
+
+    /// Where `gpuPoolSnapshot()` takes its limit from, per outcome.
+    enum SnapshotLimit: Equatable {
+        /// The cap the engine applied (never re-read from MLX — see `GPUPoolSnapshot.current`).
+        case applied(UInt64)
+        /// MLX's own default. mlx-swift's getter would echo the engine's FAILED write: its setter
+        /// stores the value before calling into MLX, so the getter is not evidence.
+        case mlxDefault
+        /// The live getter: nothing the engine wrote is in it.
+        case live
+    }
+
+    /// MLX's process-global cap, behind a seam so the retry logic is testable without a GPU.
+    struct Writer: Sendable {
+        /// Write the cap; false when MLX refused (it throws inside `withError`).
+        var write: @Sendable (Int) -> Bool
+        /// mlx-swift's memoized getter value. It echoes the last WRITE, applied or not, which is
+        /// exactly what tells a host's later write from the engine's own failed one.
+        var memoizedLimit: @Sendable () -> Int?
+
+        static let mlx = Writer(
+            write: { bytes in (try? MLX.withError { Memory.cacheLimit = bytes }) != nil },
+            memoizedLimit: { try? MLX.withError { Memory.cacheLimit } })
+    }
+
+    private let lock = NSLock()
+    private var outcome: Outcome
+    private var warnedUnapplied = false
+    private let writer: Writer
+    private let warn: @Sendable (String) -> Void
+
+    init(intendedBytes: UInt64?, writer: Writer = .mlx,
+         warn: @escaping @Sendable (String) -> Void = { print($0) }) {
+        self.writer = writer
+        self.warn = warn
+        guard let cap = intendedBytes else {
+            outcome = .unmanaged
+            return
+        }
+        outcome = writer.write(Self.clamped(cap)) ? .applied(cap) : .pending(cap)
+    }
+
+    var current: Outcome {
+        lock.lock()
+        defer { lock.unlock() }
+        return outcome
+    }
+
+    /// The cap in effect from the engine's own write, or nil.
+    var applied: UInt64? {
+        if case .applied(let bytes) = current { return bytes }
+        return nil
+    }
+
+    var snapshotLimit: SnapshotLimit {
+        switch current {
+        case .applied(let bytes): return .applied(bytes)
+        case .pending: return .mlxDefault
+        case .unmanaged, .yielded: return .live
+        }
+    }
+
+    /// Retry a failed write; called before every package load or run. A no-op once the cap is
+    /// applied, yielded, or unmanaged. If the retry fails too, GPU work goes ahead with MLX's
+    /// default pool limit, and that is worth one line: its only symptom is a phys staircase that
+    /// reads as a package leak.
+    func applyIfPending() {
+        lock.lock()
+        defer { lock.unlock() }
+        guard case .pending(let cap) = outcome else { return }
+        let intended = Self.clamped(cap)
+        if let memo = writer.memoizedLimit(), memo != intended {
+            outcome = .yielded
+            return
+        }
+        if writer.write(intended) {
+            outcome = .applied(cap)
+        } else if !warnedUnapplied {
+            warnedUnapplied = true
+            warn(String(format: "[GPUCache] the MLX pool cap (%.2f GB) could not be applied; GPU work "
+                         + "proceeds under MLX's default pool limit, so the pool can grow without "
+                         + "bound (AB-A-0130)", Double(cap) / 1_000_000_000))
+        }
+    }
+
+    private static func clamped(_ bytes: UInt64) -> Int { bytes > UInt64(Int.max) ? Int.max : Int(bytes) }
+}
+
 /// A point-in-time reading of MLX's process-global GPU buffer accounting, exposed on the
 /// engine so consumers get observability **without importing MLX**. The interesting
 /// relationship (per turn): `phys_footprint ≈ app baseline + activeBytes + cacheBytes`.
@@ -127,6 +243,20 @@ public struct GPUPoolSnapshot: Sendable, Equatable, CustomStringConvertible {
                 cacheBytes: UInt64(max(0, Memory.cacheMemory)),
                 peakBytes: UInt64(max(0, Memory.peakMemory)),
                 cacheLimitBytes: cacheLimitBytes ?? UInt64(max(0, Memory.cacheLimit)))
+        }
+    }
+
+    /// The reading while an engine's own cap write has not landed (AB-A-0130). The limit reported is
+    /// MLX's default pool cap, which is its memory limit (`MetalAllocator` starts with
+    /// `max_pool_size_ = block_limit_`), read through `Memory.memoryLimit` — a plain
+    /// `mlx_get_memory_limit`, unlike the `cacheLimit` getter, which would echo the failed write.
+    static func currentUnderMLXDefaultLimit() -> GPUPoolSnapshot? {
+        try? MLX.withError {
+            GPUPoolSnapshot(
+                activeBytes: UInt64(max(0, Memory.activeMemory)),
+                cacheBytes: UInt64(max(0, Memory.cacheMemory)),
+                peakBytes: UInt64(max(0, Memory.peakMemory)),
+                cacheLimitBytes: UInt64(max(0, Memory.memoryLimit)))
         }
     }
 

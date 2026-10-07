@@ -317,12 +317,17 @@ public actor MLXServeEngine {
     /// observability (the wired sibling of `appliedGPUCacheLimitBytes`). While a run is in
     /// flight the process-global wired limit rises to at most this value; idle it is 0.
     public nonisolated let wiredLimitCeilingBytes: UInt64?
-    /// The cap init actually wrote, or nil when the policy was `.unmanaged` OR the write
-    /// failed because this process can't initialize MLX's Metal device (see init). A `let`
-    /// so the `nonisolated` snapshot path can read it without hopping the actor — the
-    /// snapshot reports THIS value instead of re-reading MLX's cacheLimit getter
-    /// (NEUROSTREAM-ACTIONS QW2; see `GPUPoolSnapshot.current(cacheLimitBytes:)`).
-    public nonisolated let appliedGPUCacheLimitBytes: UInt64?
+    /// The engine's pool-cap write and its outcome: applied at init, or retried before the next
+    /// package load or run when that write failed (AB-A-0130). See `GPUCacheLimitState`.
+    private let gpuCacheLimit: GPUCacheLimitState
+    /// The cap the engine's write actually applied, or nil: the policy is `.unmanaged`, a host
+    /// wrote its own cap after a failed engine write, or no write has landed yet. The last is a
+    /// `swift test` runner whose first MLX call failed at init; the next package load or run
+    /// retries it (AB-A-0130), so this can turn non-nil after construction. `nonisolated`, so the
+    /// snapshot path reads it without hopping the actor — the snapshot reports THIS value instead
+    /// of re-reading MLX's cacheLimit getter (NEUROSTREAM-ACTIONS QW2; see
+    /// `GPUPoolSnapshot.current(cacheLimitBytes:)`).
+    public nonisolated var appliedGPUCacheLimitBytes: UInt64? { gpuCacheLimit.applied }
     /// Every unregistered `Specialty` seen at `register()` (C6 governance, warn-only). Diagnostic:
     /// a host can surface it, and the fleet sweep reads it to know what to add to
     /// `Specialty.registeredVocabulary`.
@@ -383,25 +388,26 @@ public actor MLXServeEngine {
         // runs) so interactive consumers stop ratcheting phys_footprint by GBs per turn
         // (ENGINE-NEEDS N5). `.unmanaged` resolves to nil and leaves the global untouched.
         //
-        // BEST-EFFORT: the first allocator call initializes MLX's Metal device, which can
-        // fail in processes that can't load the bundled metallib (the known SPM `swift test`
-        // runner gap — engines are constructed in every package's offline admissibility
-        // tests). `withError` scopes that to a caught throw instead of the default aborting
-        // handler; a process where this fails cannot run GPU work anyway, so degrading to
-        // "unmanaged" there is exact, not lossy. `appliedGPUCacheLimitBytes` records the
-        // outcome for diagnostics.
-        if let cap = gpuCache.resolvedLimitBytes(budgetBytes: self.governor.budgetBytes) {
-            let clamped = cap > UInt64(Int.max) ? Int.max : Int(cap)
-            let applied = (try? MLX.withError { Memory.cacheLimit = clamped }) != nil
-            self.appliedGPUCacheLimitBytes = applied ? cap : nil
-        } else {
-            self.appliedGPUCacheLimitBytes = nil
-        }
+        // BEST-EFFORT, and retried (AB-A-0130). The first allocator call initializes MLX's Metal
+        // device, which can fail in processes that can't load the bundled metallib — engines are
+        // constructed in every package's offline admissibility tests. `withError` scopes that to
+        // a caught throw instead of the default aborting handler. But a failed write is NOT a
+        // process that cannot run GPU work: in a `swift test` runner only the FIRST MLX call
+        // fails, GPU work runs, and the pool, uncapped, grew to 23 GB in ForgeCore's live tests.
+        // So MLX is touched once harmlessly first (`MLXFirstTouch`), and a write that still fails
+        // stays pending: `resident()` retries it before the next package load or run, and
+        // `appliedGPUCacheLimitBytes` reports a cap only once a write lands.
+        let intendedCap = gpuCache.resolvedLimitBytes(budgetBytes: self.governor.budgetBytes)
+        let coordinationOff: Bool
+        if case .disabled = wiredLimit.coordination { coordinationOff = true } else { coordinationOff = false }
+        if intendedCap != nil || !coordinationOff { MLXFirstTouch.warmUp() }
+        self.gpuCacheLimit = GPUCacheLimitState(intendedBytes: intendedCap)
         // Resolve wired-limit coordination (HV1). BEST-EFFORT like the cache write above: a
         // process that can't initialize MLX's Metal device must never mint tickets, because a
         // ticket's limit apply is an allocator touch (`mlx_set_wired_limit`) outside any
-        // `withError` scope the engine could install here — coordination degrades to off, which
-        // is exact (no GPU work happens in such a process anyway). The recommended-working-set
+        // `withError` scope the engine could install here — coordination degrades to off. The
+        // warm-up above means this probe is never the process's first MLX touch, so a failure
+        // here is a device that is really unusable, not the one-off first-touch miss (AB-A-0130). The recommended-working-set
         // arm is consulted only for a profile describing THIS host, so fabricated-profile tests
         // resolve pure-arithmetic ceilings (the forDevice determinism rule, QW3).
         if case .disabled = wiredLimit.coordination {
@@ -2001,6 +2007,9 @@ public actor MLXServeEngine {
     private func resident(_ id: PackageID,
                           conduct: AdmissionConduct = .idleOnly,
                           reserve: RunReserve? = nil) async throws -> any ModelPackage {
+        // Every package load and run passes here: the last moment to land a pool-cap write that
+        // failed at init, before GPU work allocates under MLX's unbounded default (AB-A-0130).
+        gpuCacheLimit.applyIfPending()
         if let existing = residents[id] {
             // Already resident, and this run reserves MORE than the idle scalar (1.42.0): the
             // per-run headroom is made here, under the same accounting and the same eviction
@@ -2557,14 +2566,20 @@ public actor MLXServeEngine {
     /// process can't initialize MLX's Metal device (some CI/test runners) — a process where
     /// this is nil has no pool to observe.
     ///
-    /// Under a managed policy, `cacheLimitBytes` is the cap **this engine applied at init**,
-    /// not re-read from MLX (a cold `Memory.cacheLimit` getter read mutates the process-global
-    /// limit — see `GPUPoolSnapshot.current(cacheLimitBytes:)`). Consequence of the documented
-    /// last-write-wins precedence: a host that wrote `Memory.cacheLimit` *after* engine
-    /// construction is not reflected here. `.unmanaged` engines (and failed applies) fall
-    /// back to the live read.
+    /// Under a managed policy, `cacheLimitBytes` is the cap **this engine applied**, not re-read
+    /// from MLX (a cold `Memory.cacheLimit` getter read mutates the process-global limit — see
+    /// `GPUPoolSnapshot.current(cacheLimitBytes:)`). Consequence of the documented last-write-wins
+    /// precedence: a host that wrote `Memory.cacheLimit` *after* the engine's write landed is not
+    /// reflected here. While the engine's write has NOT landed (AB-A-0130), the limit reported is
+    /// MLX's own default — never the intended cap, which mlx-swift's getter echoes even after a
+    /// failed write. `.unmanaged` engines, and engines that yielded to a later host write, report
+    /// the live read.
     public nonisolated func gpuPoolSnapshot() -> GPUPoolSnapshot? {
-        GPUPoolSnapshot.current(cacheLimitBytes: appliedGPUCacheLimitBytes)
+        switch gpuCacheLimit.snapshotLimit {
+        case .applied(let bytes): return GPUPoolSnapshot.current(cacheLimitBytes: bytes)
+        case .mlxDefault: return GPUPoolSnapshot.currentUnderMLXDefaultLimit()
+        case .live: return GPUPoolSnapshot.current()
+        }
     }
 
     /// The GPU cache policy this engine was constructed with (the *configured* intent;

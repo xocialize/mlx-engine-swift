@@ -233,9 +233,15 @@ The engine owns the GPU and the budget, so the pool policy lives beside the gove
   binary, and only SwiftPM's `swiftbuild` build system (and Xcode) does that compile. Under the
   deprecated `native` one there is no metallib at all, and mlx-swift's *default* error handler
   **aborts the process** rather than throwing. So all engine MLX touches are scoped through
-  `MLX.withError`; on failure the engine degrades to unmanaged (recorded in
-  `appliedGPUCacheLimitBytes`) instead of aborting. A process where the write fails cannot run GPU
-  work anyway, so the degradation is exact, not lossy.
+  `MLX.withError`, and a failed cap write stays **pending** instead of aborting. That is not a
+  process without a GPU: under `swiftbuild` test runners only the process's FIRST MLX call fails
+  (the metallib lookup), every later call works, GPU work runs, and an unapplied cap let the pool
+  grow to 23 GB in ForgeCore's live tests (AB-A-0130). So the engine touches MLX once, harmlessly,
+  before writing; retries a failed write before the next package load or run (`resident()`);
+  reports a cap in `appliedGPUCacheLimitBytes` only once a write lands; has `gpuPoolSnapshot()`
+  report MLX's default limit, not the intended cap, while it has not; and logs one `[GPUCache]`
+  line if GPU work proceeds without it. A host write that lands after a failed engine write wins
+  (last write wins), and the engine stops retrying.
   - Two consequences for test code. **One:** any test that calls MLX directly must scope it the
     same way — an unscoped call takes down the whole xctest process, every later suite included.
     **Two:** `Memory.cacheLimit`'s getter cannot be used to probe availability. mlx-swift's setter
