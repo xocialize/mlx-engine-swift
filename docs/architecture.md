@@ -36,7 +36,10 @@ engine does the coordination around them.
   Hugging Face settings panel. A token buys gated/private access and a per-account rate limit in
   place of the anonymous per-source-IP one; hosts inject their own with
   `MLXServeEngine(hfTokenProvider:)`. A Keychain that cannot be read falls through to the next
-  source rather than failing a download that would have worked anonymously.
+  source rather than failing a download that would have worked anonymously, and one that would
+  prompt cannot hang it (AB-T-0203). An unsigned CLI's legacy-keychain read raises macOS's access
+  prompt for an item another binary created, so that read gets 2 s and then counts as empty; set
+  `MLXENGINE_HF_KEYCHAIN=0` to skip the Keychain altogether in CI and scripted runs.
 - **Disk governance** — the store's counterpart to memory governance: `WeightSourcing.
   missingWeightSources(storeRoot:)` ships a default probe over that layout,
   `MLXServeEngine.deleteWeights(repo:)` deletes a repo's weights but **refuses while a resident

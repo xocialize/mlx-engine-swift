@@ -28,6 +28,14 @@
 // the next source and, finding nothing, returns nil — an anonymous download that would have
 // succeeded must not fail because a credential lookup did. `save()` does propagate, because a
 // settings UI that says "Saved" without saving is worse than an error.
+//
+// Nor may a Keychain read HANG the caller (AB-T-0203). An unsigned process falls back to the
+// legacy keychain, and reading an item another binary created there raises macOS's access prompt;
+// `SecItemCopyMatching` blocks until someone answers it, which in a CLI or CI run is never (the
+// first Hub call of an `mlx-flashvsr-swift` fresh-store run hung exactly there, AB-A-0132). The
+// non-interactive flags cannot help, because the SDK says they apply to data-protection items only. So
+// the legacy read runs against a deadline (`SystemKeychain.legacyReadDeadline`), and
+// `MLXENGINE_HF_KEYCHAIN=0` skips the Keychain in `resolve()` altogether.
 
 import Foundation
 import Security
@@ -71,9 +79,45 @@ public struct KeychainError: Error, LocalizedError, Equatable {
 /// and falls through to the legacy file-based keychain, which it can use. Shipping apps take the
 /// first path; developers get a working second one. See `preferenceOrder` for the asymmetry that
 /// makes searching *both* mandatory rather than tidy.
+///
+/// **The legacy read is bounded** (AB-T-0203). Reading a legacy item that another binary created
+/// raises an access prompt, and `SecItemCopyMatching` blocks until it is answered. So the legacy
+/// pass runs on its own thread, and a read still waiting at `legacyReadDeadline` is treated as
+/// unavailable (look elsewhere), never as an error. The abandoned read is held, so a later call
+/// does not stack a second prompt behind the first, and an answer that arrives after the deadline
+/// is used by the next read. The data-protection pass never prompts and is not bounded.
 public struct SystemKeychain: KeychainStoring {
 
-    public init() {}
+    /// How long a legacy-keychain read may run before this call stops waiting for it.
+    public let legacyReadDeadline: TimeInterval
+    /// `SecItemCopyMatching` for one (service, account, keychain), behind a seam so a test can make
+    /// the legacy read block the way an unanswered prompt does.
+    private let copyMatching: @Sendable (_ service: String, _ account: String,
+                                         _ dataProtection: Bool) -> (OSStatus, Data?)
+    private let legacyReads = LegacyReadGate()
+
+    public init(legacyReadDeadline: TimeInterval = 2) {
+        self.init(legacyReadDeadline: legacyReadDeadline) { service, account, dataProtection in
+            Self.secItemCopyMatching(service: service, account: account,
+                                     dataProtection: dataProtection)
+        }
+    }
+
+    init(legacyReadDeadline: TimeInterval,
+         copyMatching: @escaping @Sendable (String, String, Bool) -> (OSStatus, Data?)) {
+        self.legacyReadDeadline = legacyReadDeadline
+        self.copyMatching = copyMatching
+    }
+
+    private static func secItemCopyMatching(service: String, account: String,
+                                            dataProtection: Bool) -> (OSStatus, Data?) {
+        var query = base(service: service, account: account, dataProtection: dataProtection)
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        var item: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        return (status, item as? Data)
+    }
 
     /// The two keychains, in preference order: modern first.
     ///
@@ -107,18 +151,41 @@ public struct SystemKeychain: KeychainStoring {
     public func read(service: String, account: String) throws -> String? {
         var firstHardFailure: OSStatus?
         for dataProtection in Self.preferenceOrder {
-            var query = Self.base(service: service, account: account, dataProtection: dataProtection)
-            query[kSecReturnData as String] = true
-            query[kSecMatchLimit as String] = kSecMatchLimitOne
-            var item: CFTypeRef?
-            let status = SecItemCopyMatching(query as CFDictionary, &item)
+            let attempt = dataProtection
+                ? copyMatching(service, account, true)
+                : legacyRead(service: service, account: account)
+            // nil: a legacy read still waiting on an access prompt — look elsewhere, not a failure.
+            guard let (status, data) = attempt else { continue }
             if status == errSecSuccess {
-                return (item as? Data).flatMap { String(data: $0, encoding: .utf8) }
+                return data.flatMap { String(data: $0, encoding: .utf8) }
             }
             if !Self.shouldTryNext(status), firstHardFailure == nil { firstHardFailure = status }
         }
         // A real failure is reported; "neither keychain has it" is simply nil.
         if let firstHardFailure { throw KeychainError(status: firstHardFailure, operation: "read") }
+        return nil
+    }
+
+    /// The legacy pass, bounded by `legacyReadDeadline`. nil = the read is waiting on an access
+    /// prompt that nobody has answered (yet).
+    private func legacyRead(service: String, account: String) -> (OSStatus, Data?)? {
+        let key = "\(service)|\(account)"
+        if let held = legacyReads.held(key) {
+            // An earlier read outlived its deadline. If its prompt has been answered since, use
+            // what it found; if not, do not raise a second prompt behind the first.
+            guard let late = held.value else { return nil }
+            legacyReads.release(key)
+            return late
+        }
+        let box = ResultBox<(OSStatus, Data?)>()
+        let finished = DispatchSemaphore(value: 0)
+        let copy = copyMatching
+        Thread.detachNewThread {
+            box.set(copy(service, account, false))
+            finished.signal()
+        }
+        if finished.wait(timeout: .now() + legacyReadDeadline) == .success { return box.value }
+        legacyReads.hold(box, for: key)
         return nil
     }
 
@@ -167,6 +234,48 @@ public struct SystemKeychain: KeychainStoring {
         if let firstHardFailure {
             throw KeychainError(status: firstHardFailure, operation: "delete")
         }
+    }
+}
+
+/// One value, set once by another thread.
+final class ResultBox<T: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: T?
+
+    func set(_ value: T) {
+        lock.lock()
+        stored = value
+        lock.unlock()
+    }
+
+    var value: T? {
+        lock.lock()
+        defer { lock.unlock() }
+        return stored
+    }
+}
+
+/// Legacy-keychain reads that outlived their deadline, by (service, account) (AB-T-0203).
+final class LegacyReadGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var abandoned: [String: ResultBox<(OSStatus, Data?)>] = [:]
+
+    func held(_ key: String) -> ResultBox<(OSStatus, Data?)>? {
+        lock.lock()
+        defer { lock.unlock() }
+        return abandoned[key]
+    }
+
+    func hold(_ box: ResultBox<(OSStatus, Data?)>, for key: String) {
+        lock.lock()
+        abandoned[key] = box
+        lock.unlock()
+    }
+
+    func release(_ key: String) {
+        lock.lock()
+        abandoned[key] = nil
+        lock.unlock()
     }
 }
 
@@ -235,6 +344,18 @@ public struct HFTokenStore: Sendable {
     /// Checked in order. Both spellings are read by `huggingface_hub` itself.
     public static let environmentKeys = ["HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"]
 
+    /// Set to `0` (or `false` / `no` / `off`) and `resolve()` never touches the Keychain — for CI and
+    /// scripted CLIs, where nobody can answer an access prompt (AB-T-0203). The bounded legacy read
+    /// already keeps such a prompt from hanging the process; this keeps it from appearing at all.
+    /// `keychainToken()`, `save()` and `clear()` are explicit Keychain operations and ignore it.
+    public static let keychainSwitchKey = "MLXENGINE_HF_KEYCHAIN"
+
+    static func keychainDisabled(_ env: [String: String]) -> Bool {
+        guard let raw = env[keychainSwitchKey] else { return false }
+        return ["0", "false", "no", "off"].contains(
+            raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
+    }
+
     private let keychain: any KeychainStoring
     private let environment: @Sendable () -> [String: String]
     private let cliTokenFileOverride: URL?
@@ -271,7 +392,7 @@ public struct HFTokenStore: Sendable {
         }
         // `try?` on a throwing `String?` flattens to `String?`, which is exactly right here:
         // "the Keychain refused us" and "the Keychain is empty" both mean try the next source.
-        if let token = try? keychainToken() {
+        if !Self.keychainDisabled(env), let token = try? keychainToken() {
             return Resolution(token: token, source: .keychain)
         }
         if let file = cliTokenFile(env),
