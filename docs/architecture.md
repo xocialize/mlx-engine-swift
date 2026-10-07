@@ -260,6 +260,38 @@ This is the repo's one runtime dependency (`mlx-swift`, scoped to `MLXServeCore`
 only, still no inference math in the engine). `MLXToolKit` stays dependency-free, so packages'
 offline contract builds are unaffected.
 
+### R-NUM-1 — fp32 numerics: MLX's TF32 default is left on (AB-A-0118, decided 2026-10-07)
+
+- **What MLX does.** `MLX_ENABLE_TF32` defaults to 1 and is read once, at first use (a static in
+  `mlx/utils.h`). Where the NAX path exists (M5), fp32 GEMMs run TF32-class: matmul, quantized matmul
+  with an fp32 input, SDPA, and the batched GEMM inside `conv2d`'s Winograd path. That path covers 3×3,
+  stride 1, groups 1, `C % 32 == O % 32 == 0`, `C + O ≥ 256`, `N·H·W ≥ 4096`, and its F(6,3) output
+  transform amplifies the GEMM's error.
+- **Measured** (M5 Max, MLX 0.32.0, alternating processes):
+
+  | fp32 | TF32 on (default) | `MLX_ENABLE_TF32=0` |
+  |---|---|---|
+  | matmul throughput (4096², 3072² shapes) | 36–42 TFLOP/s | 14 TFLOP/s (~2.8× slower) |
+  | matmul error vs fp64 (2048³) | 7.7e-4 | 8.1e-7 |
+  | Winograd-window conv (1×128×128, 128→128): time | 0.53 ms | 0.56–0.59 ms |
+  | Winograd-window conv: error vs the CPU lane | 6.4e-3 | 4.4e-6 |
+
+- **Decision: the engine does not override it.** Production keeps MLX's default; bf16 / fp16 lanes are
+  unaffected. The fp32 loss that shows up in production output is the Winograd window, and packages
+  fix it locally with their own exact conv route (`WinogradFreeConv2d` / a per-model `convRoute`,
+  shipped in the 14 image packages of AB-A-0119) at a cost they measure. A process-wide switch would
+  slow every package's fp32 GEMMs about 2.8× to fix what those routes already fix. The engine does no
+  inference math, and process-global numerics are not its call.
+- **Opting in is the host's.** Set `MLX_ENABLE_TF32=0` in the launch environment (the scheme, or the
+  process's env), never with `setenv` at runtime: MLX reads it once, and the engine's init already
+  touches MLX (R-MEM-2), so a later change is ignored silently.
+- **Parity lanes.** A GPU lane run with `MLX_ENABLE_TF32=0` is an exact-class fp32 reference (matmul
+  8e-7 vs fp64, Winograd conv 4e-6 vs CPU), and can replace CPU-lane gates that need 30–90 GB at
+  scale. The CPU lane is not a clean reference there anyway: MLX's CPU fp32 GroupNorm drifts with
+  group size (vs float64: 1.2e-6 at 256², 1.1e-5 at 512², 8.2e-5 at 1024² for 128 channels in 32
+  groups), while the GPU's stays near 1e-7. Record the lane — GPU with TF32 on or off, or CPU —
+  beside every parity number.
+
 ## The package abstraction
 
 - `PackageManifest` — the registrable blueprint (license, provenance, requirements, specialty,
