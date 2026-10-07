@@ -96,7 +96,8 @@ public enum EngineError: Error, Sendable, Equatable {
 /// per capability). Defaults to the manifest's first surface (tool) name — unique and
 /// human-meaningful ("lens-t2i", "qwen-image-edit") — falling back to
 /// `provenance.sourceRepo`; pass an explicit id to register the same package twice
-/// (e.g. bf16 vs 4-bit variants).
+/// (e.g. bf16 vs 4-bit variants). Without one, the second registration replaces the first, and
+/// since engine 0.65.3 that is logged and recorded (`RegistrationReplacement`, AB-A-0109).
 public struct PackageID: Hashable, Sendable, Codable, CustomStringConvertible,
     ExpressibleByStringLiteral
 {
@@ -104,6 +105,33 @@ public struct PackageID: Hashable, Sendable, Codable, CustomStringConvertible,
     public init(_ rawValue: String) { self.rawValue = rawValue }
     public init(stringLiteral value: String) { self.rawValue = value }
     public var description: String { rawValue }
+}
+
+/// A `register()` without an `id:` whose derived `PackageID` was already registered with a DIFFERENT
+/// configuration or package (AB-A-0109).
+///
+/// The replacement itself is how a host updates a package, but with a derived id it is almost always
+/// one package registered for two variants: the last registration silently wins every route. ForgeCore
+/// ran its motion and defocus Restormer routes on the denoiser for two months this way. Logged as
+/// `[Register]` and recorded on `MLXServeEngine.registrationReplacements`, never thrown: the engine
+/// reports declaration problems and does not refuse to run (the `Specialty` and 1.28.0 licence stance).
+/// A host or test that wants strictness asserts that the list is empty. An explicit `id:` marks a
+/// replacement as intended, and is not recorded.
+public struct RegistrationReplacement: Sendable, Equatable {
+    public let packageID: PackageID
+    /// `false` when a different package (another manifest) derived the same id.
+    public let samePackage: Bool
+    /// The replaced and the new configuration: type name plus sorted-key JSON.
+    public let previousConfiguration: String
+    public let newConfiguration: String
+
+    public init(packageID: PackageID, samePackage: Bool,
+                previousConfiguration: String, newConfiguration: String) {
+        self.packageID = packageID
+        self.samePackage = samePackage
+        self.previousConfiguration = previousConfiguration
+        self.newConfiguration = newConfiguration
+    }
 }
 
 /// A non-mutating verdict on whether a package's requirements can run on this engine's device +
@@ -337,6 +365,10 @@ public actor MLXServeEngine {
     /// **user-facing**: an app can badge a model whose weights are non-commercial. Empty under
     /// `.blocking`, where such a package never registers at all.
     public private(set) var licenseAdvisories: [LicenseAdvisory] = []
+    /// Every `register()` without an `id:` that replaced its derived id's registration with a
+    /// different configuration or package (AB-A-0109) — see `RegistrationReplacement`. Empty in a
+    /// host whose variants each carry their own id.
+    public private(set) var registrationReplacements: [RegistrationReplacement] = []
     /// `run`s (returned or thrown) since the last `trimEveryRuns` trim.
     private var runsSinceTrim = 0
     /// Engine-policy pool trims performed so far (`trimEveryRuns` / `trimAfterEvict` / cancel
@@ -694,10 +726,13 @@ public actor MLXServeEngine {
     ///
     /// The package's capabilities each gain this package as a backer AND as their new default
     /// (last registration wins routing — `setDefault` re-points later without re-registering).
-    /// Re-registering an existing `id` replaces that entry (and evicts any stale resident).
+    /// Re-registering an existing `id` replaces that entry (and evicts any stale resident). When the
+    /// id was DERIVED (no `id:`) and the configuration or package differs, the replacement is logged
+    /// as `[Register]` and recorded on `registrationReplacements` (AB-A-0109): two variants of one
+    /// package each need their own `id:`.
     ///
     /// - Parameter id: engine-side identity; defaults to the manifest's first surface name
-    ///   (falling back to `provenance.sourceRepo`).
+    ///   (falling back to `provenance.sourceRepo`). Passing it also marks a replacement as intended.
     /// - Throws: `.ineligible` (failing device dimension), or `.licenseRejected` (failing layer)
     ///   **only** under `.blocking` license enforcement — the default `.advisory` records the finding
     ///   on `licenseAdvisories` and registers the package (contract 1.28.0).
@@ -765,7 +800,26 @@ public actor MLXServeEngine {
         let packageID = id ?? PackageID(
             registration.manifest.surfaces.first?.name
                 ?? registration.manifest.provenance.sourceRepo)
-        if packages[packageID] != nil {
+        if let existing = packages[packageID] {
+            // AB-A-0109: with a DERIVED id, a replacement by a different configuration or package is
+            // almost always two variants registered without `id:`, and the last one would silently
+            // win every route. Say so, and record it. An explicit id marks an intended update.
+            if id == nil {
+                let previous = Self.describe(existing.configuration)
+                let incoming = Self.describe(configuration)
+                let samePackage = existing.registration.manifest == registration.manifest
+                if previous != incoming || !samePackage {
+                    registrationReplacements.append(RegistrationReplacement(
+                        packageID: packageID, samePackage: samePackage,
+                        previousConfiguration: previous, newConfiguration: incoming))
+                    print("[Register] \(packageID) was already registered "
+                        + (samePackage ? "with a different configuration"
+                                       : "by a different package (\(existing.registration.manifest.provenance.sourceRepo))")
+                        + ", and this registration REPLACES it: every route to \(packageID) now runs "
+                        + "the new one. Registering one package for two variants? Give each its own "
+                        + "id:. Replacing on purpose? Pass id: to say so. Was: \(previous). Now: \(incoming).")
+                }
+            }
             // Replacement: drop any resident built from the stale registration.
             await evictResident(packageID)
             for capability in backing.keys {
@@ -829,6 +883,18 @@ public actor MLXServeEngine {
             defaults[capability] = packageID
         }
         return packageID
+    }
+
+    /// A configuration's identity for the replacement check (AB-A-0109): its type plus sorted-key JSON.
+    /// Every `PackageConfiguration` is `Codable`; `String(describing:)` covers one that fails to
+    /// encode. Both sides are compared after the model-store stamp, so the stamp never differs.
+    private static func describe(_ configuration: any PackageConfiguration) -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        guard let data = try? encoder.encode(configuration),
+              let json = String(data: data, encoding: .utf8)
+        else { return String(describing: configuration) }
+        return "\(type(of: configuration)) \(json)"
     }
 
     /// The capabilities currently backed by at least one registered package.
