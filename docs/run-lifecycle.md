@@ -61,7 +61,9 @@ Order of levers at admission (`PreemptionPolicy`, engine-side only — no contra
 4. **Requeue, bounded.** A requeued attempt re-enters normal admission but may only *wait* for
    running victims, never preempt them — structurally preventing two requests from preempting
    each other in a loop. After `maxRequeues` preemptions (default 2) the request degrades to a
-   clear `EngineError.preemptionRetryExhausted`, never an infinite retry.
+   clear `EngineError.preemptionRetryExhausted`, never an infinite retry. Each requeue is
+   reported to the caller's own progress sink as `RunPhase.requeue` (step = requeue ordinal,
+   totalSteps = `maxRequeues`; contract 1.51.0) — see [Per-run progress](#per-run-progress-for-hosts).
 5. **If the caller cancels while a preemption is in flight, the user lane wins**: the
    `CancellationError` surfaces and nothing requeues.
 
@@ -73,6 +75,29 @@ serialized by an engine-internal gate, so a requeued victim cannot race its pree
 mid-`load()` accounting. Runs themselves still overlap their awaits; only one inference executes
 at a time on `InferenceActor` — preemption is about a *queued contender needing residency*, not
 about concurrent runs.
+
+## Per-run progress for hosts
+
+`engine.runProgress` is keyed by capability and package, so it can describe only one run per
+package at a time. A host that runs several jobs at once — a queue-backed server, say — binds its
+own `RunProgress.sink` around each call instead (contract 1.51.0):
+
+```swift
+let response = try await RunProgress.$sink.withValue({ report in
+    jobs.update(jobID, phase: report.phase, step: report.step, of: report.totalSteps)
+}) {
+    try await engine.run(request)
+}
+```
+
+- The engine forwards every `RunPhaseReport` of that request to the sink, synchronously and in
+  order, alongside `runProgress`. The binding is task-local, so two jobs on one package each
+  see only their own reports. `stream(...)` forwards the same way.
+- The sink runs on the package's run loop. Keep it cheap and non-blocking: record the report and
+  hop elsewhere to do anything slow.
+- When the governor preempts the run and requeues it, the sink gets `RunPhase.requeue` before
+  the request waits. The next attempt starts over, so the package's reports restart from its
+  first phase. `runProgress` reads nil between attempts.
 
 ## What a package must do
 

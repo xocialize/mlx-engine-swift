@@ -1248,6 +1248,11 @@ public actor MLXServeEngine {
     /// abandonment case). A thrown run also still `touch`es LRU recency — deliberate: its
     /// weights are hot and the measured post-cancel pattern is an immediate re-run (the LTX
     /// cancel→re-run recovery). Genuine errors propagate to the caller unchanged.
+    ///
+    /// **Per-run progress** (1.51.0): a `RunProgress.sink` the caller binds around this call
+    /// receives every `RunPhaseReport` of this request, synchronously and in order, alongside
+    /// `runProgress`. A governor requeue reports `RunPhase.requeue` to it before the request
+    /// waits to be re-admitted.
     public func run(_ request: any CapabilityRequest,
                     package: PackageID? = nil) async throws -> any CapabilityResponse {
         // `STTSessionRequest` is a `CapabilityRequest` so that ONE declared-control pre-flight
@@ -1263,6 +1268,8 @@ public actor MLXServeEngine {
         let capability = request.capability
         let id = try resolve(capability, package)
         try preflight(request, id: id)
+        // Read on the caller's task, before runAttempt rebinds the task-local for the package.
+        let callerSink = RunProgress.sink
         var requeues = 0
         while true {
             // A user cancel that lands between attempts (e.g. during a requeue wait, where the
@@ -1271,7 +1278,8 @@ public actor MLXServeEngine {
             try Task.checkCancellation()
             let conduct: AdmissionConduct = !preemption.enabled ? .idleOnly
                 : (requeues == 0 ? .preempting : .waiting)
-            switch try await runAttempt(request, id: id, capability: capability, conduct: conduct) {
+            switch try await runAttempt(request, id: id, capability: capability, conduct: conduct,
+                                        callerSink: callerSink) {
             case .response(let response):
                 return response
             case .preempted:
@@ -1279,6 +1287,8 @@ public actor MLXServeEngine {
                 guard requeues <= preemption.maxRequeues else {
                     throw EngineError.preemptionRetryExhausted(requeues: requeues)
                 }
+                callerSink?(RunPhaseReport(phase: .requeue, step: requeues,
+                                           totalSteps: preemption.maxRequeues))
                 // Queue behavior on requeue: let the in-flight runs (including the admission
                 // that preempted us) finish before re-admitting, rather than contending for
                 // residency they hold.
@@ -1311,7 +1321,8 @@ public actor MLXServeEngine {
     private func runAttempt(_ request: any CapabilityRequest,
                             id: PackageID,
                             capability: Capability,
-                            conduct: AdmissionConduct) async throws -> RunAttemptOutcome {
+                            conduct: AdmissionConduct,
+                            callerSink: RunProgress.Sink?) async throws -> RunAttemptOutcome {
         // What THIS run reserves (1.42.0): the scalar, or the declared model at the mapped
         // workload when that is larger. Sized before admission so the headroom is made for it.
         let reserve = runReserve(for: request, id: id)
@@ -1326,18 +1337,15 @@ public actor MLXServeEngine {
 
         // Bind the ambient run-progress sink around the package's run() — the run-time mirror
         // of the WeightDownloadProgress binding in resident() (V2). Reports land on the
-        // observable `runProgress` monitor AND on the run-handle (the governor's preemption-
-        // policy signal). Task-local, so the binding scopes to exactly this attempt; cleared on
-        // EVERY exit (return, throw, cancel): no run in flight must read as nil.
+        // observable `runProgress` monitor, on the run-handle (the governor's preemption-
+        // policy signal) and on the caller's own sink (1.51.0). Task-local, so the binding
+        // scopes to exactly this attempt; cleared on EVERY exit (return, throw, cancel): no run
+        // in flight must read as nil.
         let pkg = id.description
         runTokenClock &+= 1
         let token = runTokenClock
-        let sink: RunProgress.Sink = { [runProgress] report in
-            Task { @MainActor in
-                runProgress.update(capability, package: pkg, to: report)
-            }
-            Task { await self.noteRunProgress(token: token, report: report) }
-        }
+        let sink = makeRunSink(capability: capability, package: pkg, token: token,
+                               forwardingTo: callerSink)
         // The `.active` wired ticket (HV1) scopes to exactly this attempt's run task: the wired
         // limit rises to Σ reservations + this transient while the package computes, and the
         // pairing survives all three exits (return / throw / cancel — including governor
@@ -1408,8 +1416,11 @@ public actor MLXServeEngine {
     ) -> TTSStreamHandle {
         let (chunks, continuation) = AsyncThrowingStream.makeStream(
             of: TTSStreamChunk.self, bufferingPolicy: bufferingPolicy)
+        // The sink bound around this call gets the stream's reports too, as on `run` (1.51.0).
+        let callerSink = RunProgress.sink
         let runTask = Task {
-            try await self.streamAttempt(request, package: package, continuation: continuation)
+            try await self.streamAttempt(request, package: package, continuation: continuation,
+                                         callerSink: callerSink)
         }
         continuation.onTermination = { @Sendable reason in
             // Consumer stopped iterating / dropped the stream → cancel the run. `.finished`
@@ -1435,7 +1446,8 @@ public actor MLXServeEngine {
     private func streamAttempt(
         _ request: any CapabilityRequest,
         package: PackageID?,
-        continuation: AsyncThrowingStream<TTSStreamChunk, Error>.Continuation
+        continuation: AsyncThrowingStream<TTSStreamChunk, Error>.Continuation,
+        callerSink: RunProgress.Sink?
     ) async throws -> any CapabilityResponse {
         let capability = request.capability
         do {
@@ -1461,12 +1473,8 @@ public actor MLXServeEngine {
             let pkg = id.description
             runTokenClock &+= 1
             let token = runTokenClock
-            let sink: RunProgress.Sink = { [runProgress] report in
-                Task { @MainActor in
-                    runProgress.update(capability, package: pkg, to: report)
-                }
-                Task { await self.noteRunProgress(token: token, report: report) }
-            }
+            let sink = makeRunSink(capability: capability, package: pkg, token: token,
+                                   forwardingTo: callerSink)
             // Same `.active` wired-ticket scope as `runAttempt` (HV1) — a stream is one
             // serialized inference with a chunked delivery surface.
             let wiredTicket = makeActiveWiredTicket(transientBytes: reserve.transient)
@@ -1732,6 +1740,20 @@ public actor MLXServeEngine {
         endLiveSession(token, with: .livePreempted(record.id))
         await record.pump.value
         await evictResident(record.id)
+    }
+
+    /// The sink bound around one attempt's `run()` / `runStream()`. Each report goes to the
+    /// caller's sink first — synchronously, on the run loop, so the host sees reports in order
+    /// (1.51.0) — then to the `runProgress` monitor and the run-handle.
+    private func makeRunSink(capability: Capability, package pkg: String, token: UInt64,
+                             forwardingTo callerSink: RunProgress.Sink?) -> RunProgress.Sink {
+        { [runProgress] report in
+            callerSink?(report)
+            Task { @MainActor in
+                runProgress.update(capability, package: pkg, to: report)
+            }
+            Task { await self.noteRunProgress(token: token, report: report) }
+        }
     }
 
     /// Record a run's latest phase report on its handle (the preemption-policy signal).

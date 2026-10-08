@@ -1138,5 +1138,24 @@ public enum ContractVersion {
     //     refused, not returned short).
     //   Additive: one capability case and one contract file; one `SurfaceControls` case and accessor.
     //     Pre-1.50 descriptor JSON decodes unchanged, and no existing construction site changes.
-    public static let current = SemanticVersion(major: 1, minor: 50, patch: 0)
+    // 1.51.0 (2026-10-07, additive): PER-RUN PROGRESS FOR HOSTS, closing AB-A-0140. Before this,
+    //   `runAttempt` bound the engine's own sink with `RunProgress.$sink.withValue`, which shadowed
+    //   any sink the caller had bound around `engine.run`. The only per-run signal left was
+    //   `RunMonitor`, keyed by capability and package, which is correct only while a host runs one
+    //   job per package at a time. ML[X] Image Server (a queue-backed REST + MCP host) had to pin
+    //   itself to one dispatch slot and poll `RunMonitor` from the MainActor.
+    //   • `MLXServeEngine.run` and `stream` read the caller's `RunProgress.sink` at entry and
+    //     forward every `RunPhaseReport` of that request to it, synchronously and in order, before
+    //     the monitor and the run-handle see it. Task-locals scope the binding to the call, so two
+    //     jobs on one package each get only their own reports. The sink runs on the package's run
+    //     loop: it must be cheap and must not block.
+    //   • `RunPhase.requeue` — ENGINE-reported, never by a package. When the governor preempts a
+    //     run that will be re-admitted, the caller's sink gets `.requeue` with `step` = the
+    //     requeue ordinal and `totalSteps` = `PreemptionPolicy.maxRequeues`, before the request
+    //     waits. The next attempt starts over, so the package's reports restart from its first
+    //     phase. A preemption past the bound is `preemptionRetryExhausted`, not a requeue, and
+    //     reports nothing. `RunMonitor` is unchanged: it still reads nil between attempts.
+    //   Additive: one `RunPhase` constant; no signature changes. A caller that binds no sink sees
+    //     exactly 1.50.0 behaviour, and packages change nothing.
+    public static let current = SemanticVersion(major: 1, minor: 51, patch: 0)
 }

@@ -44,6 +44,12 @@ extension RunPhase {
     public static let generate: RunPhase = "generate"
     /// Output assembly after the model is done (container encode/mux, resample, trim).
     public static let postprocess: RunPhase = "postprocess"
+    /// ENGINE-reported, never by a package (contract 1.51.0): the governor preempted this run to
+    /// reclaim residency, and the engine will re-admit it. `step` is the requeue ordinal (1-based)
+    /// and `totalSteps` the policy's `maxRequeues`. The next attempt starts over, so the
+    /// package's reports restart from its first phase. Delivered only to a sink the caller bound
+    /// around `MLXServeEngine.run`; `RunMonitor` reads nil between attempts.
+    public static let requeue: RunPhase = "requeue"
 }
 
 /// One coarse progress observation from inside a run: the phase, plus optional step counts
@@ -80,6 +86,16 @@ public struct RunPhaseReport: Sendable, Equatable {
 /// ```swift
 /// RunProgress.report(.denoise, step: i + 1, totalSteps: steps, stage: 1, totalStages: 2)
 /// ```
+///
+/// A HOST gets per-run progress by binding its own sink around the engine call (contract
+/// 1.51.0). The engine forwards each report to it synchronously and in order, alongside its
+/// monitor, so concurrent jobs on one package can each be tagged:
+/// ```swift
+/// try await RunProgress.$sink.withValue({ report in jobs.update(jobID, report) }) {
+///     try await engine.run(request)
+/// }
+/// ```
+/// The sink runs on the package's run loop, so it must be cheap and must not block.
 public enum RunProgress {
     public typealias Sink = @Sendable (RunPhaseReport) -> Void
 

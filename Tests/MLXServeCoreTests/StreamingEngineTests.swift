@@ -58,6 +58,7 @@ private final class MockStreamingTTSPackage: ModelPackage, StreamEmitting {
             try Task.checkCancellation()
             let samples = (0..<4).map { Float(index * 4 + $0) / 100 }
             all += samples
+            RunProgress.report(.generate, step: index + 1, totalSteps: Self.chunkCount)
             emit(TTSStreamChunk(samples: samples, sampleRate: Self.rate, index: index,
                                 isFinal: index == Self.chunkCount - 1))
         }
@@ -124,6 +125,14 @@ private final class MockHangingStreamPackage: ModelPackage, StreamEmitting {
     }
 }
 
+/// Lock-guarded report log a caller-bound `RunProgress` sink appends into (1.51.0).
+private final class ReportLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _reports: [RunPhaseReport] = []
+    func append(_ report: RunPhaseReport) { lock.withLock { _reports.append(report) } }
+    var reports: [RunPhaseReport] { lock.withLock { _reports } }
+}
+
 private func mockConfig() -> StandardConfiguration { StandardConfiguration(weightsRepo: "mock/mock") }
 private func request() -> TTSRequest { TTSRequest(text: "hello") }
 
@@ -145,6 +154,22 @@ private func request() -> TTSRequest { TTSRequest(text: "hello") }
     let response = try await handle.completion.value
     // Aggregated response carries all streamed samples (44-byte header + 12 × 2 bytes).
     #expect(response.audio.data.count == 44 + 12 * 2)
+}
+
+// 1.51.0 (AB-A-0140): a sink bound around stream() gets the run's reports, as on run().
+@Test func streamForwardsReportsToTheCallersSink() async throws {
+    let engine = MLXServeEngine()
+    try await engine.register(PackageRegistration.of(MockStreamingTTSPackage.self),
+                              configuration: mockConfig())
+
+    let log = ReportLog()
+    let handle = RunProgress.$sink.withValue({ log.append($0) }) {
+        engine.stream(request())
+    }
+    for try await _ in handle.chunks {}
+    _ = try await handle.completion.value
+
+    #expect(log.reports == (1...3).map { RunPhaseReport(phase: .generate, step: $0, totalSteps: 3) })
 }
 
 @Test func streamOnBatchOnlyPackageThrowsStreamingUnsupported() async throws {

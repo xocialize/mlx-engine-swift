@@ -14,6 +14,7 @@ import MLXToolKit
 //   - the retry bound degrades repeated preemption to EngineError.preemptionRetryExhausted
 //   - a nearly-done victim (V2 progress ≥ threshold) is waited for, not cancelled
 //   - V1 hygiene (cancel-trim) fires on the preempt path; V2 monitor clears on every exit
+//   - a requeue is reported to the caller's own sink as RunPhase.requeue (1.51.0)
 //   - a package with a run in flight is never the idle-LRU victim; prepare() never preempts
 
 // MARK: - Probes
@@ -36,6 +37,14 @@ private final class RunProbe: @unchecked Sendable {
     var attempts: Int { lock.withLock { _attempts } }
     var cancelledMidRun: Bool { lock.withLock { _cancelledMidRun } }
     var finished: Int { lock.withLock { _finished } }
+}
+
+/// Lock-guarded report log a caller-bound `RunProgress` sink appends into (1.51.0).
+private final class ReportLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _reports: [RunPhaseReport] = []
+    func append(_ report: RunPhaseReport) { lock.withLock { _reports.append(report) } }
+    var reports: [RunPhaseReport] { lock.withLock { _reports } }
 }
 
 // MARK: - Mock packages (cooperative: yield between steps, honor Task.checkCancellation)
@@ -334,6 +343,51 @@ private func waitUntilMonitorClear(_ e: MLXServeEngine, _ capability: Capability
             _ = try await victimCall.value
         }
         #expect(SpinningVictim.probe.attempts == 1) // the bound stopped the requeue
+    }
+
+    // 1.51.0 (AB-A-0140): the preempted caller's own sink sees the package's report, then the
+    // engine's `.requeue` (1 of maxRequeues 2) before the re-admitted attempt runs.
+    @Test func governorRequeueIsReportedToTheCallersSink() async throws {
+        SpinningVictim.probe.reset()
+        let e = engine(budget: 60)
+        try await e.register(PackageRegistration.of(SpinningVictim.self), configuration: cfg())
+        try await e.register(PackageRegistration.of(QuickContender.self), configuration: cfg())
+
+        let log = ReportLog()
+        let victimCall = Task {
+            try await RunProgress.$sink.withValue({ log.append($0) }) {
+                try await e.run(LLMRequest(prompt: "v"), package: "victim-llm")
+            }
+        }
+        try await waitUntilRunning(e, "victim-llm")
+        _ = try await e.run(LLMRequest(prompt: "c"), package: "contender-llm")
+
+        let victim = try await victimCall.value
+        #expect((victim as? LLMResponse)?.text == "victim-after-requeue")
+        #expect(log.reports == [RunPhaseReport(phase: .generate, step: 1, totalSteps: 10),
+                                RunPhaseReport(phase: .requeue, step: 1, totalSteps: 2)])
+    }
+
+    // A preemption past the retry bound is not a requeue, so no `.requeue` is reported.
+    @Test func exhaustedRetryBoundReportsNoRequeue() async throws {
+        SpinningVictim.probe.reset()
+        let e = engine(budget: 60, preemption: PreemptionPolicy(maxRequeues: 0))
+        try await e.register(PackageRegistration.of(SpinningVictim.self), configuration: cfg())
+        try await e.register(PackageRegistration.of(QuickContender.self), configuration: cfg())
+
+        let log = ReportLog()
+        let victimCall = Task {
+            try await RunProgress.$sink.withValue({ log.append($0) }) {
+                try await e.run(LLMRequest(prompt: "v"), package: "victim-llm")
+            }
+        }
+        try await waitUntilRunning(e, "victim-llm")
+        _ = try await e.run(LLMRequest(prompt: "c"), package: "contender-llm")
+
+        await #expect(throws: EngineError.preemptionRetryExhausted(requeues: 1)) {
+            _ = try await victimCall.value
+        }
+        #expect(log.reports == [RunPhaseReport(phase: .generate, step: 1, totalSteps: 10)])
     }
 
     // Governor policy: a victim whose V2 progress reads nearly done (9/10 ≥ 0.8) is WAITED for,

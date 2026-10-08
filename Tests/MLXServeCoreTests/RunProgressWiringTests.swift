@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 import MLXToolKit
 @testable import MLXServeCore
@@ -84,4 +85,79 @@ private final class MockReportingPackage: ModelPackage {
 @Test func reportOutsideAnyRunIsNoOp() {
     // A package (or stray code path) reporting with no engine-bound sink must be harmless.
     RunProgress.report(.decode, step: 1, totalSteps: 3)
+}
+
+// MARK: - Caller-bound sink (contract 1.51.0, AB-A-0140)
+
+/// Lock-guarded report log a caller-bound sink appends into.
+private final class ReportLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _reports: [RunPhaseReport] = []
+    func append(_ report: RunPhaseReport) { lock.withLock { _reports.append(report) } }
+    var reports: [RunPhaseReport] { lock.withLock { _reports } }
+}
+
+/// Reports `generate` with step = the prompt's length, yielding between two reports so
+/// concurrent runs interleave their awaits.
+@InferenceActor
+private final class MockPromptKeyedPackage: ModelPackage {
+    typealias Configuration = StandardConfiguration
+    nonisolated static var manifest: PackageManifest {
+        PackageManifest(
+            license: LicenseDeclaration(weightLicense: .apache2, portCodeLicense: .apache2),
+            provenance: Provenance(sourceRepo: "mock/keyed", revision: "main", tier: 1),
+            requirements: RequirementsManifest(
+                footprints: [QuantFootprint(quant: .int4, residentBytes: 1)],
+                requiredBackends: [.metalGPU]
+            ),
+            surfaces: [LLMContract.descriptor(name: "keyed-llm", summary: "mock")]
+        )
+    }
+
+    nonisolated init(configuration: StandardConfiguration) {}
+    func load() async throws {}
+    func unload() async {}
+
+    func run(_ request: any CapabilityRequest) async throws -> any CapabilityResponse {
+        let key = (request as? LLMRequest)?.messages.last?.content.count ?? 0
+        RunProgress.report(.generate, step: key, totalSteps: 2 * key)
+        await Task.yield()
+        RunProgress.report(.generate, step: 2 * key, totalSteps: 2 * key)
+        return LLMResponse(text: "keyed", finishReason: .stop)
+    }
+}
+
+// A host that binds its own sink around engine.run gets every report of that run, in order,
+// by the time run returns. Before 1.51.0 the engine's binding shadowed it and it saw nothing.
+@Test func callerBoundSinkReceivesTheRunsReports() async throws {
+    let engine = MLXServeEngine()
+    try await engine.register(PackageRegistration.of(MockPromptKeyedPackage.self),
+                              configuration: StandardConfiguration(weightsRepo: "mock/mock"))
+    let log = ReportLog()
+    _ = try await RunProgress.$sink.withValue({ log.append($0) }) {
+        try await engine.run(LLMRequest(prompt: "abc"))
+    }
+    #expect(log.reports == [RunPhaseReport(phase: .generate, step: 3, totalSteps: 6),
+                            RunPhaseReport(phase: .generate, step: 6, totalSteps: 6)])
+}
+
+// The point of the ask: two jobs on ONE package, each with its own sink, are told apart
+// without a dispatch slot per package. Each sink sees exactly its own run's reports.
+@Test func concurrentRunsOnOnePackageEachSeeOnlyTheirOwnReports() async throws {
+    let engine = MLXServeEngine()
+    try await engine.register(PackageRegistration.of(MockPromptKeyedPackage.self),
+                              configuration: StandardConfiguration(weightsRepo: "mock/mock"))
+    let logA = ReportLog()
+    let logB = ReportLog()
+    async let a = RunProgress.$sink.withValue({ logA.append($0) }) {
+        try await engine.run(LLMRequest(prompt: "a"))
+    }
+    async let b = RunProgress.$sink.withValue({ logB.append($0) }) {
+        try await engine.run(LLMRequest(prompt: "bbbb"))
+    }
+    _ = try await (a, b)
+    #expect(logA.reports == [RunPhaseReport(phase: .generate, step: 1, totalSteps: 2),
+                             RunPhaseReport(phase: .generate, step: 2, totalSteps: 2)])
+    #expect(logB.reports == [RunPhaseReport(phase: .generate, step: 4, totalSteps: 8),
+                             RunPhaseReport(phase: .generate, step: 8, totalSteps: 8)])
 }
