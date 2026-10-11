@@ -1182,9 +1182,11 @@ public enum ContractVersion {
     //     carrying a `.rawRGBA16` image (any stored `Image`, `Image?` or `[Image]`) on a surface that
     //     does not list it, with `PackageError.unsupportedRequestFeature`, before admission.
     //   Additive for the contract: one `Image.Format` case, one defaulted descriptor member. Pre-1.52
-    //     descriptor JSON decodes unchanged. SOURCE NOTE: a consumer with an exhaustive `switch` over
-    //     `Image.Format` must add the case; the fleet had one (pixel-agency-image-engine `Media.swift`),
-    //     updated in the same slice. First adopters: RealESRGANMLX's shared `MLXTileProcessor` (reads and
-    //     writes `64RGBALE`) and mlx-realplksr-swift.
+    //     descriptor JSON decodes unchanged. ⚠️ SOURCE-BREAKING for an exhaustive `switch` over
+    //     `Image.Format` with no `@unknown default`: it stops compiling at 0.67.0. Three in the fleet did
+    //     (a first sweep missed two of them): mlx-seedvr2-swift (fixed v0.10.1), mlx-trellis2-swift (v0.9.5)
+    //     and pixel-agency-image-engine `Media.swift`; ming-image-swift had `@unknown default` and was
+    //     fine. Switch over `Image.Format` with `@unknown default`. First adopters: RealESRGANMLX's shared
+    //     `MLXTileProcessor` (reads and writes `64RGBALE`, ≥ 0.8.1) and mlx-realplksr-swift 0.2.0.
     public static let current = SemanticVersion(major: 1, minor: 52, patch: 0)
 }
