@@ -203,6 +203,19 @@ public struct ToolDescriptor: Sendable, Codable, Equatable {
     /// `ttsControls` / `sttControls` / `t2vControls` / `t2iControls` / `speechEditControls`
     /// accessors below.
     public let controls: SurfaceControls?
+    /// The raw `Image` formats this surface reads AND returns in kind, beyond the png/jpeg every image
+    /// surface takes (contract 1.52.0, additive). A descriptor-level member, like `quantFloor`, because
+    /// it is routing-time and not one capability's: a consumer decides BEFORE the run whether to send
+    /// 16 bits, and every image capability will grow the same declaration.
+    ///
+    /// Listing `.rawRGBA16` means the surface keeps 16 bits end to end: a `.rawRGBA16` image comes back
+    /// `.rawRGBA16`, and a 16-bit PNG comes back a 16-bit PNG. ENGINE-ENFORCED: a request carrying a
+    /// `.rawRGBA16` image on a surface that does not list it is refused with
+    /// `PackageError.unsupportedRequestFeature` before admission.
+    ///
+    /// `nil` = undeclared, which is every pre-1.52 conformer: png/jpeg, plus `.rawBGRA8` where the
+    /// consumer knows the package mirrors it (that 1.9.0 convention stays undeclared and unenforced).
+    public let rawImageFormats: [Image.Format]?
 
     public init(name: String,
                 capability: Capability,
@@ -211,7 +224,8 @@ public struct ToolDescriptor: Sendable, Codable, Equatable {
                 supportedModes: [Mode] = [],
                 quantFloor: Quant? = nil,
                 streaming: StreamGranularity? = nil,
-                controls: SurfaceControls? = nil) {
+                controls: SurfaceControls? = nil,
+                rawImageFormats: [Image.Format]? = nil) {
         self.name = name
         self.capability = capability
         self.summary = summary
@@ -220,7 +234,20 @@ public struct ToolDescriptor: Sendable, Codable, Equatable {
         self.quantFloor = quantFloor
         self.streaming = streaming
         self.controls = controls
+        self.rawImageFormats = rawImageFormats
     }
+
+    /// This descriptor, declaring `rawImageFormats` (contract 1.52.0). Lets any capability's canonical
+    /// factory declare a raw boundary without a parameter per factory:
+    /// `ImageUpscaleContract.descriptor(name:summary:).declaring(rawImageFormats: [.rawBGRA8, .rawRGBA16])`.
+    public func declaring(rawImageFormats formats: [Image.Format]) -> ToolDescriptor {
+        ToolDescriptor(name: name, capability: capability, summary: summary, parameters: parameters,
+                       supportedModes: supportedModes, quantFloor: quantFloor, streaming: streaming,
+                       controls: controls, rawImageFormats: formats)
+    }
+
+    /// Whether this surface declares the 16-bit boundary (`rawImageFormats` lists `.rawRGBA16`).
+    public var acceptsRawRGBA16: Bool { rawImageFormats?.contains(.rawRGBA16) == true }
 }
 
 extension ToolDescriptor {

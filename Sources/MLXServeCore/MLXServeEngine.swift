@@ -2079,6 +2079,29 @@ public actor MLXServeEngine {
                 "context — \(id) declares no recognition-biasing surface "
                     + "(ToolDescriptor.sttControls)")
         }
+
+        // The 16-bit boundary (contract 1.52.0, AB-A-0158): declaration-gated, because a package that
+        // never adopted `.rawRGBA16` fails it as a decode error deep inside its own codec — after the
+        // load — or, worse, reads 8 bytes a pixel as two BGRA8 pixels. Refused here with the fix named.
+        if !surface.acceptsRawRGBA16, Self.carriesImage(request, format: .rawRGBA16) {
+            throw PackageError.unsupportedRequestFeature(
+                "rawRGBA16 image — \(id) declares no 16-bit boundary "
+                    + "(ToolDescriptor.rawImageFormats); send .rawBGRA8 or png, or choose a package "
+                    + "that declares .rawRGBA16")
+        }
+    }
+
+    /// Whether any `Image` a request carries — a stored property, an optional one, or an array of them —
+    /// is in `format`. Reflection rather than a per-request accessor, so an image capability added
+    /// later is covered without remembering to list its fields here.
+    static func carriesImage(_ request: any CapabilityRequest, format: Image.Format) -> Bool {
+        Mirror(reflecting: request).children.contains { child in
+            switch child.value {
+            case let image as Image: return image.format == format
+            case let images as [Image]: return images.contains { $0.format == format }
+            default: return false
+            }
+        }
     }
 
     private func resolve(_ capability: Capability, _ package: PackageID?) throws -> PackageID {

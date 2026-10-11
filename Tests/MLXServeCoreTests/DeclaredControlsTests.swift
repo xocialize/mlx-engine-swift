@@ -601,3 +601,81 @@ private let take = Audio(format: .wav, data: Data(count: 44))
         #expect(unsupportedFeature(error)?.contains("speechEditControls") == true)
     }
 }
+
+// MARK: - 16-bit image boundary (contract 1.52.0, AB-A-0158)
+
+/// An upscaler that declares no raw boundary (every image package before 1.52).
+@InferenceActor
+private final class EightBitUpscalePackage: ModelPackage {
+    typealias Configuration = StandardConfiguration
+    nonisolated static var manifest: PackageManifest {
+        controlsManifest(surfaces: [ImageUpscaleContract.descriptor(name: "eight-bit-upscale", summary: "m")])
+    }
+    nonisolated init(configuration: StandardConfiguration) {}
+    func load() async throws {}
+    func unload() async {}
+    func run(_ request: any CapabilityRequest) async throws -> any CapabilityResponse {
+        ImageUpscaleResponse(image: (request as! ImageUpscaleRequest).image, appliedScale: 1)
+    }
+}
+
+/// The RealPLKSR shape: reads and returns both raw formats.
+@InferenceActor
+private final class DeepUpscalePackage: ModelPackage {
+    typealias Configuration = StandardConfiguration
+    nonisolated static var manifest: PackageManifest {
+        controlsManifest(surfaces: [ImageUpscaleContract.descriptor(name: "deep-upscale", summary: "m")
+            .declaring(rawImageFormats: [.rawBGRA8, .rawRGBA16])])
+    }
+    nonisolated init(configuration: StandardConfiguration) {}
+    func load() async throws {}
+    func unload() async {}
+    func run(_ request: any CapabilityRequest) async throws -> any CapabilityResponse {
+        ImageUpscaleResponse(image: (request as! ImageUpscaleRequest).image, appliedScale: 1)
+    }
+}
+
+private let deep = Image.rawRGBA16(data: Data(count: 2 * 2 * 8), width: 2, height: 2)
+
+// The failure this exists to prevent: 8 bytes a pixel handed to a codec that reads 4 — a decode error
+// after the load at best, two garbled BGRA8 pixels per pixel at worst.
+@Test func rawRGBA16AgainstAnUndeclaredSurfaceIsRefusedBeforeTheRun() async throws {
+    let engine = MLXServeEngine()
+    try await engine.register(PackageRegistration.of(EightBitUpscalePackage.self), configuration: mockConfig())
+    do {
+        _ = try await engine.run(ImageUpscaleRequest(image: deep))
+        Issue.record("expected unsupportedRequestFeature")
+    } catch {
+        #expect(unsupportedFeature(error)?.contains("rawRGBA16") == true)
+        #expect(unsupportedFeature(error)?.contains("rawImageFormats") == true)
+    }
+}
+
+// 8-bit inputs are never gated: png, and the undeclared 1.9.0 rawBGRA8 convention.
+@Test func eightBitImagesAreNeverGatedByTheBoundary() async throws {
+    let engine = MLXServeEngine()
+    try await engine.register(PackageRegistration.of(EightBitUpscalePackage.self), configuration: mockConfig())
+    _ = try await engine.run(ImageUpscaleRequest(image: Image(format: .png, data: Data(count: 8), width: 2, height: 2)))
+    _ = try await engine.run(ImageUpscaleRequest(image: .rawBGRA8(data: Data(count: 16), width: 2, height: 2)))
+}
+
+@Test func rawRGBA16PassesAgainstADeclaringSurface() async throws {
+    let engine = MLXServeEngine()
+    try await engine.register(PackageRegistration.of(DeepUpscalePackage.self), configuration: mockConfig())
+    let response = try await engine.run(ImageUpscaleRequest(image: deep)) as? ImageUpscaleResponse
+    #expect(response?.image.format == .rawRGBA16)
+}
+
+// The check reflects over a request's stored images, so capabilities added later are covered: a single
+// image, an optional one, an array, and an optional array.
+@Test func theBoundaryCheckSeesEveryImageField() {
+    let png = Image(format: .png, data: Data(count: 8), width: 2, height: 2)
+    #expect(MLXServeEngine.carriesImage(ImageUpscaleRequest(image: deep), format: .rawRGBA16))
+    #expect(!MLXServeEngine.carriesImage(ImageUpscaleRequest(image: png), format: .rawRGBA16))
+    #expect(MLXServeEngine.carriesImage(IEditRequest(images: [png, deep], prompt: "p"), format: .rawRGBA16))
+    #expect(MLXServeEngine.carriesImage(T2VRequest(prompt: "p", initImage: deep), format: .rawRGBA16))
+    #expect(MLXServeEngine.carriesImage(T2VRequest(prompt: "p", referenceImages: [deep]), format: .rawRGBA16))
+    #expect(!MLXServeEngine.carriesImage(T2VRequest(prompt: "p", initImage: png, referenceImages: [png]),
+                                         format: .rawRGBA16))
+    #expect(!MLXServeEngine.carriesImage(T2VRequest(prompt: "p"), format: .rawRGBA16))
+}

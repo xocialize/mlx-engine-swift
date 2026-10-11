@@ -49,6 +49,48 @@ final class MLXToolKitTests: XCTestCase {
         XCTAssertNil(legacyImg.bytesPerRow)
     }
 
+    // 1.52.0 additive: Image.Format.rawRGBA16 — the 16-bit boundary (AB-A-0158). UInt16, not the
+    // `.rawRGBA16Half` reserved at 1.9.0 (see the changelog for the measurement).
+    func testRawRGBA16ConvenienceAndCodableRoundTrip() throws {
+        XCTAssertEqual(Image.Format.rawRGBA16.rawValue, "rawRGBA16")
+        // 1×2 RGBA16, little-endian: a value an 8-bit format cannot hold (0x1234) must survive.
+        let words: [UInt16] = [0x1234, 0xFFFF, 0x0001, 0xFFFF, 0x8000, 0x7FFF, 0x0000, 0xFFFF]
+        let bytes = words.withUnsafeBytes { Data($0) }
+        let img = Image.rawRGBA16(data: bytes, width: 1, height: 2)
+        XCTAssertEqual(img.format, .rawRGBA16)
+        XCTAssertNil(img.bytesPerRow)   // nil ⇒ tightly packed (width*8)
+        let back = try JSONDecoder().decode(Image.self, from: try JSONEncoder().encode(img))
+        XCTAssertEqual(back, img)
+        XCTAssertEqual(back.data, bytes)
+    }
+
+    // 1.52.0 additive: a surface declares the raw formats it reads and returns in kind.
+    func testRawImageFormatsDeclarationAndBackwardCompatibleDecode() throws {
+        let plain = ImageUpscaleContract.descriptor(name: "u", summary: "s")
+        XCTAssertNil(plain.rawImageFormats)
+        XCTAssertFalse(plain.acceptsRawRGBA16)
+
+        let deep = plain.declaring(rawImageFormats: [.rawBGRA8, .rawRGBA16])
+        XCTAssertEqual(deep.rawImageFormats, [.rawBGRA8, .rawRGBA16])
+        XCTAssertTrue(deep.acceptsRawRGBA16)
+        // Declaring changes nothing else about the surface.
+        XCTAssertEqual(deep.name, plain.name)
+        XCTAssertEqual(deep.parameters, plain.parameters)
+        XCTAssertEqual(deep.capability, .imageUpscale)
+        XCTAssertFalse(plain.declaring(rawImageFormats: [.rawBGRA8]).acceptsRawRGBA16)
+
+        let back = try JSONDecoder().decode(ToolDescriptor.self, from: try JSONEncoder().encode(deep))
+        XCTAssertEqual(back, deep)
+
+        // A pre-1.52 descriptor (no rawImageFormats key) decodes as undeclared.
+        var legacy = try JSONSerialization.jsonObject(with: try JSONEncoder().encode(plain)) as! [String: Any]
+        legacy.removeValue(forKey: "rawImageFormats")
+        let old = try JSONDecoder().decode(ToolDescriptor.self,
+                                           from: try JSONSerialization.data(withJSONObject: legacy))
+        XCTAssertNil(old.rawImageFormats)
+        XCTAssertEqual(old, plain)
+    }
+
     // 1.6.0 additive: characterAnimation (reference character image + driving video ->
     // video of that character performing the driving motion). Introduced by SCAIL-2;
     // the lane shared by Wan2.2-Animate. animation/replacement are Modes (C4).

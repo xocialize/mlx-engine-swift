@@ -32,13 +32,20 @@ public struct Audio: Artifact, Sendable, Codable, Equatable {
 /// does not fork the contract), but with no compression/clamp at the model boundary. For `.rawBGRA8`,
 /// `width` and `height` are **required** (a consumer/package may assume them present), and
 /// `bytesPerRow` is the optional row stride in bytes (defaults to `width * 4`, i.e. tightly packed).
+///
+/// `.rawRGBA16` (1.52.0, additive) is the 16-bit step: raw interleaved **RGBA, 16 bits per component**,
+/// unsigned normalized (0…65535), little-endian, sRGB, alpha premultiplied — what CoreGraphics draws with
+/// `premultipliedLast | byteOrder16Little`, and `kCVPixelFormatType_64RGBALE` in CoreVideo. Same rules as
+/// `.rawBGRA8`: `width`/`height` required, `bytesPerRow` optional (defaults to `width * 8`). A package reads it
+/// only where its surface declares it (`ToolDescriptor.rawImageFormats`); the engine refuses it elsewhere.
 public struct Image: Artifact, Sendable, Codable, Equatable {
-    public enum Format: String, Sendable, Codable { case png, jpeg, rawBGRA8 }
+    public enum Format: String, Sendable, Codable { case png, jpeg, rawBGRA8, rawRGBA16 }
     public let format: Format
     public let data: Data
     public let width: Int?
     public let height: Int?
-    /// Row stride in bytes for `.rawBGRA8` (`nil` ⇒ tightly packed `width * 4`). Ignored for png/jpeg.
+    /// Row stride in bytes for the raw formats (`nil` ⇒ tightly packed: `width * 4` for `.rawBGRA8`,
+    /// `width * 8` for `.rawRGBA16`). Ignored for png/jpeg.
     public let bytesPerRow: Int?
 
     public init(format: Format, data: Data, width: Int? = nil, height: Int? = nil, bytesPerRow: Int? = nil) {
@@ -53,6 +60,12 @@ public struct Image: Artifact, Sendable, Codable, Equatable {
     /// `bytesPerRow` defaults to tightly packed (`width * 4`).
     public static func rawBGRA8(data: Data, width: Int, height: Int, bytesPerRow: Int? = nil) -> Image {
         Image(format: .rawBGRA8, data: data, width: width, height: height, bytesPerRow: bytesPerRow)
+    }
+
+    /// Convenience for the raw 16-bit RGBA case (contract 1.52.0), where `width`/`height` are required.
+    /// `bytesPerRow` defaults to tightly packed (`width * 8`).
+    public static func rawRGBA16(data: Data, width: Int, height: Int, bytesPerRow: Int? = nil) -> Image {
+        Image(format: .rawRGBA16, data: data, width: width, height: height, bytesPerRow: bytesPerRow)
     }
 }
 

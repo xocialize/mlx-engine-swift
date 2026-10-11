@@ -1157,5 +1157,34 @@ public enum ContractVersion {
     //     reports nothing. `RunMonitor` is unchanged: it still reads nil between attempts.
     //   Additive: one `RunPhase` constant; no signature changes. A caller that binds no sink sees
     //     exactly 1.50.0 behaviour, and packages change nothing.
-    public static let current = SemanticVersion(major: 1, minor: 51, patch: 0)
+    // 1.52.0 (2026-10-11, additive): THE 16-BIT IMAGE BOUNDARY, AB-A-0158 (Gigapixel gap G-6). Every
+    //   image surface took and returned 8 bits: `.png` decoded into 8-bit buffers in every package, and
+    //   `.rawBGRA8` is 8 bits by name. A 16-bit TIFF lost its depth at the first model step, and Pixel
+    //   Agency Desktop rebuilt it around each step instead (`PrecisionRestore`, AB-D-0125 / AB-R-0489).
+    //   • `Image.Format.rawRGBA16` (+ `Image.rawRGBA16(...)`): raw interleaved RGBA, 16 bits per
+    //     component, unsigned normalized 0…65535, little-endian, sRGB, alpha premultiplied — CoreGraphics'
+    //     `premultipliedLast | byteOrder16Little`, CoreVideo's `kCVPixelFormatType_64RGBALE`. `width` /
+    //     `height` required; `bytesPerRow` defaults to `width * 8`.
+    //   • WHY NOT THE `.rawRGBA16Half` RESERVED AT 1.9.0. Half has an 11-bit significand: near white its
+    //     step is 1/2048, i.e. 32 sixteen-bit steps. Measured on the G-6 set (5 CC0 RAW developments, the
+    //     16-bit ×4 CG interpolation): rounding through Float16 raises the smooth-area flat-neighbour share
+    //     — the 8-bit-staircase metric the ask is gated on — from 0.02–0.17 to 0.27–0.47 (8 bits: 0.92–
+    //     0.94). A half boundary fails that gate with a perfect model; the UInt16 one carries everything
+    //     an fp32 model makes. `.rawRGBA16Half` stays RESERVED for the extended-range / scene-linear step
+    //     (RAW ingest's 64RGBAHalf), which UInt16 cannot carry.
+    //   • `ToolDescriptor.rawImageFormats: [Image.Format]?` (+ `declaring(rawImageFormats:)`,
+    //     `acceptsRawRGBA16`): the raw formats a surface reads AND returns in kind. On the descriptor,
+    //     not in `SurfaceControls`, because it is routing-time for every image capability alike (the
+    //     `quantFloor` precedent). Listing `.rawRGBA16` promises 16 bits end to end: `.rawRGBA16` in →
+    //     `.rawRGBA16` out, and a 16-bit PNG in → a 16-bit PNG out. `nil` = undeclared = every pre-1.52
+    //     conformer; `.rawBGRA8` mirroring stays the undeclared 1.9.0 convention.
+    //   • ENGINE-ENFORCED like every declaration since 1.38.0: `checkDeclaredControls` refuses a request
+    //     carrying a `.rawRGBA16` image (any stored `Image`, `Image?` or `[Image]`) on a surface that
+    //     does not list it, with `PackageError.unsupportedRequestFeature`, before admission.
+    //   Additive for the contract: one `Image.Format` case, one defaulted descriptor member. Pre-1.52
+    //     descriptor JSON decodes unchanged. SOURCE NOTE: a consumer with an exhaustive `switch` over
+    //     `Image.Format` must add the case; the fleet had one (pixel-agency-image-engine `Media.swift`),
+    //     updated in the same slice. First adopters: RealESRGANMLX's shared `MLXTileProcessor` (reads and
+    //     writes `64RGBALE`) and mlx-realplksr-swift.
+    public static let current = SemanticVersion(major: 1, minor: 52, patch: 0)
 }
