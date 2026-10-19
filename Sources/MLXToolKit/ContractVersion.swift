@@ -1264,5 +1264,23 @@ public enum ContractVersion {
     //   Additive: one defaulted member on `ChatMessage`, one struct, one `SurfaceControls` case and
     //     accessor, one defaulted descriptor argument. ⚠️ An exhaustive `switch` over `SurfaceControls`
     //     needs `case .llm` (or `@unknown default`).
-    public static let current = SemanticVersion(major: 1, minor: 54, patch: 0)
+    // 1.55.0 (2026-10-19, additive): ADAPTER CONDITIONING GROUPS, the gap mlx-ltx found aligning adapter
+    //   registry format 3 to 1.53.0 (AB-A-0193). LTX Ingredients takes a finished reference sheet OR
+    //   subject images (+ an optional location) the host composes into one: three `required: false` slots,
+    //   exactly one alternative required. 1.53.0 validated slots one by one, so a request binding NO sheet
+    //   passed pre-flight.
+    //   • `AdapterDescriptor.conditioningGroups: [String: AdapterConditioningGroup]` — registry format 3's
+    //     own key and shape, so a format-3 entry decodes unchanged: `{rule: "exactlyOne", required,
+    //     alternatives: [{requires, allows?}]}`. An alternative is satisfied when every `requires` role is
+    //     bound and every bound role of the group is in `requires ∪ allows`; the group's roles are the
+    //     roles its alternatives name.
+    //   • ENFORCED in `orderedConditioning` (so in the engine pre-flight, with
+    //     `PackageError.unsupportedRequestFeature`): a required group with nothing bound, bound roles that
+    //     match no alternative, or more than one.
+    //   • VALIDATED (`validationProblems`, so `registerAdapter` and ADP-4): `exactlyOne` is the only rule —
+    //     another is refused rather than registered unenforced; alternatives must each require a role; a
+    //     group's roles must be slots, declared `required: false`, and in one group only.
+    //   Additive: one struct, one defaulted descriptor member and init argument, encoded only when
+    //     non-empty, so pre-1.55 descriptor JSON round-trips unchanged.
+    public static let current = SemanticVersion(major: 1, minor: 55, patch: 0)
 }

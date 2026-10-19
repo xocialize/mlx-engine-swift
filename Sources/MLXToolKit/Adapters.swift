@@ -355,6 +355,113 @@ public struct AdapterConditioningSlot: Sendable, Codable, Equatable {
     }
 }
 
+/// Alternatives among a reference-conditioned adapter's slots (contract 1.55.0) — e.g. LTX
+/// Ingredients takes a finished reference sheet OR subject images (plus an optional location) that
+/// the host composes into one. The shape of adapter registry format 3's `conditioningGroups`, so a
+/// registry entry decodes unchanged:
+///
+/// ```json
+/// "conditioningGroups": {
+///   "sheet": {"rule": "exactlyOne", "required": true, "alternatives": [
+///     {"requires": ["reference_sheet"]},
+///     {"requires": ["subject_images"], "allows": ["location_image"]}
+///   ]}
+/// }
+/// ```
+///
+/// An alternative is satisfied when every `requires` role is bound and every bound role of the
+/// group is in `requires ∪ allows`. The group's roles are every role its alternatives name; those
+/// slots are declared `required: false` — the group decides.
+public struct AdapterConditioningGroup: Sendable, Codable, Equatable {
+    /// How many alternatives a request must satisfy. Open vocabulary, but the engine knows only
+    /// `exactlyOne`: a descriptor naming another rule fails validation, so it can never register
+    /// with a constraint the engine would not enforce.
+    public struct Rule: RawRepresentable, Sendable, Codable, Hashable, ExpressibleByStringLiteral,
+        CustomStringConvertible
+    {
+        public let rawValue: String
+        public init(rawValue: String) { self.rawValue = rawValue }
+        public init(stringLiteral value: String) { self.rawValue = value }
+        public var description: String { rawValue }
+
+        public init(from decoder: any Decoder) throws {
+            rawValue = try decoder.singleValueContainer().decode(String.self)
+        }
+        public func encode(to encoder: any Encoder) throws {
+            var container = encoder.singleValueContainer()
+            try container.encode(rawValue)
+        }
+
+        /// Exactly one alternative is satisfied.
+        public static let exactlyOne: Rule = "exactlyOne"
+    }
+
+    public struct Alternative: Sendable, Codable, Equatable {
+        /// Roles that must all be bound.
+        public let requires: [String]
+        /// Roles that may also be bound with this alternative.
+        public let allows: [String]
+
+        public init(requires: [String], allows: [String] = []) {
+            self.requires = requires
+            self.allows = allows
+        }
+
+        private enum CodingKeys: String, CodingKey { case requires, allows }
+
+        public init(from decoder: any Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            requires = try container.decode([String].self, forKey: .requires)
+            allows = try container.decodeIfPresent([String].self, forKey: .allows) ?? []
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(requires, forKey: .requires)
+            if !allows.isEmpty { try container.encode(allows, forKey: .allows) }
+        }
+
+        var summary: String {
+            requires.joined(separator: " + ")
+                + (allows.isEmpty ? "" : " (+ optional " + allows.joined(separator: ", ") + ")")
+        }
+    }
+
+    public let rule: Rule
+    /// The request must satisfy the group. When false, binding none of its roles is also fine.
+    public let required: Bool
+    public let alternatives: [Alternative]
+
+    public init(rule: Rule = .exactlyOne, required: Bool = true, alternatives: [Alternative]) {
+        self.rule = rule
+        self.required = required
+        self.alternatives = alternatives
+    }
+
+    private enum CodingKeys: String, CodingKey { case rule, required, alternatives }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        rule = try container.decodeIfPresent(Rule.self, forKey: .rule) ?? .exactlyOne
+        required = try container.decodeIfPresent(Bool.self, forKey: .required) ?? true
+        alternatives = try container.decode([Alternative].self, forKey: .alternatives)
+    }
+
+    /// Every role the group's alternatives name.
+    public var roles: Set<String> {
+        Set(alternatives.flatMap { $0.requires + $0.allows })
+    }
+
+    /// The alternatives `bound` satisfies.
+    public func satisfiedAlternatives(bound: Set<String>) -> [Alternative] {
+        let present = bound.intersection(roles)
+        return alternatives.filter { alternative in
+            Set(alternative.requires).isSubset(of: bound)
+                && present.isSubset(of: Set(alternative.requires + alternative.allows))
+        }
+    }
+}
+
 /// What applying one adapter costs in memory (contract 1.53.0), charged to the run that applies
 /// it — measured with the package that applies it, like every footprint.
 public struct AdapterFootprint: Sendable, Codable, Equatable, Hashable {
@@ -398,6 +505,9 @@ public struct AdapterDescriptor: Sendable, Codable, Equatable {
     public let strengthRange: AdapterStrengthRange?
     /// Ordered conditioning slots. Non-empty exactly when `kind` is `.referenceConditioned`.
     public let conditioning: [AdapterConditioningSlot]
+    /// Alternatives among those slots, by group name (contract 1.55.0). Empty = every slot stands
+    /// on its own `required`.
+    public let conditioningGroups: [String: AdapterConditioningGroup]
     /// nil for a plain adapter means `residentBytes = source.bytes ?? 0` and no activation growth.
     /// A reference-conditioned adapter must declare one.
     public let footprint: AdapterFootprint?
@@ -406,7 +516,9 @@ public struct AdapterDescriptor: Sendable, Codable, Equatable {
                 format: AdapterFormat, baseModels: [String], capabilities: [Capability],
                 source: AdapterSource, license: SPDXLicense, defaultStrength: Double = 1,
                 strengthRange: AdapterStrengthRange? = nil,
-                conditioning: [AdapterConditioningSlot] = [], footprint: AdapterFootprint? = nil) {
+                conditioning: [AdapterConditioningSlot] = [],
+                conditioningGroups: [String: AdapterConditioningGroup] = [:],
+                footprint: AdapterFootprint? = nil) {
         self.id = id
         self.title = title
         self.kind = kind
@@ -418,12 +530,13 @@ public struct AdapterDescriptor: Sendable, Codable, Equatable {
         self.defaultStrength = defaultStrength
         self.strengthRange = strengthRange
         self.conditioning = conditioning
+        self.conditioningGroups = conditioningGroups
         self.footprint = footprint
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, title, kind, format, baseModels, capabilities, source, license, defaultStrength,
-             strengthRange, conditioning, footprint
+             strengthRange, conditioning, conditioningGroups, footprint
     }
 
     public init(from decoder: any Decoder) throws {
@@ -446,6 +559,8 @@ public struct AdapterDescriptor: Sendable, Codable, Equatable {
         strengthRange = try container.decodeIfPresent(AdapterStrengthRange.self, forKey: .strengthRange)
         conditioning = try container.decodeIfPresent([AdapterConditioningSlot].self,
                                                      forKey: .conditioning) ?? []
+        conditioningGroups = try container.decodeIfPresent([String: AdapterConditioningGroup].self,
+                                                           forKey: .conditioningGroups) ?? [:]
         footprint = try container.decodeIfPresent(AdapterFootprint.self, forKey: .footprint)
     }
 
@@ -462,6 +577,9 @@ public struct AdapterDescriptor: Sendable, Codable, Equatable {
         try container.encode(defaultStrength, forKey: .defaultStrength)
         try container.encodeIfPresent(strengthRange, forKey: .strengthRange)
         try container.encode(conditioning, forKey: .conditioning)
+        if !conditioningGroups.isEmpty {
+            try container.encode(conditioningGroups, forKey: .conditioningGroups)
+        }
         try container.encodeIfPresent(footprint, forKey: .footprint)
     }
 
@@ -515,6 +633,29 @@ public struct AdapterDescriptor: Sendable, Codable, Equatable {
         if conditioning.contains(where: { $0.maxCount < 1 }) {
             problems.append("a conditioning slot's maxCount must be at least 1")
         }
+        var grouped: [String: String] = [:]
+        for (name, group) in conditioningGroups.sorted(by: { $0.key < $1.key }) {
+            if group.rule != .exactlyOne {
+                problems.append("conditioning group \"\(name)\" has rule \"\(group.rule)\"; the engine "
+                    + "enforces only exactlyOne")
+            }
+            if group.alternatives.isEmpty || group.alternatives.contains(where: { $0.requires.isEmpty }) {
+                problems.append("conditioning group \"\(name)\" needs alternatives, each requiring a role")
+            }
+            for role in group.roles.sorted() {
+                guard let slot = conditioning.first(where: { $0.role == role }) else {
+                    problems.append("conditioning group \"\(name)\" names role \"\(role)\", which is not a slot")
+                    continue
+                }
+                if slot.required {
+                    problems.append("slot \"\(role)\" is in group \"\(name)\" and must be required: false "
+                        + "(the group decides)")
+                }
+                if let other = grouped.updateValue(name, forKey: role) {
+                    problems.append("slot \"\(role)\" is in two groups (\"\(other)\", \"\(name)\")")
+                }
+            }
+        }
         return problems
     }
 
@@ -553,6 +694,21 @@ public struct AdapterDescriptor: Sendable, Codable, Equatable {
                         + "\(slot.maxCount), got \(filled.count)")
             }
             ordered.append(contentsOf: filled)
+        }
+        let bound = Set(inputs.map(\.role))
+        for (name, group) in conditioningGroups.sorted(by: { $0.key < $1.key }) {
+            let present = bound.intersection(group.roles)
+            if present.isEmpty, !group.required { continue }
+            let satisfied = group.satisfiedAlternatives(bound: bound)
+            guard satisfied.count != 1 else { continue }
+            let choices = group.alternatives.map(\.summary).joined(separator: " | ")
+            throw PackageError.unsupportedRequestFeature(
+                "adapter \"\(id)\" conditioning group \"\(name)\" — "
+                    + (present.isEmpty ? "bind exactly one of: \(choices)"
+                        : satisfied.isEmpty
+                            ? "the bound roles (" + present.sorted().joined(separator: ", ")
+                                + ") match none of: \(choices)"
+                            : "the bound roles match more than one of: \(choices)"))
         }
         return ordered
     }

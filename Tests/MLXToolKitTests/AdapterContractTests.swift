@@ -241,3 +241,118 @@ struct AdapterContractTests {
             .contains("is a ic adapter") == true)
     }
 }
+
+// MARK: - Conditioning groups (contract 1.55.0)
+
+/// LTX Ingredients as adapter registry format 3 writes it (xocialize/ltx-lora-registry v0.2.0),
+/// registry-only keys included and long notes shortened: a superset of `AdapterDescriptor`.
+private let ingredientsEntry = """
+{"id":"ingredients","title":"Ingredients","kind":"ic","format":"diffusers-peft",
+ "baseModels":["ltx-2.3","ltx-2.5"],"capabilities":["textToVideo"],
+ "clearance":{"ltx-2.3":{"level":"perceptual","variant":"distilled"}},
+ "source":{"host":"huggingface","repo":"Lightricks/LTX-2.3-22b-IC-LoRA-Ingredients",
+           "revision":"dcc403d92aa0f5a983c5dbc7282503ca52f73a08",
+           "file":"ltx-2.3-22b-ic-lora-ingredients-0.9.safetensors",
+           "sha256":"515e4e139001ac6282357a5b35372e42e98b3affd5fcc886a52242abeed19559",
+           "bytes":1308778338,"gated":true,"hashFrom":"local"},
+ "license":"LicenseRef-LTX-2-Community",
+ "licenseTerms":{"commercialUse":"conditional","gated":true},
+ "defaultStrength":1.4,"status":"verified","promptConvention":"ingredients-dual-part",
+ "conditioning":[
+   {"role":"reference_sheet","media":"image","required":false,"group":"sheet","ingest":"loopedStillVideo","note":"one finished sheet"},
+   {"role":"subject_images","media":"image","maxCount":6,"required":false,"group":"sheet","ingest":"sheetBuilder"},
+   {"role":"location_image","media":"image","required":false,"group":"sheet","ingest":"sheetBuilder"}],
+ "conditioningGroups":{"sheet":{"rule":"exactlyOne","required":true,"alternatives":[
+   {"requires":["reference_sheet"]},
+   {"requires":["subject_images"],"allows":["location_image"]}]}},
+ "footprint":{"residentBytes":1308778338,"activationMultiplier":1.64},
+ "runtime":{"referenceDownscale":1,"stage2":"skip"},
+ "verification":{"gate":"1344/1344"}}
+"""
+
+@Suite("Adapter conditioning groups — contract 1.55.0")
+struct AdapterConditioningGroupTests {
+
+    private func input(_ role: String) -> ConditioningInput {
+        ConditioningInput(role: role, media: .image(Image(format: .png, data: Data([1]))))
+    }
+
+    private func refusal(_ body: () throws -> Void) -> String? {
+        do { try body() } catch PackageError.unsupportedRequestFeature(let detail) { return detail } catch {
+            return "unexpected \(error)"
+        }
+        return nil
+    }
+
+    @Test func aFormat3RegistryEntryDecodesWithItsGroup() throws {
+        let ingredients = try JSONDecoder().decode(AdapterDescriptor.self, from: Data(ingredientsEntry.utf8))
+        #expect(ingredients.validationProblems.isEmpty)
+        #expect(ingredients.kind == .referenceConditioned)
+        #expect(ingredients.footprint == AdapterFootprint(residentBytes: 1_308_778_338, activationMultiplier: 1.64))
+        #expect(ingredients.conditioningGroups["sheet"]?.roles == ["reference_sheet", "subject_images", "location_image"])
+        let roundTrip = try JSONDecoder().decode(AdapterDescriptor.self, from: JSONEncoder().encode(ingredients))
+        #expect(roundTrip == ingredients)
+        // A descriptor without groups keeps its pre-1.55 wire shape.
+        let plain = try JSONSerialization.jsonObject(with: JSONEncoder().encode(plainAdapter())) as? [String: Any]
+        #expect(plain?["conditioningGroups"] == nil)
+    }
+
+    @Test func exactlyOneAlternativeMustBeBound() throws {
+        let ingredients = try JSONDecoder().decode(AdapterDescriptor.self, from: Data(ingredientsEntry.utf8))
+        // Either alternative, the second with or without its optional role.
+        #expect(try ingredients.orderedConditioning([input("reference_sheet")]).map(\.role) == ["reference_sheet"])
+        #expect(try ingredients.orderedConditioning([input("location_image"), input("subject_images"),
+                                                     input("subject_images")]).map(\.role)
+            == ["subject_images", "subject_images", "location_image"])
+
+        // No sheet at all — what 1.53.0 admitted.
+        #expect(refusal { _ = try ingredients.orderedConditioning([]) }?
+            .contains("bind exactly one of: reference_sheet | subject_images (+ optional location_image)") == true)
+        // Mixing the alternatives.
+        #expect(refusal { _ = try ingredients.orderedConditioning([input("reference_sheet"), input("subject_images")]) }?
+            .contains("match none of") == true)
+        // The optional role alone.
+        #expect(refusal { _ = try ingredients.orderedConditioning([input("location_image")]) }?
+            .contains("(location_image) match none of") == true)
+    }
+
+    @Test func anOptionalGroupMayBeLeftUnbound() throws {
+        let slots = [AdapterConditioningSlot(role: "pose", media: .image),
+                     AdapterConditioningSlot(role: "depth", media: .image, required: false),
+                     AdapterConditioningSlot(role: "edges", media: .image, required: false)]
+        let adapter = AdapterDescriptor(
+            id: "control", kind: .referenceConditioned, format: .diffusersPEFT, baseModels: ["b"],
+            capabilities: [.textToImage], source: plainAdapter().source, license: .apache2,
+            conditioning: slots,
+            conditioningGroups: ["hint": AdapterConditioningGroup(required: false, alternatives: [
+                .init(requires: ["depth"]), .init(requires: ["edges"])])],
+            footprint: AdapterFootprint(residentBytes: 1, activationMultiplier: 1.2))
+        #expect(adapter.validationProblems.isEmpty)
+        #expect(try adapter.orderedConditioning([input("pose")]).count == 1)
+        #expect(try adapter.orderedConditioning([input("pose"), input("edges")]).count == 2)
+        #expect(refusal { _ = try adapter.orderedConditioning([input("pose"), input("depth"), input("edges")]) }?
+            .contains("match none of: depth | edges") == true)
+    }
+
+    @Test func malformedGroupsFailValidationSoTheyCannotRegister() {
+        let slots = [AdapterConditioningSlot(role: "a", media: .image),
+                     AdapterConditioningSlot(role: "b", media: .image, required: false)]
+        let adapter = AdapterDescriptor(
+            id: "bad", kind: .referenceConditioned, format: .kohya, baseModels: ["b"],
+            capabilities: [.textToImage], source: plainAdapter().source, license: .apache2,
+            conditioning: slots,
+            conditioningGroups: [
+                "one": AdapterConditioningGroup(rule: "atLeastOne", alternatives: [.init(requires: ["a"]),
+                                                                                  .init(requires: ["ghost"])]),
+                "two": AdapterConditioningGroup(alternatives: [.init(requires: ["b"]), .init(requires: [])]),
+                "three": AdapterConditioningGroup(alternatives: [.init(requires: ["b"])]),
+            ],
+            footprint: AdapterFootprint(residentBytes: 1))
+        let problems = adapter.validationProblems.joined(separator: " | ")
+        #expect(problems.contains("rule \"atLeastOne\""))
+        #expect(problems.contains("\"ghost\", which is not a slot"))
+        #expect(problems.contains("slot \"a\" is in group \"one\" and must be required: false"))
+        #expect(problems.contains("group \"two\" needs alternatives, each requiring a role"))
+        #expect(problems.contains("slot \"b\" is in two groups"))
+    }
+}
