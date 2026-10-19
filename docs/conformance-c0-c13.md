@@ -126,6 +126,27 @@ failure *class* rather than the known mechanism — statistic drift, live `Dropo
 training-mode-sensitive not yet met — and is what would have caught BiRefNet without anyone knowing
 `BatchNorm` was the mechanism.
 
+**C5 and typed adapters — the ADP gate** (added 2026-10-19, contract 1.53.0, AB-A-0189). Adapters
+(LoRA) left `metaData`: under C5 they are now a should-be-canonical parameter, so a package that takes
+adapters declares `ToolDescriptor.adapters` (`AdapterSupport`: base model, key dialects, kinds, how many,
+the strength range, base quants, per-request or load-time binding) and reads
+`request.resolvedAdapters` — verified local files the engine fetched at a pinned revision and checked
+against the catalog's SHA-256 — instead of a `metaData` dialect and its own download. The engine refuses
+an undeclared or non-fitting adapter before admission, as it does every declared control.
+
+The **ADP gate** (`MLXServeConformance.AdapterConformance`, offline, declarations only):
+- **ADP-1 coherent** — every `AdapterSupport` is well-formed and sits on a capability that carries
+  adapters (`textToImage`, `imageEdit`, `textToVideo`, `videoEdit`).
+- **ADP-2 advertised** — a surface offers the `adapters` parameter exactly when it declares support
+  (`declaring(adapters:)` does both).
+- **ADP-3 bindable** — a `.loadTime` surface's configuration adopts `AdapterConfigured`, so the engine
+  can rebuild the package with the requested set.
+- **ADP-4 catalog** — every adapter the package ships or recommends validates (a 40-character commit
+  revision, a 64-hex digest, slots and a footprint for a reference-conditioned adapter) and fits at
+  least one declared surface.
+
+A package with no adapter declarations and no catalog passes with a single ADP-0 line.
+
 *The authoritative checklist (pass/fail criteria, failure modes) lives in the `mlx-swift-integration` skill.*
 
 ---

@@ -54,6 +54,9 @@ public protocol WeightMaterializing: Sendable {
     /// progress to `WeightDownloadProgress` (bound by the caller). Idempotent at file level:
     /// a file already present at its full size is skipped.
     func materialize(_ sources: [WeightSource], into root: URL) async throws
+    /// Download ONE file of `repo` at `revision` to exactly `destination` (contract 1.53.0, the
+    /// adapter path). Defaulted (`AdapterStore.swift`): staged through `materialize(_:into:)`.
+    func materializeFile(repo: String, revision: String, path: String, to destination: URL) async throws
 }
 
 public struct WeightMaterializer: WeightMaterializing {

@@ -89,6 +89,20 @@ public enum EngineError: Error, Sendable, Equatable {
     /// machine can run this package — releasing the tenant's memory (closing a document,
     /// dropping a cache) is the fix, not a smaller model.
     case externalTenantsHoldMemory(required: UInt64, external: UInt64, budget: UInt64)
+    /// `registerAdapter` refused a catalog entry (contract 1.53.0): `problems` lists everything
+    /// `AdapterDescriptor.validationProblems` found — an unpinned revision, a malformed digest, a
+    /// reference-conditioned adapter with no slots or no footprint.
+    case invalidAdapter(id: String, problems: [String])
+    /// A run named an adapter that is not on disk, and the engine's `AdapterFetchPolicy` is
+    /// `.preparedOnly` (contract 1.53.0). Preview it, ask, then `prepareAdapters([id])`.
+    case adapterNotMaterialized(id: String)
+    /// The downloaded adapter file's SHA-256 is not the catalog's (contract 1.53.0). The file was
+    /// deleted; nothing ran. The catalog entry or the repo is wrong — retrying fetches the same
+    /// bytes.
+    case adapterDigestMismatch(id: String, expected: String, actual: String)
+    /// An adapter was needed but the engine has no models root to keep it in (contract 1.53.0) —
+    /// adapters are engine-managed only. Call `useModelStore(_:)` first.
+    case adapterStoreUnset(id: String)
 }
 
 /// Engine-side identity for a registered package — lets several packages back the SAME
@@ -178,7 +192,9 @@ public actor MLXServeEngine {
     /// (reserved once across residents, since inference is serialized — see R-MEM-1).
     private struct Entry {
         let registration: PackageRegistration
-        let configuration: any PackageConfiguration
+        /// `var` since 1.53.0: a `.loadTime` adapter surface's configuration is re-stamped with the
+        /// set it is built with (`AdapterConfigured`).
+        var configuration: any PackageConfiguration
         let persistent: UInt64
         let transient: UInt64
         /// The resolved activation-scaling declaration (1.41.0): lane hint over quant-keyed.
@@ -298,6 +314,14 @@ public actor MLXServeEngine {
     /// Where packages materialize weights + the marker the storage UI counts. Empty by default
     /// (packages use their own cache); a consuming app sets it once via `useModelStore`.
     private var modelStore: ModelStore = ModelStore()
+    /// The adapter catalog (contract 1.53.0): catalog id → descriptor.
+    private var adapterCatalog: [String: AdapterDescriptor] = [:]
+    /// Whether a run may fetch a missing adapter itself (contract 1.53.0). `.onDemand` by default.
+    public private(set) var adapterFetchPolicy: AdapterFetchPolicy = .onDemand
+    /// In-flight adapter fetches by digest, so two runs naming one missing adapter share a download.
+    private var adapterFetches: [String: Task<Void, Error>] = [:]
+    /// The set each `.loadTime` adapter package was last built with (contract 1.53.0).
+    private var loadTimeAdapters: [PackageID: [ResolvedAdapter]] = [:]
     /// Real-memory reading for the R-MEM-1 pressure trigger (`phys_footprint`). Injectable so tests
     /// can drive admission with a controlled footprint; defaults to the live host reading.
     private let physFootprint: @Sendable () -> UInt64?
@@ -873,6 +897,23 @@ public actor MLXServeEngine {
                     + "measuredCeiling to what the reserve was measured at.")
             }
         }
+        // Adapter declarations (1.53.0): reported like FIT findings, never refused — a surface
+        // whose declaration is incoherent refuses its adapter requests at pre-flight instead.
+        for surface in registration.manifest.surfaces {
+            guard let support = surface.adapters else { continue }
+            var problems = support.validationProblems
+            if !surface.adaptersMatchCapability {
+                problems.append("declared on \(surface.capability.rawValue), which carries no adapters")
+            }
+            if support.binding == .loadTime, !(configuration is AdapterConfigured) {
+                problems.append("load-time binding, but the configuration does not adopt "
+                    + "AdapterConfigured — every adapter request will be refused")
+            }
+            if !problems.isEmpty {
+                print("[Adapters] \(packageID) \(surface.name): " + problems.joined(separator: "; "))
+            }
+        }
+        loadTimeAdapters[packageID] = nil
         packages[packageID] = Entry(registration: registration,
                                     configuration: configuration,
                                     persistent: split.persistent,
@@ -1266,8 +1307,11 @@ public actor MLXServeEngine {
                     + "complete utterance and takes an STTRequest")
         }
         let capability = request.capability
-        let id = try resolve(capability, package)
+        let id = try resolveRoute(request, package)
         try preflight(request, id: id)
+        // Adapters (1.53.0): fetch + hash-check what the request names, OUTSIDE the admission
+        // gate (a download can take minutes), and stamp the package-facing `resolvedAdapters`.
+        let request = try await resolveAdapters(request, id: id)
         // Read on the caller's task, before runAttempt rebinds the task-local for the package.
         let callerSink = RunProgress.sink
         var requeues = 0
@@ -1329,6 +1373,7 @@ public actor MLXServeEngine {
         await lockAdmission()
         let instance: any ModelPackage
         do {
+            await reconcileLoadTimeAdapters(request, id: id)
             instance = try await resident(id, conduct: conduct, reserve: reserve)
         } catch {
             unlockAdmission()
@@ -1938,6 +1983,7 @@ public actor MLXServeEngine {
     private func preflight(_ request: any CapabilityRequest, id: PackageID) throws {
         try checkDeclaredControls(request, id: id)
         try checkDeclaredWorkloadCeiling(request, id: id)
+        _ = try adapterPlans(request, id: id)
     }
 
     /// What ONE run reserves, and why (contract 1.42.0, AB-A-0075 — the AB-D-0075 §6 follow-up).
@@ -1968,11 +2014,34 @@ public actor MLXServeEngine {
     /// the projection is always inside the measured envelope — never the extrapolation.
     private func runReserve(for request: any CapabilityRequest, id: PackageID) -> RunReserve {
         guard let entry = packages[id] else { return RunReserve(transient: 0, workload: nil) }
-        guard let scaling = entry.scaling,
-              let units = (entry.configuration as? WorkloadDeclaring)?.workloadUnits(for: request)
-        else { return RunReserve(transient: entry.transient, workload: nil) }
-        return RunReserve(transient: max(entry.transient, scaling.projectedBytes(at: units)),
-                          workload: (scaling.axis, units))
+        let base: RunReserve
+        if let scaling = entry.scaling,
+           let units = (entry.configuration as? WorkloadDeclaring)?.workloadUnits(for: request) {
+            base = RunReserve(transient: max(entry.transient, scaling.projectedBytes(at: units)),
+                              workload: (scaling.axis, units))
+        } else {
+            base = RunReserve(transient: entry.transient, workload: nil)
+        }
+        return adapterReserve(base, request: request, entry: entry)
+    }
+
+    /// The adapter share of a run's reserve (contract 1.53.0): the activation peak times the
+    /// largest declared `activationMultiplier` (a reference-conditioned adapter lengthens the
+    /// sequence), plus every per-request adapter's `residentBytes` — they are held only while the
+    /// run applies them. A `.loadTime` set is persistent instead (`loadTimeAdapterBytes`).
+    private func adapterReserve(_ base: RunReserve, request: any CapabilityRequest,
+                                entry: Entry) -> RunReserve {
+        let resolved = (request as? any AdapterCarrying)?.resolvedAdapters ?? []
+        guard !resolved.isEmpty else { return base }
+        let multiplier = max(1, resolved.map(\.footprint.activationMultiplier).max() ?? 1)
+        let scaled = multiplier > 1
+            ? UInt64(min((Double(base.transient) * multiplier).rounded(.up), Double(UInt64.max / 2)))
+            : base.transient
+        let binding = entry.registration.manifest.surfaces
+            .first { $0.capability == request.capability }?.adapters?.binding
+        let held = binding == .loadTime ? 0
+            : resolved.reduce(UInt64(0)) { $0 &+ $1.footprint.residentBytes }
+        return RunReserve(transient: scaled &+ held, workload: base.workload)
     }
 
     /// Pre-flight workload-ceiling check (contract 1.41.0, AB-A-0069). When the resolved
@@ -2099,6 +2168,13 @@ public actor MLXServeEngine {
             switch child.value {
             case let image as Image: return image.format == format
             case let images as [Image]: return images.contains { $0.format == format }
+            case let refs as [AdapterRef]:   // a reference-conditioned adapter's inputs (1.53.0)
+                return refs.contains { ref in
+                    ref.conditioning.contains {
+                        if case .image(let image) = $0.media { return image.format == format }
+                        return false
+                    }
+                }
             default: return false
             }
         }
@@ -2169,7 +2245,7 @@ public actor MLXServeEngine {
             // single transient activation reserve (only one model runs at a time). The model's own peak
             // (persistent + transient) must fit the budget; then evict idle LRU until the co-resident
             // accounting fits.
-            let persistent = entry.persistent
+            let persistent = entry.persistent &+ loadTimeAdapterBytes(id)
             let transient = entry.transient
             guard governor.fitsBudget(persistent &+ transient) else {
                 throw EngineError.exceedsMemoryBudget(required: persistent &+ transient,
@@ -2657,6 +2733,269 @@ public actor MLXServeEngine {
     private func touch(_ id: PackageID) {
         useClock &+= 1
         lastUsed[id] = useClock
+    }
+
+    // MARK: - Adapters (contract 1.53.0, AB-A-0189)
+
+    /// Add (or replace) one curated adapter in the catalog requests resolve `AdapterRef.id`
+    /// against. Validated first — a revision that is not a full commit hash, a malformed digest,
+    /// a reference-conditioned adapter with no slots or no footprint all throw
+    /// `EngineError.invalidAdapter` — then its licence is classified against the engine's
+    /// `LicensePolicy` exactly as a package's weight licence is: recorded on
+    /// `licenseAdvisories` under `.advisory` enforcement, `EngineError.licenseRejected` under
+    /// `.blocking`.
+    public func registerAdapter(_ descriptor: AdapterDescriptor) throws {
+        let problems = descriptor.validationProblems
+        guard problems.isEmpty else {
+            throw EngineError.invalidAdapter(id: descriptor.id, problems: problems)
+        }
+        if !policy.admits(descriptor.license) {
+            guard licenseEnforcement == .advisory else {
+                throw EngineError.licenseRejected(.rejectedWeight(descriptor.license))
+            }
+            let advisory = LicenseAdvisory(repo: descriptor.source.repo, layer: .weight,
+                                           license: descriptor.license, policy: policy)
+            if !licenseAdvisories.contains(advisory) {
+                licenseAdvisories.append(advisory)
+                print("[License] adapter \(descriptor.id): \(advisory.summary)")
+            }
+        }
+        if let previous = adapterCatalog[descriptor.id], previous != descriptor {
+            print("[Adapters] replacing catalog entry \(descriptor.id) "
+                + "(\(previous.source.sha256.prefix(12)) → \(descriptor.source.sha256.prefix(12)))")
+        }
+        adapterCatalog[descriptor.id] = descriptor
+    }
+
+    /// Register several catalog entries; stops at the first that throws.
+    public func registerAdapters(_ descriptors: [AdapterDescriptor]) throws {
+        for descriptor in descriptors { try registerAdapter(descriptor) }
+    }
+
+    /// Remove a catalog entry. Its file stays on disk; a `.loadTime` package built with it keeps
+    /// it until a run names another set.
+    public func unregisterAdapter(id: String) {
+        adapterCatalog[id] = nil
+    }
+
+    /// Every catalog entry, by id.
+    public var registeredAdapters: [AdapterDescriptor] {
+        adapterCatalog.values.sorted { $0.id < $1.id }
+    }
+
+    public func adapter(id: String) -> AdapterDescriptor? { adapterCatalog[id] }
+
+    /// The catalog entries the resolved package's surface for `capability` admits (base model,
+    /// kind and format all match) — what a host offers for that model. Empty when the surface
+    /// declares no `AdapterSupport`.
+    public func adapters(for capability: Capability, package: PackageID? = nil) -> [AdapterDescriptor] {
+        guard let id = try? resolve(capability, package),
+              let support = packages[id]?.registration.manifest.surfaces
+                .first(where: { $0.capability == capability })?.adapters
+        else { return [] }
+        return registeredAdapters.filter { support.mismatch($0, capability: capability) == nil }
+    }
+
+    /// Whether a run may fetch a missing adapter itself. `.preparedOnly` is the consent posture:
+    /// runs never download, `prepareAdapters` does.
+    public func setAdapterFetchPolicy(_ policy: AdapterFetchPolicy) {
+        adapterFetchPolicy = policy
+    }
+
+    /// Whether the adapter still has to be downloaded (or was never hash-checked). `false` for an
+    /// id not in the catalog — there is nothing the engine could fetch.
+    public func adapterNeedsDownload(id: String) -> Bool {
+        guard let descriptor = adapterCatalog[id] else { return false }
+        return !modelStore.hasVerifiedAdapter(descriptor.source)
+    }
+
+    /// What fetching these adapters would cost, and whether the store volume can take it — the
+    /// consent preview (MS-3's affordance, for adapters). Only adapters not yet verified on disk
+    /// appear; ids not in the catalog are left out. Sizes come from the catalog's declared
+    /// `bytes`, else from the hub listing at the PINNED revision; an unreachable hub reads as
+    /// unknown (`totalBytes == nil`), never as "won't fit".
+    public func adapterMaterializationPreview(_ ids: [String]) async -> MaterializationPreview {
+        let missing = ids.compactMap { adapterCatalog[$0] }
+            .filter { !modelStore.hasVerifiedAdapter($0.source) }
+        var sources: [MaterializationPreview.Source] = []
+        var total: UInt64? = 0
+        for descriptor in missing {
+            var bytes = descriptor.source.bytes
+            if bytes == nil {
+                bytes = try? await hubMetadata
+                    .files(repo: descriptor.source.repo, revision: descriptor.source.revision)
+                    .first { $0.path == descriptor.source.file }?.size
+            }
+            sources.append(MaterializationPreview.Source(role: "adapter:\(descriptor.id)",
+                                                         repo: descriptor.source.repo,
+                                                         expectedBytes: bytes))
+            if let bytes, let running = total { total = running &+ bytes } else { total = nil }
+        }
+        return MaterializationPreview(sources: sources, totalBytes: sources.isEmpty ? 0 : total,
+                                      freeBytes: modelStore.root.flatMap(MaterializationPreview.freeBytes(at:)))
+    }
+
+    /// Fetch and hash-check adapters NOW, whatever the fetch policy — the consent path: preview,
+    /// ask, then call this. Returns each id's verified file. Bind `WeightDownloadProgress.sink`
+    /// around the call to observe the download.
+    /// - Throws: `PackageError.unsupportedRequestFeature` for an id not in the catalog,
+    ///   `EngineError.adapterStoreUnset` without a models root, `EngineError.adapterDigestMismatch`
+    ///   when the bytes are not the catalog's, or the materializer's own error.
+    @discardableResult
+    public func prepareAdapters(_ ids: [String]) async throws -> [String: URL] {
+        var files: [String: URL] = [:]
+        for id in ids {
+            guard let descriptor = adapterCatalog[id] else {
+                throw PackageError.unsupportedRequestFeature(
+                    "adapter \"\(id)\" — not in the engine's adapter catalog")
+            }
+            files[id] = try await materializedAdapterFile(descriptor, fetch: true)
+        }
+        return files
+    }
+
+    /// The package a request runs on. With no package named and adapters asked for, the adapter
+    /// implies its base model (AB-D-0155): when the capability's default does not admit them,
+    /// the first backer that admits every one is chosen. When none does, the default stays and
+    /// its pre-flight names the reason.
+    private func resolveRoute(_ request: any CapabilityRequest, _ package: PackageID?) throws -> PackageID {
+        let id = try resolve(request.capability, package)
+        guard package == nil, let carrying = request as? any AdapterCarrying,
+              !carrying.adapters.isEmpty, (try? adapterPlans(request, id: id)) == nil
+        else { return id }
+        for candidate in backing[request.capability] ?? [] where candidate != id {
+            if (try? adapterPlans(request, id: candidate)) != nil { return candidate }
+        }
+        return id
+    }
+
+    /// Validate a request's adapters against the resolved surface and the catalog — the 1.53.0
+    /// pre-flight, before admission and before any download. `[]` when the request carries none.
+    private func adapterPlans(_ request: any CapabilityRequest,
+                              id: PackageID) throws -> [AdapterSupport.Plan] {
+        guard let carrying = request as? any AdapterCarrying, !carrying.adapters.isEmpty,
+              let entry = packages[id],
+              let surface = entry.registration.manifest.surfaces
+                .first(where: { $0.capability == request.capability })
+        else { return [] }
+        guard let support = surface.adapters, surface.adaptersMatchCapability else {
+            throw PackageError.unsupportedRequestFeature(
+                "adapters — \(id) declares no adapter support (ToolDescriptor.adapters); choose a "
+                    + "package that does, or drop the adapters")
+        }
+        if support.binding == .loadTime, !(entry.configuration is AdapterConfigured) {
+            throw PackageError.unsupportedRequestFeature(
+                "adapters — \(id) declares load-time adapters, but its configuration does not adopt "
+                    + "AdapterConfigured, so the engine cannot build it with them")
+        }
+        return try support.plan(carrying.adapters, capability: request.capability,
+                                quant: (entry.configuration as? QuantConfigured)?.quant,
+                                lookup: { adapterCatalog[$0] })
+    }
+
+    /// Fetch, verify and stamp a request's adapters (always re-stamping — a caller's own
+    /// `resolvedAdapters` never reaches the package).
+    private func resolveAdapters(_ request: any CapabilityRequest,
+                                 id: PackageID) async throws -> any CapabilityRequest {
+        guard let carrying = request as? any AdapterCarrying else { return request }
+        return try await stampAdapters(carrying, id: id)
+    }
+
+    private func stampAdapters<R: AdapterCarrying>(_ request: R, id: PackageID) async throws -> R {
+        var resolved: [ResolvedAdapter] = []
+        for plan in try adapterPlans(request, id: id) {
+            let descriptor = plan.descriptor
+            let file = try await materializedAdapterFile(descriptor,
+                                                         fetch: adapterFetchPolicy == .onDemand)
+            resolved.append(ResolvedAdapter(
+                id: descriptor.id, kind: descriptor.kind, format: descriptor.format, fileURL: file,
+                source: descriptor.source, strength: plan.strength,
+                conditioning: plan.conditioning, footprint: descriptor.resolvedFootprint))
+        }
+        return request.resolving(resolved)
+    }
+
+    /// The verified local file for an adapter: reused when its marker says it was checked,
+    /// hashed when it is present without one, otherwise downloaded at the pinned revision (when
+    /// `fetch`) and hashed. A mismatching file is deleted and refused. Concurrent callers for one
+    /// digest share a single fetch.
+    private func materializedAdapterFile(_ descriptor: AdapterDescriptor,
+                                         fetch: Bool) async throws -> URL {
+        let store = modelStore
+        guard store.root != nil, let file = store.adapterFile(for: descriptor.source) else {
+            throw EngineError.adapterStoreUnset(id: descriptor.id)
+        }
+        if store.hasVerifiedAdapter(descriptor.source) { return file }
+        let digest = descriptor.source.sha256
+        if let inFlight = adapterFetches[digest] {
+            try await inFlight.value
+            return file
+        }
+        if !FileManager.default.fileExists(atPath: file.path), !fetch {
+            throw EngineError.adapterNotMaterialized(id: descriptor.id)
+        }
+        let materializer = materializer
+        let task = Task<Void, Error> {
+            let fm = FileManager.default
+            // Present but never verified (copied in, or its marker write was lost): hash it
+            // before paying for a download.
+            if fm.fileExists(atPath: file.path) {
+                if try await AdapterDigest.sha256Detached(of: file) == digest {
+                    store.writeAdapterMarker(for: descriptor)
+                    return
+                }
+                try? fm.removeItem(at: file)
+                guard fetch else { throw EngineError.adapterNotMaterialized(id: descriptor.id) }
+            }
+            try fm.createDirectory(at: file.deletingLastPathComponent(),
+                                   withIntermediateDirectories: true)
+            try await materializer.materializeFile(repo: descriptor.source.repo,
+                                                   revision: descriptor.source.revision,
+                                                   path: descriptor.source.file, to: file)
+            let actual = try await AdapterDigest.sha256Detached(of: file)
+            guard actual == digest else {
+                try? fm.removeItem(at: file)
+                throw EngineError.adapterDigestMismatch(id: descriptor.id, expected: digest,
+                                                        actual: actual)
+            }
+            store.writeAdapterMarker(for: descriptor)
+        }
+        adapterFetches[digest] = task
+        defer { adapterFetches[digest] = nil }
+        try await task.value
+        return file
+    }
+
+    /// Bring a `.loadTime` adapter package to the set this run names (contract 1.53.0). Runs
+    /// inside the admission gate: when the resident set differs, wait for the package's in-flight
+    /// runs, evict it, and re-stamp its `AdapterConfigured` configuration so `resident()` builds
+    /// it with the new set. Conditioning inputs are per run and never part of the built set.
+    private func reconcileLoadTimeAdapters(_ request: any CapabilityRequest, id: PackageID) async {
+        guard let entry = packages[id],
+              entry.registration.manifest.surfaces
+                .first(where: { $0.capability == request.capability })?.adapters?.binding == .loadTime,
+              var configured = entry.configuration as? AdapterConfigured
+        else { return }
+        let wanted = ((request as? any AdapterCarrying)?.resolvedAdapters ?? []).map {
+            ResolvedAdapter(id: $0.id, kind: $0.kind, format: $0.format, fileURL: $0.fileURL,
+                            source: $0.source, strength: $0.strength, footprint: $0.footprint)
+        }
+        let built = loadTimeAdapters[id] ?? configured.loadedAdapters
+        guard wanted != built else { return }
+        if residents[id] != nil {
+            for run in activeRuns.values where run.id == id { _ = try? await run.task.value }
+            await evictResident(id)
+        }
+        configured.loadedAdapters = wanted
+        if let restamped = configured as? any PackageConfiguration {
+            packages[id]?.configuration = restamped
+        }
+        loadTimeAdapters[id] = wanted
+    }
+
+    /// The persistent bytes of the adapter set a `.loadTime` package is built with.
+    private func loadTimeAdapterBytes(_ id: PackageID) -> UInt64 {
+        (loadTimeAdapters[id] ?? []).reduce(UInt64(0)) { $0 &+ $1.footprint.residentBytes }
     }
 
     // MARK: - GPU buffer-pool policy (N5)

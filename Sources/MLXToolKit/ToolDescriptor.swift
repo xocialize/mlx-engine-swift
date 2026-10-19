@@ -216,6 +216,14 @@ public struct ToolDescriptor: Sendable, Codable, Equatable {
     /// `nil` = undeclared, which is every pre-1.52 conformer: png/jpeg, plus `.rawBGRA8` where the
     /// consumer knows the package mirrors it (that 1.9.0 convention stays undeclared and unenforced).
     public let rawImageFormats: [Image.Format]?
+    /// The adapters (LoRA) this surface accepts (contract 1.53.0, additive). A descriptor-level
+    /// member like `rawImageFormats`: routing-time for every adapter-carrying capability alike
+    /// (`AdapterSupport.carryingCapabilities`). ENGINE-ENFORCED: a request naming adapters on a
+    /// surface that declares none, or adapters this declaration does not admit, is refused with
+    /// `PackageError.unsupportedRequestFeature` before admission. `nil` = none, which is every
+    /// pre-1.53 conformer. Declare it with `declaring(adapters:)`, which also advertises the
+    /// `adapters` parameter.
+    public let adapters: AdapterSupport?
 
     public init(name: String,
                 capability: Capability,
@@ -225,7 +233,8 @@ public struct ToolDescriptor: Sendable, Codable, Equatable {
                 quantFloor: Quant? = nil,
                 streaming: StreamGranularity? = nil,
                 controls: SurfaceControls? = nil,
-                rawImageFormats: [Image.Format]? = nil) {
+                rawImageFormats: [Image.Format]? = nil,
+                adapters: AdapterSupport? = nil) {
         self.name = name
         self.capability = capability
         self.summary = summary
@@ -235,6 +244,7 @@ public struct ToolDescriptor: Sendable, Codable, Equatable {
         self.streaming = streaming
         self.controls = controls
         self.rawImageFormats = rawImageFormats
+        self.adapters = adapters
     }
 
     /// This descriptor, declaring `rawImageFormats` (contract 1.52.0). Lets any capability's canonical
@@ -243,7 +253,31 @@ public struct ToolDescriptor: Sendable, Codable, Equatable {
     public func declaring(rawImageFormats formats: [Image.Format]) -> ToolDescriptor {
         ToolDescriptor(name: name, capability: capability, summary: summary, parameters: parameters,
                        supportedModes: supportedModes, quantFloor: quantFloor, streaming: streaming,
-                       controls: controls, rawImageFormats: formats)
+                       controls: controls, rawImageFormats: formats, adapters: adapters)
+    }
+
+    /// This descriptor, declaring the adapters it accepts (contract 1.53.0), and advertising the
+    /// `adapters` parameter — only declared surfaces offer it, so a planner is never handed a knob
+    /// the engine would refuse:
+    /// `T2IContract.descriptor(name:summary:).declaring(adapters: AdapterSupport(baseModel: "flux2-klein-4b", formats: [.bflFused, .diffusersPEFT]))`.
+    public func declaring(adapters support: AdapterSupport) -> ToolDescriptor {
+        var parameters = parameters
+        if !parameters.contains(where: { $0.name == "adapters" }) {
+            parameters.append(ParameterSchema(
+                name: "adapters", kind: .array, required: false,
+                summary: "Adapters (LoRA) by catalog id, each {id, strength?, conditioning?}; up to "
+                    + "\(support.maxCount), strength \(support.strengthRange.min)…\(support.strengthRange.max)."))
+        }
+        return ToolDescriptor(name: name, capability: capability, summary: summary,
+                              parameters: parameters, supportedModes: supportedModes,
+                              quantFloor: quantFloor, streaming: streaming, controls: controls,
+                              rawImageFormats: rawImageFormats, adapters: support)
+    }
+
+    /// Whether a declared `adapters` block sits on a capability that can carry adapters. `false` is
+    /// a package bug (ADP-1).
+    public var adaptersMatchCapability: Bool {
+        adapters == nil || AdapterSupport.carryingCapabilities.contains(capability)
     }
 
     /// Whether this surface declares the 16-bit boundary (`rawImageFormats` lists `.rawRGBA16`).

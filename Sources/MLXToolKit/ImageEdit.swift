@@ -23,6 +23,12 @@ public struct IEditRequest: CapabilityRequest {
     /// True-CFG scale (classifier-free guidance over the edit instruction).
     public let guidanceScale: Double?
     public let seed: UInt64?
+    /// Adapters (LoRA) to apply, by catalog id (contract 1.53.0). Admitted only on a surface
+    /// declaring `ToolDescriptor.adapters`; the engine resolves them into `resolvedAdapters`.
+    public let adapters: [AdapterRef]
+    /// The engine-resolved form of `adapters`, in the same order — what a package reads
+    /// (contract 1.53.0). Stamped by the engine before every run; see `AdapterCarrying`.
+    public private(set) var resolvedAdapters: [ResolvedAdapter] = []
     public let mode: Mode?
     public let metaData: MetaData
 
@@ -34,6 +40,7 @@ public struct IEditRequest: CapabilityRequest {
                 steps: Int? = nil,
                 guidanceScale: Double? = nil,
                 seed: UInt64? = nil,
+                adapters: [AdapterRef] = [],
                 mode: Mode? = nil,
                 metaData: MetaData = [:]) {
         self.images = images
@@ -44,8 +51,17 @@ public struct IEditRequest: CapabilityRequest {
         self.steps = steps
         self.guidanceScale = guidanceScale
         self.seed = seed
+        self.adapters = adapters
         self.mode = mode
         self.metaData = metaData
+    }
+}
+
+extension IEditRequest: AdapterCarrying {
+    public func resolving(_ resolved: [ResolvedAdapter]) -> IEditRequest {
+        var copy = self
+        copy.resolvedAdapters = resolved
+        return copy
     }
 }
 

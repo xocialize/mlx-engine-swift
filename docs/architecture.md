@@ -27,6 +27,16 @@ engine does the coordination around them.
   configurable `WeightMaterializer.RetryPolicy` before anything reaches the consumer. On that path
   the **ledger**, not the file's size, is the completeness guard — a preallocated partial is
   byte-identical to a complete file full of zero-holes.
+- **Adapters (LoRA)** — since contract **1.53.0** adapters are engine-managed weight sources too.
+  A host registers a curated catalog (`registerAdapter(AdapterDescriptor)`, each entry pinned to
+  `{repo, revision, file, sha256}`); a request names entries by id; the engine validates them against
+  the surface's `AdapterSupport` before admission, fetches each at its **pinned commit** through the
+  same executor and token chain into `<root>/adapters/<sha256>/`, checks the **SHA-256** (the one
+  place the engine verifies content, because an adapter id is a promise about specific bytes), and
+  hands the package `resolvedAdapters`. Adapter bytes and a reference-conditioned adapter's activation
+  multiplier are charged to the run's admission reserve. `AdapterFetchPolicy.preparedOnly` plus
+  `adapterMaterializationPreview` / `prepareAdapters` is the consent path for a host that must not
+  download mid-request.
 - **Hub credentials** — one chain, resolved **per request** by `HFTokenStore` (`MLXHubMetadata`):
   the `HF_TOKEN` / `HUGGING_FACE_HUB_TOKEN` environment variables, then the **Keychain**, then the
   `huggingface-cli` token file. Both hub call sites (the metadata listing and the download) share

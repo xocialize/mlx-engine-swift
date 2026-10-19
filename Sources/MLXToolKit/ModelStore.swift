@@ -167,6 +167,63 @@ public struct ModelStore: Sendable, Equatable {
         }
     }
 
+    // MARK: Adapters (contract 1.53.0)
+
+    /// The subfolder of the root adapter files live in, content-keyed by SHA-256.
+    public static let adaptersFolderName = "adapters"
+    /// The verification record written beside a hash-checked adapter file.
+    public static let adapterMarkerName = "adapter.json"
+
+    /// `<root>/adapters/<sha256>/` for an adapter source, or `nil` without a root. Keyed by the
+    /// content digest, so the pinned revision and the bytes are one fact.
+    public func adapterDirectory(for source: AdapterSource) -> URL? {
+        guard let root else { return nil }
+        return root.appending(path: Self.adaptersFolderName, directoryHint: .isDirectory)
+            .appending(path: source.sha256.lowercased(), directoryHint: .isDirectory)
+    }
+
+    /// Where an adapter file lives once materialized: `<adapter directory>/<file name>`.
+    public func adapterFile(for source: AdapterSource) -> URL? {
+        adapterDirectory(for: source)?
+            .appending(path: (source.file as NSString).lastPathComponent, directoryHint: .notDirectory)
+    }
+
+    /// Whether the adapter is on disk AND was verified: the file is present, its marker records
+    /// the same digest, and the size matches the declared one when there is one. A file without a
+    /// marker is not verified — the engine hashes it before use.
+    public func hasVerifiedAdapter(_ source: AdapterSource) -> Bool {
+        guard let file = adapterFile(for: source),
+              let directory = adapterDirectory(for: source),
+              let attributes = try? FileManager.default.attributesOfItem(atPath: file.path),
+              let data = try? Data(contentsOf: directory.appending(path: Self.adapterMarkerName)),
+              let marker = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              (marker["sha256"] as? String)?.lowercased() == source.sha256.lowercased()
+        else { return false }
+        let size = (attributes[.size] as? NSNumber)?.uint64Value
+        if let declared = source.bytes, size != declared { return false }
+        if let recorded = (marker["bytes"] as? NSNumber)?.uint64Value, size != recorded { return false }
+        return true
+    }
+
+    /// Record that the adapter file was hash-checked. Best-effort, like `writeMarker`.
+    public func writeAdapterMarker(for descriptor: AdapterDescriptor) {
+        guard let directory = adapterDirectory(for: descriptor.source),
+              let file = adapterFile(for: descriptor.source) else { return }
+        let size = (try? FileManager.default.attributesOfItem(atPath: file.path))?[.size] as? NSNumber
+        let payload: [String: Any] = [
+            "id": descriptor.id,
+            "repo": descriptor.source.repo,
+            "revision": descriptor.source.revision,
+            "file": descriptor.source.file,
+            "sha256": descriptor.source.sha256.lowercased(),
+            "bytes": size?.uint64Value ?? 0,
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: payload,
+                                                     options: [.prettyPrinted, .sortedKeys])
+        else { return }
+        try? data.write(to: directory.appending(path: Self.adapterMarkerName))
+    }
+
     /// What a store root currently costs on disk, and how many packages are installed in it.
     public struct Usage: Sendable, Equatable {
         /// On-disk allocated bytes, **each distinct file counted once** (see `usage(at:)`).

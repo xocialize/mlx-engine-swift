@@ -2,7 +2,8 @@
 /// (`T2IResponse.image`), serialized round-trip form (C3).
 ///
 /// The fields here are the diffusion controls every T2I model understands — they are
-/// canonical, not `metaData`. Scheduler choice, LoRA stacks, refiner passes and other
+/// canonical, not `metaData`. Adapters (LoRA) are typed since contract 1.53.0 (`adapters`,
+/// declared by `ToolDescriptor.adapters`); scheduler choice, refiner passes and other
 /// package-specific levers ride `metaData` (C5).
 
 /// The requested background of a T2I image (contract 1.48.0).
@@ -32,6 +33,12 @@ public struct T2IRequest: CapabilityRequest {
     /// Requested background (contract 1.48.0). nil = the model's default (opaque). `.transparent` is
     /// admitted only by a surface declaring `T2IControls.supportsTransparentBackground`.
     public let background: T2IBackground?
+    /// Adapters (LoRA) to apply, by catalog id (contract 1.53.0). Admitted only on a surface
+    /// declaring `ToolDescriptor.adapters`; the engine resolves them into `resolvedAdapters`.
+    public let adapters: [AdapterRef]
+    /// The engine-resolved form of `adapters`, in the same order — what a package reads
+    /// (contract 1.53.0). Stamped by the engine before every run; see `AdapterCarrying`.
+    public private(set) var resolvedAdapters: [ResolvedAdapter] = []
     public let mode: Mode?
     public let metaData: MetaData
 
@@ -43,6 +50,7 @@ public struct T2IRequest: CapabilityRequest {
                 guidanceScale: Double? = nil,
                 seed: UInt64? = nil,
                 background: T2IBackground? = nil,
+                adapters: [AdapterRef] = [],
                 mode: Mode? = nil,
                 metaData: MetaData = [:]) {
         self.prompt = prompt
@@ -53,8 +61,17 @@ public struct T2IRequest: CapabilityRequest {
         self.guidanceScale = guidanceScale
         self.seed = seed
         self.background = background
+        self.adapters = adapters
         self.mode = mode
         self.metaData = metaData
+    }
+}
+
+extension T2IRequest: AdapterCarrying {
+    public func resolving(_ resolved: [ResolvedAdapter]) -> T2IRequest {
+        var copy = self
+        copy.resolvedAdapters = resolved
+        return copy
     }
 }
 

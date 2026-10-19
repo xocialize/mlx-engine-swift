@@ -1188,5 +1188,59 @@ public enum ContractVersion {
     //     and pixel-agency-image-engine `Media.swift`; ming-image-swift had `@unknown default` and was
     //     fine. Switch over `Image.Format` with `@unknown default`. First adopters: RealESRGANMLX's shared
     //     `MLXTileProcessor` (reads and writes `64RGBALE`, ≥ 0.8.1) and mlx-realplksr-swift 0.2.0.
-    public static let current = SemanticVersion(major: 1, minor: 52, patch: 0)
+    // 1.53.0 (2026-10-19, additive): TYPED ADAPTERS (LoRA), AB-A-0189 — L1 of AB-D-0155 (contract
+    //   first; no interim `metaData` translation). Adapters rode free-form `metaData` in five package
+    //   dialects (`loras` {repo, file, strength}; `loraId`/`loraStrength`; LTX's `ic.*` file paths; a
+    //   load-time `loraPath`; adapters merged into model ids), no manifest could declare them, every
+    //   package fetched from unpinned `resolve/main` with no digest, no token and no consent outside the
+    //   engine's store, and no adapter byte reached admission (LTX IC roughly doubles the sequence).
+    //   • REQUEST: `adapters: [AdapterRef]` on `T2IRequest`, `IEditRequest`, `T2VRequest`, `VEditRequest`
+    //     (`AdapterCarrying`). `AdapterRef {id, strength?, conditioning}` names a CATALOG entry — never a
+    //     repo or a file, so a client can ask only for curated adapters. A reference-conditioned ("IC")
+    //     adapter's inputs ride `conditioning: [ConditioningInput {role, media (.image/.video/.audio),
+    //     strength?}]` — LTX's unbuilt `ConditioningInput` (IC-LORA-PLAN §3a), bound to its adapter.
+    //   • PACKAGE INPUT: `resolvedAdapters: [ResolvedAdapter]`, ENGINE-STAMPED before every run (to [] when
+    //     none, overwriting whatever a caller set): the verified local `fileURL`, the pinned `source`, the
+    //     effective `strength`, the conditioning in declared slot order, and the charged `footprint`.
+    //   • MANIFEST: `ToolDescriptor.adapters: AdapterSupport?` (+ `declaring(adapters:)`, which also
+    //     advertises the `adapters` parameter): `baseModel`, `formats` (`AdapterFormat`, open:
+    //     diffusers-peft / kohya / bfl-fused), `kinds` (`AdapterKind`, open: plain / ic), `maxCount`,
+    //     `strengthRange`, `quants` (base quants adapters apply at; nil = any) and `binding` (.perRequest,
+    //     or .loadTime with an `AdapterConfigured` configuration). On the descriptor, not in
+    //     `SurfaceControls`, because it is routing-time for four capabilities alike (the `rawImageFormats`
+    //     precedent). nil = none = every pre-1.53 conformer.
+    //   • CATALOG: `AdapterDescriptor` — id, kind, format, `baseModels`, `capabilities`, `source:
+    //     AdapterSource {repo, revision (a 40-hex commit — a branch is refused), file, sha256, bytes?}`,
+    //     licence, default strength + range, ordered `AdapterConditioningSlot`s, and `AdapterFootprint
+    //     {residentBytes, activationMultiplier}` (required for IC). The engine-facing subset of the L2
+    //     registry entry; `Codable`, licence as a plain SPDX string. `MLXServeEngine.registerAdapter(s)`
+    //     validates it and classifies its licence like a weight licence (advisory, or refused under
+    //     `.blocking`).
+    //   • ENGINE-ENFORCED before admission and before any download, with
+    //     `PackageError.unsupportedRequestFeature`: adapters on an undeclared surface, more than
+    //     `maxCount`, a repeated or unknown id, a base model / capability / kind / dialect the surface does
+    //     not take, a base quant outside `quants`, a strength outside the intersection of the surface's and
+    //     the adapter's ranges (refused, never clamped), conditioning that does not fill the slots, and a
+    //     `.loadTime` surface whose configuration cannot be stamped. `AdapterSupport.plan` is the same check
+    //     for a host. With no package named, an adapter implies its base model: `run` routes to the first
+    //     backer that admits every adapter when the default does not.
+    //   • ENGINE-MANAGED FETCH: through the engine's `WeightMaterializing` executor (hub token from the
+    //     shared chain) at the PINNED revision into the models root, content-keyed
+    //     `<root>/adapters/<sha256>/<file name>` (`ModelStore.adapterFile(for:)`), SHA-256-checked
+    //     (`EngineError.adapterDigestMismatch` deletes the file and runs nothing), recorded by an
+    //     `adapter.json` marker; concurrent runs share one fetch. Consent: `adapterMaterializationPreview`,
+    //     `prepareAdapters`, `adapterNeedsDownload`, and `AdapterFetchPolicy.preparedOnly`
+    //     (`EngineError.adapterNotMaterialized` instead of a run-time download). No models root is
+    //     `EngineError.adapterStoreUnset`: adapters are engine-managed only.
+    //   • ADMISSION: a run's reserve becomes the activation peak × the largest `activationMultiplier`, plus
+    //     every per-request adapter's `residentBytes`; a `.loadTime` set is charged as persistent residency,
+    //     and a run naming a different set waits for the package's in-flight runs, evicts it and rebuilds it.
+    //   • `MLXServeConformance.AdapterConformance` — the ADP gate: ADP-1 coherent, ADP-2 advertised, ADP-3
+    //     bindable, ADP-4 catalog (docs/conformance-c0-c13.md).
+    //   Additive: one new file of types, one defaulted descriptor member, one defaulted init argument and
+    //     one engine-stamped member on four requests, one defaulted `WeightMaterializing` requirement, four
+    //     `EngineError` cases. Pre-1.53 descriptor JSON decodes unchanged; a request that names no adapters
+    //     and a package that declares none behave exactly as in 1.52.0. ⚠️ Exhaustive switches over
+    //     `EngineError` need the four new cases (or `@unknown default`).
+    public static let current = SemanticVersion(major: 1, minor: 53, patch: 0)
 }

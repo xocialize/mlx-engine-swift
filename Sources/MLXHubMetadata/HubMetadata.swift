@@ -245,7 +245,7 @@ public extension MaterializationPreview {
 
     /// Free space on the volume holding `url`, by the same measure the OS uses for purgeable-aware
     /// "can I write this" questions.
-    static func freeBytes(at url: URL) -> UInt64? {
+    public static func freeBytes(at url: URL) -> UInt64? {
         guard let capacity = try? url.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
             .volumeAvailableCapacityForImportantUsage else { return nil }
         return capacity < 0 ? nil : UInt64(capacity)
