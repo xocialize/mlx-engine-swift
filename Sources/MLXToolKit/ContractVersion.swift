@@ -1242,5 +1242,27 @@ public enum ContractVersion {
     //     `EngineError` cases. Pre-1.53 descriptor JSON decodes unchanged; a request that names no adapters
     //     and a package that declares none behave exactly as in 1.52.0. ⚠️ Exhaustive switches over
     //     `EngineError` need the four new cases (or `@unknown default`).
-    public static let current = SemanticVersion(major: 1, minor: 53, patch: 0)
+    // 1.54.0 (2026-10-19, additive): IMAGE INPUT ON CHAT TURNS, AB-A-0190 (E4 of AB-D-0155's prompt
+    //   enhancement). `ChatMessage.content` was a plain `String`, so an `.llm` request could not carry
+    //   an image, and an edit-prompt rewriter (Qwen-Image-Edit 2511's vendor enhancer, SenseNova
+    //   U1.5's edit rewriter, Mage-Flow-Edit, Boogu edit) could not see the picture it rewrites for —
+    //   prompt-enhance-kit's `EnhanceTask.needsVision` was a flag nothing could act on.
+    //   • `ChatMessage.images: [Image]` (+ `init(role:content:images:)`, defaulted): a `.user` turn's
+    //     images, in order. The shape of mlx-swift-lm's `Chat.Message.images`, so a VL package maps it
+    //     directly; the package places them where its chat template puts a turn's images. Encoded only
+    //     when non-empty, decoded as [] when absent, so pre-1.54 message JSON round-trips unchanged.
+    //     `LLMRequest(prompt:images:)` and `LLMRequest.images` (every image, across turns).
+    //   • `LLMControls {acceptsImages, maxImagesPerRequest?}` as `SurfaceControls.llm`, read via
+    //     `llmControls`; `LLMContract.descriptor(controls:)` says so in the `messages` summary. The
+    //     governing rule is met: a host must pick a vision-language backbone BEFORE it runs one.
+    //   • ENGINE-ENFORCED in `checkDeclaredControls`, before admission, with
+    //     `PackageError.unsupportedRequestFeature`: images on a surface not declaring `acceptsImages`,
+    //     images on a `.system` / `.assistant` turn, more than `maxImagesPerRequest`. A `.rawRGBA16`
+    //     chat image is held to `rawImageFormats` like every other image.
+    //   • Not a vision variant of `LLMRequest`: one request type keeps one `llm` surface (C4), and a
+    //     text-only conversation is just one with no images.
+    //   Additive: one defaulted member on `ChatMessage`, one struct, one `SurfaceControls` case and
+    //     accessor, one defaulted descriptor argument. ⚠️ An exhaustive `switch` over `SurfaceControls`
+    //     needs `case .llm` (or `@unknown default`).
+    public static let current = SemanticVersion(major: 1, minor: 54, patch: 0)
 }

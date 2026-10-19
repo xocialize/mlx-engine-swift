@@ -167,6 +167,8 @@ public enum SurfaceControls: Sendable, Codable, Equatable {
     /// What a speech-edit surface can do: operations, label vocabularies, the longest take
     /// (contract 1.50.0, AB-A-0137). Required on every `speechEdit` surface.
     case speechEdit(SpeechEditControls)
+    /// Image input on chat turns (`ChatMessage.images`) — contract 1.54.0, AB-A-0190.
+    case llm(LLMControls)
 }
 
 /// Self-description a package publishes so the registry — and any out-of-process tool client, such
@@ -201,7 +203,7 @@ public struct ToolDescriptor: Sendable, Codable, Equatable {
     /// Per-capability **routing-time** declarations (contract 1.38.0, additive). `nil` = this
     /// surface declares none, which is every pre-1.38 conformer. Read it through the
     /// `ttsControls` / `sttControls` / `t2vControls` / `t2iControls` / `speechEditControls`
-    /// accessors below.
+    /// accessors below (and, since 1.54.0, `llmControls`).
     public let controls: SurfaceControls?
     /// The raw `Image` formats this surface reads AND returns in kind, beyond the png/jpeg every image
     /// surface takes (contract 1.52.0, additive). A descriptor-level member, like `quantFloor`, because
@@ -321,6 +323,13 @@ extension ToolDescriptor {
         return nil
     }
 
+    /// The `llm` control declaration, or nil when this surface declares none (contract 1.54.0).
+    /// `llmControls?.acceptsImages == true` is what admits `ChatMessage.images`.
+    public var llmControls: LLMControls? {
+        if case .llm(let declared) = controls { return declared }
+        return nil
+    }
+
     /// Whether a declared controls block matches this surface's capability. `false` is a package
     /// bug: the block would describe a surface the descriptor does not name.
     public var controlsMatchCapability: Bool {
@@ -331,6 +340,7 @@ extension ToolDescriptor {
         case .textToVideo: return capability == .textToVideo
         case .textToImage: return capability == .textToImage
         case .speechEdit: return capability == .speechEdit
+        case .llm: return capability == .llm
         }
     }
 }

@@ -2137,6 +2137,26 @@ public actor MLXServeEngine {
             }
         }
 
+        // Image input on chat turns (contract 1.54.0, AB-A-0190): declaration-gated like a2v. A
+        // text-only model that dropped the images would answer about an image it never saw — wrong
+        // output, and nothing in the text says so.
+        if let llm = request as? LLMRequest, !llm.images.isEmpty {
+            guard let declared = surface.llmControls, declared.acceptsImages else {
+                throw PackageError.unsupportedRequestFeature(
+                    "images — \(id) declares no image input (ToolDescriptor.llmControls); choose a "
+                        + "vision-language package (llmControls.acceptsImages), or describe the image in text")
+            }
+            if let turn = llm.messages.first(where: { $0.role != .user && !$0.images.isEmpty }) {
+                throw PackageError.unsupportedRequestFeature(
+                    "images on a .\(turn.role.rawValue) turn — images ride .user turns only")
+            }
+            if let limit = declared.maxImagesPerRequest, llm.images.count > limit {
+                throw PackageError.unsupportedRequestFeature(
+                    "images — \(llm.images.count) in the request, \(id) takes at most \(limit) "
+                        + "(LLMControls.maxImagesPerRequest)")
+            }
+        }
+
         // BOTH stt entry points, one site (contract 1.39.0). `STTSessionRequest` is a
         // `CapabilityRequest` precisely so this refusal cannot drift between `run()` and
         // `transcribeLive()`: a caller must not get biasing on one door and silence on the other.
@@ -2168,6 +2188,8 @@ public actor MLXServeEngine {
             switch child.value {
             case let image as Image: return image.format == format
             case let images as [Image]: return images.contains { $0.format == format }
+            case let messages as [ChatMessage]:   // chat-turn images (1.54.0)
+                return messages.contains { $0.images.contains { $0.format == format } }
             case let refs as [AdapterRef]:   // a reference-conditioned adapter's inputs (1.53.0)
                 return refs.contains { ref in
                     ref.conditioning.contains {

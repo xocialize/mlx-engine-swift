@@ -9,13 +9,42 @@
 
 /// A chat turn. The canonical LLM input is a message list; a bare prompt is
 /// `[ChatMessage(role: .user, content: ...)]`.
+///
+/// **Images (contract 1.54.0, AB-A-0190).** A `.user` turn can carry images for a vision-language
+/// package — the input image an edit-prompt rewriter must see, a screenshot to describe. They
+/// belong to the turn, in order ("image 1", "image 2"), and the package places them where its
+/// chat template puts a turn's images (mlx-swift-lm's `Chat.Message.images` is the same shape).
+/// **Declaration-gated:** only a surface declaring `LLMControls.acceptsImages` admits them; the
+/// engine refuses them elsewhere before admission, because a text-only model that dropped them
+/// would answer about an image it never saw — wrong output, not degraded output.
 public struct ChatMessage: Sendable, Codable, Equatable {
     public enum Role: String, Sendable, Codable { case system, user, assistant }
     public let role: Role
     public let content: String
-    public init(role: Role, content: String) {
+    /// Images this turn carries, in order (contract 1.54.0). `.user` turns only. Empty for a
+    /// text-only turn, which is every pre-1.54 message.
+    public let images: [Image]
+
+    public init(role: Role, content: String, images: [Image] = []) {
         self.role = role
         self.content = content
+        self.images = images
+    }
+
+    private enum CodingKeys: String, CodingKey { case role, content, images }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        role = try container.decode(Role.self, forKey: .role)
+        content = try container.decode(String.self, forKey: .content)
+        images = try container.decodeIfPresent([Image].self, forKey: .images) ?? []
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(role, forKey: .role)
+        try container.encode(content, forKey: .content)
+        if !images.isEmpty { try container.encode(images, forKey: .images) }
     }
 }
 
@@ -108,15 +137,39 @@ public struct LLMRequest: CapabilityRequest {
         self.metaData = metaData
     }
 
-    /// Convenience for a single user turn.
+    /// Convenience for a single user turn, optionally with images (contract 1.54.0).
     public init(prompt: String,
+                images: [Image] = [],
                 parameters: LLMParameters = LLMParameters(),
                 mode: Mode? = nil,
                 responseFormat: ResponseFormat? = nil,
                 metaData: MetaData = [:]) {
-        self.init(messages: [ChatMessage(role: .user, content: prompt)],
+        self.init(messages: [ChatMessage(role: .user, content: prompt, images: images)],
                   parameters: parameters, mode: mode,
                   responseFormat: responseFormat, metaData: metaData)
+    }
+
+    /// Every image the request carries, across turns, in order.
+    public var images: [Image] { messages.flatMap(\.images) }
+}
+
+/// What an **`llm`** surface accepts beyond text (contract 1.54.0, AB-A-0190), carried on
+/// `ToolDescriptor.controls` as `.llm`, read through `llmControls`. nil = text only, which is
+/// every pre-1.54 conformer.
+///
+/// Earns its `SurfaceControls` case by the governing rule: a host routing a vision task (an
+/// edit-prompt rewriter that must see the input image) has to pick a vision-language backbone
+/// BEFORE it runs one, and a text-only answer cannot say afterwards that the image was dropped.
+public struct LLMControls: Sendable, Codable, Equatable {
+    /// The surface reads `ChatMessage.images`. `false` = images are refused by the engine
+    /// pre-flight, never silently dropped.
+    public let acceptsImages: Bool
+    /// The most images one request may carry across all turns; nil = no stated limit.
+    public let maxImagesPerRequest: Int?
+
+    public init(acceptsImages: Bool = false, maxImagesPerRequest: Int? = nil) {
+        self.acceptsImages = acceptsImages
+        self.maxImagesPerRequest = maxImagesPerRequest
     }
 }
 
@@ -192,11 +245,20 @@ public enum LLMContract {
     /// `responseFormat` parameter in the descriptor (C11) — the honest-manifest signal a
     /// router checks before sending a `responseFormat` request. Defaulted `false` so existing
     /// descriptors are unchanged (1.16.0, additive).
+    ///
+    /// `controls` (contract 1.54.0) declares image input; the `messages` summary then says so, so a
+    /// planner reading the descriptor knows a turn may carry images.
     public static func descriptor(name: String, summary: String, modes: [Mode] = [],
-                                  supportsStructuredOutput: Bool = false) -> ToolDescriptor {
+                                  supportsStructuredOutput: Bool = false,
+                                  controls: LLMControls? = nil) -> ToolDescriptor {
+        let acceptsImages = controls?.acceptsImages == true
         var parameters = [
             ParameterSchema(name: "messages", kind: .array, required: true,
-                            summary: "Chat messages (role + content). A bare prompt is one user turn."),
+                            summary: acceptsImages
+                                ? "Chat messages (role + content, + images on user turns"
+                                    + (controls?.maxImagesPerRequest.map { ", at most \($0) per request" } ?? "")
+                                    + "). A bare prompt is one user turn."
+                                : "Chat messages (role + content). A bare prompt is one user turn."),
             ParameterSchema(name: "parameters", kind: .object, required: false,
                             summary: "Canonical sampling: temperature, topP, maxTokens, stop, seed."),
         ]
@@ -210,7 +272,8 @@ public enum LLMContract {
             capability: .llm,
             summary: summary,
             parameters: parameters,
-            supportedModes: modes
+            supportedModes: modes,
+            controls: controls.map(SurfaceControls.llm)
         )
     }
 }
