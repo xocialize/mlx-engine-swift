@@ -176,6 +176,21 @@ public enum Capability: String, Codable, Sendable, CaseIterable, Hashable {
     /// — signal-domain mastering that preserves content by construction, whereas this REGENERATES the
     /// take, so its words need checking afterwards; from `audioSeparation` — that splits a mix.)
     case speechEdit
+    /// **Music (lyrics-to-song)** — a style `caption` + `lyrics` with section tags (+ a length, a seed,
+    /// a guidance scale) → one stereo song (`Audio`, `.wav`) and whether it was cut short. Three models
+    /// that share no protocol land on it, so everything beyond that core is a PACKAGE-DECLARED FEATURE
+    /// (`MusicControls.features`, required on every music surface): score planning in and the ABC score
+    /// out (YuE2-3B), a timbre reference clip, a source clip to cover / repaint / extend, bpm / key /
+    /// time-signature anchors, a vocal language and timed lyrics out (ACE-Step 1.5), or none of them
+    /// (MiniMax Music 3). The engine refuses an undeclared input feature before admission. Contract
+    /// 1.56.0; introduced for mlx-yue2-swift (AB-A-0201) and shaped for all three (AB-A-0202).
+    ///
+    /// (Distinct from `tts` — sung music with structure, not speech; from `soundEffect` — a prompt and a
+    /// duration with no lyrics, no plan and no editable score; from `speechEdit` / `audioPolish` — those
+    /// take an existing take, this writes a song. A cover of a source clip rides this surface's `edit`,
+    /// not `speechEdit`, because the output is a new performance of a SONG, not the same words
+    /// re-delivered.)
+    case music
 }
 
 /// The fixed output artifact kind for a capability. Not negotiable per package (C2).
@@ -238,6 +253,7 @@ extension Capability {
         case .imageRelight: return .image
         case .layerDecompose: return .image
         case .speechEdit: return .audio
+        case .music: return .audio
         }
     }
 }

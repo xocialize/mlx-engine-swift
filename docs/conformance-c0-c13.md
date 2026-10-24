@@ -42,6 +42,17 @@ and reports** instead of refusing. A finding lands on `MLXServeEngine.licenseAdv
 license, policy, plus a one-line `summary`) and is logged, exactly as an unregistered `Specialty` is
 under C6.
 
+**C7 and the screen-side notice** (added 2026-10-24, contract 1.56.0, AB-A-0202). Some licenses oblige
+the UI of a product using the weights to show a string — MiniMax-Music3 §3.1 ("MiniMax-Music3"). That
+duty is the package's to DECLARE and the host's to HONOR: the package carries the string as a
+`.required` `LicenseNotice` in `manifest.license.notices`, `SPDXLicense.requiredDisplayText` names the
+exact string such a license obliges, and `LicenseDeclaration.missingRequiredDisplayNotices` is empty for
+a conformant declaration (assert it in the manifest test). The engine logs a `[License]` line per
+missing one at registration and still registers the package — a declaration gap, judged at review like
+the rest of C7. `.informational` notices (a non-commercial clause, a rights caveat, a hosted-service
+duty) are what a user should read before choosing the package; a host may fold them behind a
+disclosure, never the `.required` ones.
+
 Why: the gate existed to stop early, careless mistakes while the fleet was small and it was still
 being learned which model licenses are shippable. That job is done — every entry on
 `permissiveAllowlist` now carries a written, reviewed rationale — and a blocker converts a

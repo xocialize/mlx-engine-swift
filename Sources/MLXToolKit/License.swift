@@ -183,11 +183,65 @@ extension SPDXLicense {
     /// one). Used by the LFM2.5-8B-A1B `llm` package (LFMLLMPackage).
     public static let lfmOpen1: SPDXLicense = "LicenseRef-LFM-Open-1.0"
 
+    /// MiniMax-Music3 Community License — the license on the **MiniMax Music 3** weights
+    /// (huggingface.co/MiniMaxAI/MiniMax-Music3/blob/main/LICENSE, read 2026-10-24; the operator
+    /// accepted its three conditions the same day, AB-D-0157). Non-SPDX, referenced via `LicenseRef-`.
+    /// An MIT-shaped grant over the weights, parameters, configs and inference code — use, copy,
+    /// modify, merge, publish, distribute, **sublicense** and sell — subject to notice retention and
+    /// four operative conditions, quoted here because each shapes an obligation a package or a host
+    /// carries:
+    ///
+    /// - **§3.1 UI display.** "If you use the Model or any Derivative Work in a commercial product or
+    ///   service, you shall prominently display 'MiniMax-Music3' on the user interface of such product
+    ///   or service." An ATTRIBUTION duty on the UI, not on redistribution — the `dinov3` "Built with
+    ///   DINOv3" shape, moved onto the screen. The package declares the string as a `.required`
+    ///   `LicenseNotice` (`LicenseDeclaration.notices`), and `requiredDisplayText` names it, so
+    ///   `missingRequiredDisplayNotices` flags a manifest that forgot it.
+    /// - **§3.2 Revenue gate.** Separate prior written authorization from MiniMax (api@minimax.io) is
+    ///   required "only if the aggregate yearly revenue of all your products and services that use the
+    ///   Model or Derivative Works exceeds USD 20,000,000." A SCALE gate, the same shape as the
+    ///   allowlisted `ltx2Community` (US$10 M + a non-compete), `lfmOpen1` (US$10 M) and
+    ///   `bilibiliModelUse` (100 M MAU / RMB 1 B): a bar TWICE LTX-2's with no non-compete, no
+    ///   field-of-use clause, no eval-only clause and no claim on outputs, and 40× the US$500 k cap the
+    ///   operator called acceptable on 2026-10-14 (AB-D-0055's Audio8 counter-case, US$2 M, was kept
+    ///   advisory and sits 10× BELOW this bar).
+    /// - **§4 Hosted-service safeguards.** Anyone offering the Model "as a hosted generation service"
+    ///   shall "implement, maintain, test and periodically review reasonable and proportionate
+    ///   technical and organizational safeguards" against infringing outputs. Binds a hosted-service
+    ///   OPERATOR, not a local engine: recorded as an `.informational` notice so a hosted deployment
+    ///   knows it owes safeguards, not enforced by MLXToolKit.
+    /// - **Exhibit A AUP (rev. 2026-08-06), #11.** Disclose machine-generated content "in public
+    ///   environments where a reasonable person could be misled." A standard AUP, the `gemmaTerms`
+    ///   shape, passed down with the weights.
+    ///
+    /// Classification: **allowlisted** (`permissiveAllowlist`, admitted by the default
+    /// `.permissiveOnly`). Rationale: the grant is MIT-shaped and the only commercial carve-out is a
+    /// revenue gate higher than two allowlisted precedents with fewer strings than either; the display
+    /// duty is the allowlisted `dinov3` attribution shape; the AUP is the allowlisted `gemmaTerms`
+    /// shape; §4 attaches to a deployment mode this engine does not run. The pass is CONDITIONAL on
+    /// the US$20 M threshold and on the UI display — record both where the weights ship and revisit
+    /// at crossing (a conditional-pass C7, the `lfmOpen1` rule). Lineage declared in the LICENSE: LM
+    /// fine-tuned from Qwen3-8B (Apache-2.0), DiT-2B from stable-audio-tools (MIT), VAE from DAC
+    /// (MIT) — one level down is clean. Used by the MiniMax Music 3 `music` package (AB-T-0351).
+    public static let minimaxMusic3Community: SPDXLicense = "LicenseRef-MiniMax-Music3-Community"
+
+    /// The exact string a license obliges a host to SHOW on the UI of a product using the weights, or
+    /// nil for a license with no display duty. Distinct from redistribution attribution (NOTICE files,
+    /// "Built with …" on shipped materials), which travels with the weights, not the screen. A package
+    /// declaring such a license carries the string in a `.required` `LicenseNotice`
+    /// (`LicenseDeclaration.missingRequiredDisplayNotices` names the ones that do not).
+    public var requiredDisplayText: String? {
+        switch self {
+        case .minimaxMusic3Community: "MiniMax-Music3"
+        default: nil
+        }
+    }
+
     /// The permissive allowlist used by `.permissiveOnly`. Curated; extend deliberately.
     public static let permissiveAllowlist: Set<SPDXLicense> = [
         .mit, .apache2, .bsd2, .bsd3, .isc, .unlicense, .funasrModel, .ccBy4, .ltx2Community, .dinov3,
         .gemmaTerms, .nvidiaOpenModel, .openMDW1_1, .lfmOpen1, .bilibiliModelUse,
-        .neteaseYoudaoModelUse,
+        .neteaseYoudaoModelUse, .minimaxMusic3Community,
     ]
 
     /// Non-permissive licenses explicitly acknowledged for **eval/research** use only. These are
@@ -300,6 +354,16 @@ public struct LicenseAdvisory: Sendable, Equatable {
 /// valid; list the components at the next release.
 public struct LicenseDeclaration: Sendable, Codable, Equatable {
     public let weightLicense: SPDXLicense
+    /// The notices a HOST shows or may show for this package (contract 1.56.0, AB-A-0201 / AB-A-0202).
+    /// `.required` ones are a license's UI display duty (MiniMax-Music3 §3.1: the string
+    /// "MiniMax-Music3" on the UI of a commercial product) — a host that lists the package SHOWS them
+    /// on its line, every time; `.informational` ones are what a user should read before choosing it
+    /// (YuE2-3B: "non-commercial use only …" and "covers and supplied lyrics may need the original
+    /// song's rights"; MiniMax: the §4 hosted-service safeguards duty). Nil = none declared, which is
+    /// every pre-1.56 manifest; optional, so older manifest JSON decodes unchanged. Attribution the
+    /// licenses require on REDISTRIBUTION still ships with the weights (NOTICE / THIRD_PARTY_NOTICES);
+    /// this is the screen-side slot.
+    public let notices: [LicenseNotice]?
     /// Licenses of the OTHER weight sets the package loads, where they differ from the primary
     /// checkpoint's (contract 1.49.0) — Dia2-2B is `.apache2` with Kyutai Mimi's `.ccBy4` here. Nil =
     /// `weightLicense` covers every weight loaded, which is every pre-1.49 declaration. Optional, so
@@ -310,14 +374,59 @@ public struct LicenseDeclaration: Sendable, Codable, Equatable {
     public let portCodeLicense: SPDXLicense
 
     public init(weightLicense: SPDXLicense, additionalWeightLicenses: [SPDXLicense]? = nil,
-                portCodeLicense: SPDXLicense) {
+                portCodeLicense: SPDXLicense, notices: [LicenseNotice]? = nil) {
         self.weightLicense = weightLicense
         self.additionalWeightLicenses = additionalWeightLicenses
         self.portCodeLicense = portCodeLicense
+        self.notices = notices
     }
 
     /// Every weight license the package loads, primary first. The gate judges each one.
     public var weightLicenses: [SPDXLicense] { [weightLicense] + (additionalWeightLicenses ?? []) }
+
+    /// The notices a host MUST show wherever it presents this package (`LicenseNotice.Display.required`).
+    public var requiredNotices: [LicenseNotice] { (notices ?? []).filter { $0.display == .required } }
+
+    /// Declared licenses whose UI display duty (`SPDXLicense.requiredDisplayText`) no `.required`
+    /// notice carries. Empty for a conformant declaration; a package's manifest test asserts it, and
+    /// the engine logs a `[License]` line per entry at registration (declaration, not a gate — the
+    /// 1.28.0 rule).
+    public var missingRequiredDisplayNotices: [SPDXLicense] {
+        let shown = requiredNotices.map(\.text)
+        return (weightLicenses + [portCodeLicense]).filter { license in
+            guard let text = license.requiredDisplayText else { return false }
+            return !shown.contains { $0.contains(text) }
+        }
+    }
+}
+
+/// One notice a host shows for a package (contract 1.56.0): the text, whether showing it is a license
+/// duty or a courtesy, which license asks for it, and where its terms are. Codable so a manifest
+/// carries it to an out-of-process host unchanged.
+public struct LicenseNotice: Sendable, Codable, Equatable {
+    public enum Display: String, Sendable, Codable {
+        /// A license obliges the host to show it on the UI of any product using the package
+        /// (MiniMax-Music3 §3.1). Shown on the package's line, every time, not behind a disclosure.
+        case required
+        /// Worth reading before choosing the package (a non-commercial clause, a rights caveat, a
+        /// hosted-service duty); a host may fold it behind a disclosure.
+        case informational
+    }
+
+    public let text: String
+    public let display: Display
+    /// The license this notice serves, or nil for a note about the package as a whole (YuE2's "covers
+    /// may need the original song's rights" is about the use, not a clause).
+    public let license: SPDXLicense?
+    /// Where the full terms are (the HF LICENSE blob, a vendor page), for a host to link.
+    public let termsURL: String?
+
+    public init(text: String, display: Display, license: SPDXLicense? = nil, termsURL: String? = nil) {
+        self.text = text
+        self.display = display
+        self.license = license
+        self.termsURL = termsURL
+    }
 }
 
 /// The result of the gate, designed to name *which layer* failed (the C8 legibility rule).

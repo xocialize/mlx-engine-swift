@@ -29,6 +29,13 @@ extension RunPhase {
     /// generation. Any package wrapping a mandatory upstream classifier reports here rather than
     /// minting `safety` / `filter` / its own synonym.
     public static let screen: RunPhase = "screen"
+    /// A planning stage that runs BEFORE synthesis and emits structure, not audio (contract 1.56.0,
+    /// the `music` surface): YuE2's score plan (report per planned token), ACE-Step 1.5's planner LM
+    /// (bpm / key / duration CoT, then the 5 Hz codes), MiniMax Music 3's global LM. Deliberately not
+    /// `generate`: a consumer shows "planning" while nothing is being sung yet, and a cancel here is
+    /// cheap in a way a mid-synthesis cancel is not. Synthesis after it reports `generate` (an AR
+    /// token loop), `denoise` (a flow / ODE loop, `stage` = chunk) and `decode` (codec tiles).
+    public static let plan: RunPhase = "plan"
     /// Conditioning/input encoding (text encoder, VAE-encode of an init frame or reference).
     public static let encode: RunPhase = "encode"
     /// The iterative diffusion denoise loop — report per-step counts here; they are cheap

@@ -1282,5 +1282,57 @@ public enum ContractVersion {
     //     group's roles must be slots, declared `required: false`, and in one group only.
     //   Additive: one struct, one defaulted descriptor member and init argument, encoded only when
     //     non-empty, so pre-1.55 descriptor JSON round-trips unchanged.
-    public static let current = SemanticVersion(major: 1, minor: 55, patch: 0)
+    // 1.56.0 (2026-10-24, additive): MUSIC (LYRICS-TO-SONG) + THE SCREEN-SIDE LICENSE NOTICE, closing
+    //   AB-A-0201 (mlx-yue2-swift's V3 waits on a Capability) and AB-A-0202 (shape it for three models at
+    //   once, and classify MiniMax's license). Three song models share no protocol: YuE2-3B plans an
+    //   editable ABC score and sings it; ACE-Step 1.5 plans bpm / key / duration anchors, takes a timbre
+    //   reference and a source clip to cover / repaint / extend, and times the lyrics out; MiniMax Music 3
+    //   takes a caption and lyrics and nothing else. `soundEffect` (1.2.0) is the nearest surface and has
+    //   no lyrics, no plan and no score, so a new case rather than a mode (a mode cannot add fields).
+    //   • `Capability.music` (Music.swift; `CanonicalOutput.audio`, `.wav`). The core every music surface
+    //     honors: `MusicRequest {caption, lyrics (section tags inline), durationSeconds?, seed?,
+    //     guidanceScale?}` → `MusicResponse {audio (sampleRate + channels SET; the fleet renders 48 kHz
+    //     stereo), truncated}`. Everything else is a PACKAGE-DECLARED FEATURE.
+    //   • `MusicControls` as `SurfaceControls.music` (`musicControls`), REQUIRED on every music surface
+    //     (`MusicContract.descriptor(controls:)` will not build one without it — the speechEdit rule):
+    //     `features: Set<MusicFeature>` {planning, score, referenceAudio, sourceAudio, anchors,
+    //     vocalLanguage, timestamps, guidanceScale} + `planningModes` (full / melody / off),
+    //     `editModes` (cover / repaint / extend), `vocalLanguages` (BCP-47; empty = open),
+    //     `maxDurationSeconds`. `declarationProblems` names an incoherent declaration (a feature with no
+    //     vocabulary, a vocabulary with no feature). Only a declared feature's parameter is advertised.
+    //   • The request's levers, each needing its feature: `planning: MusicPlanningMode?`, `score: String?`
+    //     (ABC in), `referenceAudio: Audio?`, `edit: MusicEdit? {source, operation: .cover(strength) /
+    //     .repaint(start, end) / .extend(leading, trailing)}` (one value, so a source without an operation
+    //     cannot be expressed), `anchors: MusicAnchors? {bpm, key, timeSignature}`, `vocalLanguage:
+    //     String?`. The response's: `score` (the plan or the given score, ABC), `anchors` (what the
+    //     planner settled on), `timestamps: [MusicLyricTimestamp]?`.
+    //   • ENGINE-ENFORCED in `checkDeclaredControls`, before admission, through
+    //     `MusicControls.refusal(for:)` (in MLXToolKit, so a directly driven package refuses identically):
+    //     an undeclared feature, a planning / edit mode or language outside the declared vocabulary, a
+    //     length past `maxDurationSeconds` → `PackageError.unsupportedRequestFeature`. NOT refused:
+    //     `guidanceScale` on a no-CFG surface (an ignored scale still yields the song asked for — the
+    //     `steps` precedent), an empty `anchors`. Latents deliberately absent from the response: no
+    //     consumer re-decodes yet; additive when one does.
+    //   • `RunPhase.plan`: the structure-emitting stage before synthesis (YuE2's score tokens, ACE-Step's
+    //     planner LM, MiniMax's global LM), so a consumer shows "planning" while nothing is sung yet.
+    //     Synthesis then reports `generate` (AR tokens), `denoise` (flow / ODE steps, `stage` = chunk)
+    //     and `decode` (codec tiles) with honest counts; CAN-1..3 apply at every one.
+    //   • `SPDXLicense.minimaxMusic3Community` ("LicenseRef-MiniMax-Music3-Community"), ALLOWLISTED: an
+    //     MIT-shaped grant whose only commercial carve-out is a US$20 M revenue gate (twice the
+    //     allowlisted `ltx2Community`'s, no non-compete; the `lfmOpen1` / `bilibiliModelUse` shape), a UI
+    //     display duty (the allowlisted `dinov3` attribution shape, on the screen), an AUP (`gemmaTerms`
+    //     shape) and a hosted-service safeguards duty that binds an operator, not this engine
+    //     (AB-D-0157: the operator accepted all three). Conditional pass: the threshold and the display.
+    //   • `LicenseDeclaration.notices: [LicenseNotice]?` — the SCREEN-SIDE slot the audio packages asked
+    //     for: `{text, display: .required | .informational, license?, termsURL?}`. `.required` = a
+    //     license's UI display duty, shown on the package's line every time; `.informational` = read
+    //     before choosing (YuE2's non-commercial sentence and rights caveat, MiniMax's §4 duty).
+    //     `SPDXLicense.requiredDisplayText` names the exact string a license obliges ("MiniMax-Music3"),
+    //     `LicenseDeclaration.missingRequiredDisplayNotices` names the licenses whose string no
+    //     `.required` notice carries; the engine logs a `[License]` line per entry at registration
+    //     (declaration, not a gate — the 1.28.0 rule). Optional + defaulted, so pre-1.56 manifest JSON
+    //     round-trips unchanged.
+    //   Additive: one Capability case (C12 tolerance), one SurfaceControls case (⚠️ an exhaustive switch
+    //     over SurfaceControls needs `case .music`, the 1.54.0 note), one defaulted init argument.
+    public static let current = SemanticVersion(major: 1, minor: 56, patch: 0)
 }

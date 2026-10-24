@@ -169,6 +169,10 @@ public enum SurfaceControls: Sendable, Codable, Equatable {
     case speechEdit(SpeechEditControls)
     /// Image input on chat turns (`ChatMessage.images`) — contract 1.54.0, AB-A-0190.
     case llm(LLMControls)
+    /// What a music surface honors beyond the core: the declared features, planning and edit modes,
+    /// vocal languages, the longest song (contract 1.56.0, AB-A-0201 / AB-A-0202). Required on every
+    /// `music` surface.
+    case music(MusicControls)
 }
 
 /// Self-description a package publishes so the registry — and any out-of-process tool client, such
@@ -203,7 +207,7 @@ public struct ToolDescriptor: Sendable, Codable, Equatable {
     /// Per-capability **routing-time** declarations (contract 1.38.0, additive). `nil` = this
     /// surface declares none, which is every pre-1.38 conformer. Read it through the
     /// `ttsControls` / `sttControls` / `t2vControls` / `t2iControls` / `speechEditControls`
-    /// accessors below (and, since 1.54.0, `llmControls`).
+    /// accessors below (and, since 1.54.0, `llmControls`; since 1.56.0, `musicControls`).
     public let controls: SurfaceControls?
     /// The raw `Image` formats this surface reads AND returns in kind, beyond the png/jpeg every image
     /// surface takes (contract 1.52.0, additive). A descriptor-level member, like `quantFloor`, because
@@ -330,6 +334,13 @@ extension ToolDescriptor {
         return nil
     }
 
+    /// The `music` control declaration, or nil when this surface declares none (contract 1.56.0). A
+    /// `MusicRequest` is admitted only for the features it declares (`MusicControls.refusal(for:)`).
+    public var musicControls: MusicControls? {
+        if case .music(let declared) = controls { return declared }
+        return nil
+    }
+
     /// Whether a declared controls block matches this surface's capability. `false` is a package
     /// bug: the block would describe a surface the descriptor does not name.
     public var controlsMatchCapability: Bool {
@@ -341,6 +352,7 @@ extension ToolDescriptor {
         case .textToImage: return capability == .textToImage
         case .speechEdit: return capability == .speechEdit
         case .llm: return capability == .llm
+        case .music: return capability == .music
         }
     }
 }

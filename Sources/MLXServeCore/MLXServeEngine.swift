@@ -771,6 +771,15 @@ public actor MLXServeEngine {
     /// - Parameter recordAdvisory: `false` at the defensive construction-time re-check, so one
     ///   package cannot accumulate an advisory per load.
     private func noteLicense(_ manifest: PackageManifest, recordAdvisory: Bool = true) throws {
+        // A license with a UI display duty and no `.required` notice carrying its text (contract
+        // 1.56.0): a declaration gap, logged like an advisory — the host has nothing to show.
+        if recordAdvisory {
+            for license in manifest.license.missingRequiredDisplayNotices {
+                print("[License] \(manifest.provenance.sourceRepo): \(license) obliges the UI to show "
+                      + "\"\(license.requiredDisplayText ?? "")\" and the manifest declares no .required "
+                      + "LicenseNotice carrying it (LicenseDeclaration.notices).")
+            }
+        }
         let gate = policy.evaluate(manifest.license)
         guard !gate.isAdmitted else { return }
         guard licenseEnforcement == .advisory else {
@@ -2154,6 +2163,28 @@ public actor MLXServeEngine {
                 throw PackageError.unsupportedRequestFeature(
                     "images — \(llm.images.count) in the request, \(id) takes at most \(limit) "
                         + "(LLMControls.maxImagesPerRequest)")
+            }
+        }
+
+        // music (contract 1.56.0, AB-A-0201 / AB-A-0202): every optional lever is declaration-gated —
+        // a supplied score, a source clip, a timbre reference, anchors, a vocal language, a planning
+        // mode, a length past the declared maximum. Ignored, each yields a DIFFERENT song from the one
+        // asked for (a new song instead of a cover; the model's own plan instead of the edited score),
+        // and nothing in the `.wav` says so. `guidanceScale` is deliberately not here (an ignored scale
+        // still yields the song asked for). The rule lives in MLXToolKit so a directly driven package
+        // refuses identically.
+        if let music = request as? MusicRequest {
+            guard let declared = surface.musicControls else {
+                if !music.requestedFeatures.isEmpty {
+                    throw PackageError.unsupportedRequestFeature(
+                        "\(music.requestedFeatures.map(\.rawValue).sorted().joined(separator: ", ")) — "
+                            + "\(id) declares no MusicControls (ToolDescriptor.musicControls); build the "
+                            + "surface with MusicContract.descriptor(controls:)")
+                }
+                return
+            }
+            if let reason = declared.refusal(for: music) {
+                throw PackageError.unsupportedRequestFeature("\(reason) [\(id)]")
             }
         }
 
