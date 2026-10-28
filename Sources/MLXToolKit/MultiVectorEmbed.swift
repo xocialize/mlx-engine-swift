@@ -13,7 +13,7 @@ import Foundation
 /// degrades. Scoring is MaxSim (`MultiVectorEmbedContract.maxSim`), NOT cosine over pooled
 /// vectors. (Distinct from `embed` — one dense vector per text; the two vector spaces are not
 /// interchangeable. Package-specific levers ride `metaData` (C5).)
-public struct MultiVectorEmbedRequest: CapabilityRequest {
+public struct MultiVectorEmbedRequest: CapabilityRequest, Codable {
     public static var capability: Capability { .multiVectorEmbed }
 
     /// Which side of asymmetric late-interaction retrieval a batch is encoded for.
@@ -47,7 +47,7 @@ public struct MultiVectorEmbedRequest: CapabilityRequest {
 /// Carries index-safety provenance: an index must never mix models or dimensions, so every batch
 /// is stamped with the `modelID` and `dimension` that produced it (consumers persist both next to
 /// the stored matrices and treat a mismatch as "re-encode", never "compare anyway").
-public struct MultiVectorEmbedResponse: CapabilityResponse {
+public struct MultiVectorEmbedResponse: CapabilityResponse, Codable {
     /// One matrix per input text, in request order: `[tokenVector][dimension]`. Query-side
     /// matrices have the model's fixed trained length (expansion included); document-side
     /// matrices have variable length (filtered tokens excluded). Row counts are NOT comparable

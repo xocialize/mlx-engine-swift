@@ -4,7 +4,7 @@ import Foundation
 /// capability of the visual optimization tier — chains onto generative output or a decode stage
 /// (often after `imageRestore`, before encode).
 /// Canonical output is an `Image` at `scale ×` the input dimensions.
-public struct ImageUpscaleRequest: CapabilityRequest {
+public struct ImageUpscaleRequest: CapabilityRequest, Codable {
     public static var capability: Capability { .imageUpscale }
 
     /// The image to upscale (canonical `Image` artifact).
@@ -24,7 +24,7 @@ public struct ImageUpscaleRequest: CapabilityRequest {
 
 /// Canonical image super-resolution response: the upscaled image and the factor actually applied
 /// (a package may only support its native scale — callers verify here).
-public struct ImageUpscaleResponse: CapabilityResponse {
+public struct ImageUpscaleResponse: CapabilityResponse, Codable {
     public let image: Image
     /// The scale factor actually applied.
     public let appliedScale: Int

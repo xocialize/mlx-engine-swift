@@ -14,7 +14,7 @@ public struct EmotionScore: Sendable, Codable, Equatable {
 /// Canonical output is **structured text** (a label distribution; see `SpeechEmotionResponse`).
 /// The label vocabulary is model-defined (kept open, like image/video analysis prose), so the
 /// contract does not fix a taxonomy.
-public struct SpeechEmotionRequest: CapabilityRequest {
+public struct SpeechEmotionRequest: CapabilityRequest, Codable {
     public static var capability: Capability { .speechEmotion }
 
     /// The speech audio to analyze (canonical `Audio` artifact; any rate/channels).
@@ -30,7 +30,7 @@ public struct SpeechEmotionRequest: CapabilityRequest {
 }
 
 /// Canonical speech-emotion response: the dominant label plus the full score distribution.
-public struct SpeechEmotionResponse: CapabilityResponse {
+public struct SpeechEmotionResponse: CapabilityResponse, Codable {
     /// Most likely emotion label.
     public let label: String
     /// Confidence of the dominant label (0...1).

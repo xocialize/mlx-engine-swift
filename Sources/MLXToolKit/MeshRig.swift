@@ -14,7 +14,7 @@ import Foundation
 /// The skeleton for `skinOnly` is taken, in order of preference, from (1) the optional `skeleton`
 /// artifact, else (2) the skeleton embedded in the `mesh` GLB itself (a VRM/rigged glTF). `auto`
 /// ignores any embedded skeleton. Canonical output is a `Mesh` artifact (rigged GLB bytes).
-public struct MeshRigRequest: CapabilityRequest {
+public struct MeshRigRequest: CapabilityRequest, Codable {
     public static var capability: Capability { .meshRig }
 
     /// The mesh to rig (canonical `Mesh` artifact, GLB bytes). Its geometry is preserved verbatim;
@@ -37,7 +37,7 @@ public struct MeshRigRequest: CapabilityRequest {
 }
 
 /// Canonical mesh auto-rigging response: the rigged mesh (input geometry + injected skeleton/skin).
-public struct MeshRigResponse: CapabilityResponse {
+public struct MeshRigResponse: CapabilityResponse, Codable {
     public let mesh: Mesh
     public init(mesh: Mesh) { self.mesh = mesh }
 }

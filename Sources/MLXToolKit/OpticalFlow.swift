@@ -25,7 +25,7 @@ public struct FlowField: Sendable, Codable, Equatable {
 /// Canonical optical-flow request: estimate dense motion between two frames. A building block
 /// for temporal-consistent enhancement (warping) and the planner's motion features.
 /// Canonical output is a `FlowField`.
-public struct OpticalFlowRequest: CapabilityRequest {
+public struct OpticalFlowRequest: CapabilityRequest, Codable {
     public static var capability: Capability { .opticalFlow }
 
     /// The first frame (canonical `Image` artifact).
@@ -44,7 +44,7 @@ public struct OpticalFlowRequest: CapabilityRequest {
 }
 
 /// Canonical optical-flow response: the dense flow field at the input resolution.
-public struct OpticalFlowResponse: CapabilityResponse {
+public struct OpticalFlowResponse: CapabilityResponse, Codable {
     public let flow: FlowField
     public init(flow: FlowField) { self.flow = flow }
 }

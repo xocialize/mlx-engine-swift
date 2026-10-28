@@ -43,7 +43,7 @@ public struct STTSegment: Sendable, Codable, Equatable {
 /// plane since 1.39.0 — `LiveTranscribing` + `STTSession` + `MLXServeEngine.transcribeLive`
 /// (`LiveSTT.swift`, the LIV-1..6 gate) — and this request type is unchanged by it. File and
 /// utterance transcription still come here.
-public struct STTRequest: CapabilityRequest {
+public struct STTRequest: CapabilityRequest, Codable {
     public static var capability: Capability { .stt }
 
     /// The speech audio to transcribe (canonical `Audio` artifact; any rate/channels —
@@ -78,7 +78,7 @@ public struct STTRequest: CapabilityRequest {
 }
 
 /// Canonical speech-to-text response: the full transcript plus timestamped segments.
-public struct STTResponse: CapabilityResponse {
+public struct STTResponse: CapabilityResponse, Codable {
     /// The complete transcript, with the model's native punctuation and capitalization.
     public let text: String
     /// Timestamped spans covering the transcript, in order. May be empty for models

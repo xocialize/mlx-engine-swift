@@ -319,6 +319,27 @@ offline contract builds are unaffected.
   `@InferenceActor` `load` / `run` / `unload`. Erased dispatch over `any CapabilityRequest`.
 - `PackageRegistration` — manifest + a license-gated factory the engine calls to construct.
 
+## Running the engine in a worker process (contract 1.57.0)
+
+A host can run each model in a process of its own (Gaea's `.gaeaplugin` workers, AB-A-0206). The
+engine still owns the model inside the worker; the host links no MLX and schedules memory across
+workers. These seams make that possible without a per-capability codec or a live configuration
+object on the host side:
+
+| Need | API | Target |
+|---|---|---|
+| Memory and weight facts as data, before anything loads | `ResolvedLane(manifest:configuration:budgetBytes:)`, `MLXServeEngine.resolvedLane(for:)` | MLXToolKit / MLXServeCore |
+| Download on command, load only when a job needs it | `MLXServeEngine.materialize(package:progress:)` → `MaterializationReport` | MLXServeCore |
+| Jobs across the process boundary as JSON plus spool files | `CapabilityRequestEnvelope`, `CapabilityResponseEnvelope`, `ArtifactSpool`, `CapabilityWire` | MLXToolKit |
+| Progress relayed to the host | `PreparationMonitor.events()`, `RunMonitor.events()` (Codable events) | MLXToolKit |
+| Live inside the host's slice, report back | `MLXServeEngine(workerBudget:)`, `workerMemoryReport()` → `WorkerMemoryReport` | MLXServeCore / MLXToolKit |
+
+`ResolvedLane`'s numbers are the governor's own: both read the base footprint through
+`RequirementsManifest.chosenFootprint(quant:budgetBytes:)`, then apply the `FootprintConfigured`
+hints. A `SelfMaterializing` configuration cannot be materialized without `load()`, and
+`materialize` says so rather than loading. The governor's admission and eviction policy is not yet
+in an MLX-free target (planned for 1.58.0); until then a cross-process host applies its own.
+
 ## Boundary with `mlx-porting`
 
 | Concern | Owner |

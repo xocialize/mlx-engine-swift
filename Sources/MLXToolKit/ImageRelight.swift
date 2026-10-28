@@ -11,7 +11,7 @@ import Foundation
 /// response.
 ///
 /// Canonical output is an `Image` at the same dimensions.
-public struct ImageRelightRequest: CapabilityRequest {
+public struct ImageRelightRequest: CapabilityRequest, Codable {
     public static var capability: Capability { .imageRelight }
 
     /// The image to re-expose (canonical `Image` artifact).
@@ -37,7 +37,7 @@ public struct ImageRelightRequest: CapabilityRequest {
 
 /// Canonical exposure-correction response: the re-exposed image at the input's dimensions, plus
 /// what the package actually did.
-public struct ImageRelightResponse: CapabilityResponse {
+public struct ImageRelightResponse: CapabilityResponse, Codable {
     public let image: Image
 
     /// The strength actually applied after clamping and any automatic gating — not necessarily the

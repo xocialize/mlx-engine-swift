@@ -14,7 +14,7 @@ public struct ContentScore: Sendable, Codable, Equatable {
 /// *assessment* capability the optimization planner uses for routing (content type drives the
 /// recipe: which enhancer chain, which SR variant). Canonical output is **structured text**
 /// (tags + an embedding); the label vocabulary is model-defined (open).
-public struct ContentClassifyRequest: CapabilityRequest {
+public struct ContentClassifyRequest: CapabilityRequest, Codable {
     public static var capability: Capability { .contentClassify }
 
     /// The video to classify (canonical `Video` artifact).
@@ -32,7 +32,7 @@ public struct ContentClassifyRequest: CapabilityRequest {
 /// Canonical content-classification response: top-k tags plus the clip embedding — the
 /// embedding is the planner/router feature vector (usable even when the tag vocabulary
 /// doesn't fit the routing question).
-public struct ContentClassifyResponse: CapabilityResponse {
+public struct ContentClassifyResponse: CapabilityResponse, Codable {
     /// Top-k content tags (model-defined vocabulary), highest score first.
     public let labels: [ContentScore]
     /// The pooled clip embedding (model-defined dimensionality).

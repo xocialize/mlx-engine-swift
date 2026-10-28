@@ -155,7 +155,7 @@ public struct STTStreamChunk: Sendable, Codable, Equatable {
 /// through exactly the same code as `run(STTRequest)` — one enforcement site, so the two paths
 /// cannot drift. `MLXServeEngine.run` and `.stream` refuse this type with a message naming
 /// `transcribeLive(_:package:)`, so the conformance it buys costs no footgun.
-public struct STTSessionRequest: CapabilityRequest {
+public struct STTSessionRequest: CapabilityRequest, Codable {
     public static var capability: Capability { .stt }
 
     /// Optional BCP-47 language-locale hint (e.g. "en-US"). nil = model auto-detect.

@@ -8,7 +8,7 @@ import Foundation
 /// This is the contract's first **two-input** surface: `image` AND `mask` are both canonical `Image`
 /// artifacts. The mask is single-channel-in-RGB (any white pixel = remove); it is typically produced
 /// upstream by `matting`, a brush UI, or promptable segmentation. Canonical output is an `Image`.
-public struct InpaintRequest: CapabilityRequest {
+public struct InpaintRequest: CapabilityRequest, Codable {
     public static var capability: Capability { .imageInpaint }
 
     public let image: Image
@@ -26,7 +26,7 @@ public struct InpaintRequest: CapabilityRequest {
 }
 
 /// Canonical inpainting response: the filled image (same dimensions as the input).
-public struct InpaintResponse: CapabilityResponse {
+public struct InpaintResponse: CapabilityResponse, Codable {
     public let image: Image
     public init(image: Image) { self.image = image }
 }

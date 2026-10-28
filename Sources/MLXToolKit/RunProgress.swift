@@ -65,7 +65,7 @@ extension RunPhase {
 ///
 /// A struct (not positional sink parameters) so later fields ride in additively without
 /// breaking the `RunProgress.Sink` signature.
-public struct RunPhaseReport: Sendable, Equatable {
+public struct RunPhaseReport: Sendable, Equatable, Codable {
     public var phase: RunPhase
     public var step: Int?
     public var totalSteps: Int?
@@ -146,11 +146,40 @@ public final class RunMonitor {
     public func update(_ capability: Capability, package: String?, to report: RunPhaseReport) {
         reports[PreparationKey(capability: capability, packageID: package)] = report
         reports[PreparationKey(capability: capability, packageID: nil)] = report
+        broadcaster.yield(RunEvent(capability: capability, packageID: package, report: report))
     }
 
     /// Engine-internal: the run ended — drop both entries so consumers read "not running".
     public func clear(_ capability: Capability, package: String?) {
         reports[PreparationKey(capability: capability, packageID: package)] = nil
         reports[PreparationKey(capability: capability, packageID: nil)] = nil
+        broadcaster.yield(RunEvent(capability: capability, packageID: package, report: nil))
+    }
+
+    private nonisolated let broadcaster = EventBroadcaster<RunEvent>()
+
+    /// Every report from now on, then a `report == nil` event when the run ends (contract 1.57.0,
+    /// AB-A-0206 item 4) — the push counterpart of `reports`. Same semantics as
+    /// `PreparationMonitor.events(bufferLimit:)`. For per-JOB progress when several runs share a
+    /// package, bind a `RunProgress.sink` around `MLXServeEngine.run` instead (1.51.0): this
+    /// stream is keyed by package, as the monitor is.
+    public nonisolated func events(bufferLimit: Int = 256) -> AsyncStream<RunEvent> {
+        broadcaster.stream(bufferLimit: bufferLimit)
+    }
+}
+
+/// One `RunMonitor` update (contract 1.57.0): the latest report of a run in flight, or
+/// `report == nil` when the run ended (success, failure or cancellation).
+public struct RunEvent: Sendable, Equatable, Codable {
+    public let capability: Capability
+    public let packageID: String?
+    public let report: RunPhaseReport?
+    public let date: Date
+
+    public init(capability: Capability, packageID: String?, report: RunPhaseReport?, date: Date = Date()) {
+        self.capability = capability
+        self.packageID = packageID
+        self.report = report
+        self.date = date
     }
 }

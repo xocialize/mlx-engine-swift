@@ -8,7 +8,7 @@
 /// seam for a TTS or sound-generation output, gated by `T2VControls` (see below).
 
 /// Canonical T2V request.
-public struct T2VRequest: CapabilityRequest {
+public struct T2VRequest: CapabilityRequest, Codable {
     public static var capability: Capability { .textToVideo }
 
     public let prompt: String
@@ -91,7 +91,7 @@ extension T2VRequest: AdapterCarrying {
 }
 
 /// Canonical T2V response — one `Video` artifact.
-public struct T2VResponse: CapabilityResponse {
+public struct T2VResponse: CapabilityResponse, Codable {
     public let video: Video
     public init(video: Video) { self.video = video }
 }

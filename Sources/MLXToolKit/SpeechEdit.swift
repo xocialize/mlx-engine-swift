@@ -56,7 +56,7 @@ public enum SpeechEditOperation: Sendable, Codable, Equatable {
 /// so a consumer that must keep them compares an ASR pass of the result against
 /// `SpeechEditResponse.transcript` (AB-L-0119). Its length generally differs from the input's: a
 /// consumer fitting a cue re-fits afterwards.
-public struct SpeechEditRequest: CapabilityRequest {
+public struct SpeechEditRequest: CapabilityRequest, Codable {
     public static var capability: Capability { .speechEdit }
 
     /// The take to re-deliver (canonical `Audio`). A surface declaring
@@ -88,7 +88,7 @@ public struct SpeechEditRequest: CapabilityRequest {
 /// Canonical speech-edit response: the re-delivered take (`.wav`) and the text it should carry — the
 /// request's `transcript`, or a `.paralinguistic` edit's target with its tags. That text is what a
 /// content check compares an ASR pass of `audio` against.
-public struct SpeechEditResponse: CapabilityResponse {
+public struct SpeechEditResponse: CapabilityResponse, Codable {
     public let audio: Audio
     public let transcript: String
 

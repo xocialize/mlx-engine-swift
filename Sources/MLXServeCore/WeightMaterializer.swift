@@ -68,13 +68,38 @@ public struct WeightMaterializer: WeightMaterializing {
         /// A transfer ended cleanly but short of the bytes it promised — treated as transient and
         /// retried, because a silently-truncated chunk is how a preallocated file acquires a hole.
         case truncated(String)
+        /// A failure while listing or fetching one source, carrying the repo, revision, file (when
+        /// a file was being fetched) and URL it happened at (contract 1.57.0; AB-A-0206 / AB-A-0153).
+        /// `underlying` is the transport, hub or file-level error (`HubMetadataError.httpStatus(404)`
+        /// for a repo or revision that was never published). Cancellation is never wrapped.
+        case source(repo: String, revision: String, path: String?, url: URL, underlying: any Error)
         public var errorDescription: String? {
             switch self {
             case .badRepoId(let id): return "Malformed weight-source repo id '\(id)' (want org/name)."
             case .httpStatus(let path, let code): return "Download of \(path) failed (HTTP \(code))."
             case .sizeMismatch(let path): return "Download of \(path) ended with the wrong size."
             case .truncated(let path): return "Download of \(path) ended early."
+            case .source(let repo, let revision, let path, let url, let underlying):
+                let what = path.map { "Downloading \($0) from \(repo)@\(revision)" }
+                    ?? "Listing the files of \(repo)@\(revision)"
+                let cause = (underlying as? LocalizedError)?.errorDescription ?? "\(underlying)"
+                let missing = Self.isNotFound(underlying)
+                    ? " The repo or revision may not exist on the hub (never published, renamed, or private without a token)."
+                    : ""
+                return "\(what) failed: \(cause) — \(url.absoluteString).\(missing)"
             }
+        }
+
+        /// The error a `.source` failure wraps, or `self` for every other case.
+        public var underlying: any Error {
+            if case .source(_, _, _, _, let underlying) = self { return underlying }
+            return self
+        }
+
+        private static func isNotFound(_ error: any Error) -> Bool {
+            if case .httpStatus(404)? = error as? HubMetadataError { return true }
+            if case .httpStatus(_, 404)? = error as? MaterializeError { return true }
+            return false
         }
     }
 
@@ -173,7 +198,13 @@ public struct WeightMaterializer: WeightMaterializing {
                 throw MaterializeError.badRepoId(source.repo)
             }
             let revision = source.revision ?? "main"
-            let entries = try await listing.files(repo: source.repo, revision: source.revision)
+            let entries: [HubFileEntry]
+            do {
+                entries = try await listing.files(repo: source.repo, revision: source.revision)
+            } catch {
+                throw Self.wrap(error, repo: source.repo, revision: revision, path: nil,
+                                url: endpoint.appending(path: "api/models/\(source.repo)/tree/\(revision)"))
+            }
             for entry in entries {
                 let globs = source.matching ?? []
                 let matches = globs.isEmpty
@@ -222,8 +253,13 @@ public struct WeightMaterializer: WeightMaterializing {
         }
         do {
             for item in items {
-                try await downloadItem(url: item.url, path: item.path,
-                                       size: item.size, to: item.destination, counter: counter)
+                do {
+                    try await downloadItem(url: item.url, path: item.path,
+                                           size: item.size, to: item.destination, counter: counter)
+                } catch {
+                    throw Self.wrap(error, repo: item.repo, revision: item.revision,
+                                    path: item.path, url: item.url)
+                }
             }
         } catch {
             continuation.finish()
@@ -233,6 +269,17 @@ public struct WeightMaterializer: WeightMaterializing {
         continuation.finish()
         await reporter.value
         WeightDownloadProgress.report(fraction: 1.0, bytesPerSecond: nil)
+    }
+
+    /// Name the source a failure happened at (1.57.0) — except cancellation, which callers match
+    /// on, and a failure that already names one.
+    private static func wrap(_ error: any Error, repo: String, revision: String,
+                             path: String?, url: URL) -> any Error {
+        if error is CancellationError { return error }
+        if let urlError = error as? URLError, urlError.code == .cancelled { return error }
+        if case .source? = error as? MaterializeError { return error }
+        return MaterializeError.source(repo: repo, revision: revision, path: path, url: url,
+                                       underlying: error)
     }
 
     // MARK: one file
@@ -347,6 +394,7 @@ public struct WeightMaterializer: WeightMaterializing {
                 return code == 408 || code == 429 || (500...599).contains(code)
             case .truncated: return true
             case .badRepoId, .sizeMismatch: return false
+            case .source(_, _, _, _, let underlying): return isTransient(underlying)
             }
         }
         return false

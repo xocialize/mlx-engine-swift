@@ -12,7 +12,7 @@ import Foundation
 /// a consumer can shrink its index without re-embedding at a different model. Introduced by
 /// Qwen3-Embedding-0.6B. (Distinct from `llm` — deterministic text → vector encoding, no
 /// generation; package-specific levers ride `metaData` (C5).)
-public struct EmbedRequest: CapabilityRequest {
+public struct EmbedRequest: CapabilityRequest, Codable {
     public static var capability: Capability { .embed }
 
     /// Which side of asymmetric retrieval a batch is embedded for.
@@ -55,7 +55,7 @@ public struct EmbedRequest: CapabilityRequest {
 /// Carries index-safety provenance: an index must never mix models or dimensions, so every batch
 /// is stamped with the `modelID` and `dimension` that produced it (consumers persist both next to
 /// the stored vectors and treat a mismatch as "re-embed", never "compare anyway").
-public struct EmbedResponse: CapabilityResponse {
+public struct EmbedResponse: CapabilityResponse, Codable {
     /// One vector per input text, in request order.
     public let vectors: [[Float]]
     /// The produced width (post-Matryoshka; equals the model's native width when the request's

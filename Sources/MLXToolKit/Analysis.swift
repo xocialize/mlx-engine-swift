@@ -8,7 +8,7 @@
 
 // MARK: Image analysis
 
-public struct ImageAnalysisRequest: CapabilityRequest {
+public struct ImageAnalysisRequest: CapabilityRequest, Codable {
     public static var capability: Capability { .imageAnalysis }
 
     public let image: Image
@@ -25,7 +25,7 @@ public struct ImageAnalysisRequest: CapabilityRequest {
     }
 }
 
-public struct ImageAnalysisResponse: CapabilityResponse {
+public struct ImageAnalysisResponse: CapabilityResponse, Codable {
     /// Structured text (plain prose, or JSON/markdown if the prompt asked for it).
     public let text: String
     public init(text: String) { self.text = text }
@@ -33,7 +33,7 @@ public struct ImageAnalysisResponse: CapabilityResponse {
 
 // MARK: Video analysis
 
-public struct VideoAnalysisRequest: CapabilityRequest {
+public struct VideoAnalysisRequest: CapabilityRequest, Codable {
     public static var capability: Capability { .videoAnalysis }
 
     public let video: Video
@@ -49,7 +49,7 @@ public struct VideoAnalysisRequest: CapabilityRequest {
     }
 }
 
-public struct VideoAnalysisResponse: CapabilityResponse {
+public struct VideoAnalysisResponse: CapabilityResponse, Codable {
     public let text: String
     public init(text: String) { self.text = text }
 }

@@ -9,7 +9,7 @@
 /// unless width/height pin them; package-specific levers ride `metaData` (C5).
 
 /// Canonical image-edit request.
-public struct IEditRequest: CapabilityRequest {
+public struct IEditRequest: CapabilityRequest, Codable {
     public static var capability: Capability { .imageEdit }
 
     /// Conditioning input image(s), in prompt order ("Picture 1", "Picture 2", …).
@@ -66,7 +66,7 @@ extension IEditRequest: AdapterCarrying {
 }
 
 /// Canonical image-edit response — one `Image` artifact.
-public struct IEditResponse: CapabilityResponse {
+public struct IEditResponse: CapabilityResponse, Codable {
     public let image: Image
     public init(image: Image) { self.image = image }
 }

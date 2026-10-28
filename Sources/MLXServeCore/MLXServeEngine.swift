@@ -103,6 +103,14 @@ public enum EngineError: Error, Sendable, Equatable {
     /// An adapter was needed but the engine has no models root to keep it in (contract 1.53.0) —
     /// adapters are engine-managed only. Call `useModelStore(_:)` first.
     case adapterStoreUnset(id: String)
+    /// No package is registered under this id (contract 1.57.0) — the id-addressed entry points
+    /// (`materialize(package:)`, `resolvedLane(for:)`) name it rather than a capability.
+    case packageNotRegistered(PackageID)
+    /// `materialize(package:)` cannot fetch this package's weights without loading it (contract
+    /// 1.57.0): its configuration is `SelfMaterializing` (the package downloads inside `load()`),
+    /// declares no `WeightSourcing`, or the engine has no model store, or the configuration still
+    /// reports a source missing after the download. `reason` says which. `prepare` still works.
+    case materializationUnavailable(PackageID, reason: String)
 }
 
 /// Engine-side identity for a registered package — lets several packages back the SAME
@@ -244,6 +252,9 @@ public actor MLXServeEngine {
     /// preemption story is the serialized one: a QUEUED contender needing residency a runner
     /// holds — not concurrent runs racing.
     private var activeRuns: [UInt64: ActiveRun] = [:]
+    /// Download-only materializations in flight (1.57.0), by package: a `prepare` of the same
+    /// package waits for one rather than racing it into the same partial files.
+    private var materializations: [PackageID: Task<Void, Error>] = [:]
     private var runTokenClock: UInt64 = 0
 
     /// One open live transcription session (contract 1.39.0).
@@ -487,6 +498,50 @@ public actor MLXServeEngine {
                 self.wiredLimitCeilingBytes = nil
             }
         }
+    }
+
+    /// An engine that lives inside a memory slice a host assigned from outside the process
+    /// (contract 1.57.0, AB-A-0206 item 5) — a model worker in a multi-process host like Gaea.
+    ///
+    /// Every machine-sized default is replaced by one derived from `workerBudget`:
+    /// - the governor budgets `ceilingBytes` (not Metal's recommended working set);
+    /// - the MLX buffer pool caps at `cacheLimitBytes`, else `min(2 GB, 5% of ceilingBytes)`;
+    /// - the wired limit is coordinated up to `ceilingBytes` (still min'd with the live working
+    ///   set), or left alone when `wiresWeights` is false.
+    /// R-MEM-1's real-pressure trigger then reads this process's `phys_footprint` against the
+    /// ceiling. Report back with `workerMemoryReport()`. The budget is fixed for the engine's
+    /// life: a host resizes a worker by restarting it with a new one.
+    public init(workerBudget: WorkerBudget,
+                policy: LicensePolicy = .permissiveOnly,
+                licenseEnforcement: LicenseEnforcement = .advisory,
+                device: DeviceProfile = .current(),
+                preemption: PreemptionPolicy = PreemptionPolicy(),
+                liveSessions: LiveSessionPolicy = LiveSessionPolicy(),
+                externalTenants: ExternalTenantPolicy = ExternalTenantPolicy(),
+                physFootprint: @Sendable @escaping () -> UInt64? = HostMemory.physFootprint,
+                hubMetadata: (any HubMetadataProviding)? = nil,
+                materializer: (any WeightMaterializing)? = nil,
+                hfTokenProvider: (@Sendable () -> String?)? = nil,
+                materializationRetryPolicy: WeightMaterializer.RetryPolicy = .default,
+                diskPrecheckEnabled: Bool = true) {
+        self.init(policy: policy,
+                  licenseEnforcement: licenseEnforcement,
+                  device: device,
+                  governor: MemoryGovernor(budgetBytes: workerBudget.ceilingBytes),
+                  gpuCache: GPUCacheConfiguration(
+                      limit: workerBudget.cacheLimitBytes.map { .bytes($0) } ?? .automatic),
+                  wiredLimit: workerBudget.wiresWeights
+                      ? WiredLimitConfiguration(coordination: .ceiling(bytes: workerBudget.ceilingBytes))
+                      : .disabled,
+                  preemption: preemption,
+                  liveSessions: liveSessions,
+                  externalTenants: externalTenants,
+                  physFootprint: physFootprint,
+                  hubMetadata: hubMetadata,
+                  materializer: materializer,
+                  hfTokenProvider: hfTokenProvider,
+                  materializationRetryPolicy: materializationRetryPolicy,
+                  diskPrecheckEnabled: diskPrecheckEnabled)
     }
 
     /// Test hook: point the engine's tickets at an isolated `WiredMemoryManager` (must be set
@@ -1898,6 +1953,154 @@ public actor MLXServeEngine {
         await evictResident(id)
     }
 
+    // MARK: - Download-only materialization (1.57.0, AB-A-0206 item 2)
+
+    /// Download a registered package's missing weights into the model store, and stop: the
+    /// package is not constructed, not loaded and not charged to the governor. The download half
+    /// of `prepare`, resolved the same way (the registered configuration's `WeightSourcing` lane,
+    /// the store root stamped at `register()`, the MS-2 missing-set probe, the MS-3 disk
+    /// precheck), so a later `prepare` finds nothing to fetch.
+    ///
+    /// - Progress: `PreparationMonitor` reports `.downloading(fraction:bytesPerSecond:)` (also on
+    ///   `preparation.events()`), and `progress`, when given, receives the same byte-weighted
+    ///   reports. Afterwards the phase returns to `.idle` (on disk, not resident) unless the
+    ///   package was resident already, whose phase is left alone.
+    /// - Cancel: cancel the calling task. Large files keep their chunk ledger, so the next
+    ///   `materialize` or `prepare` resumes rather than restarts.
+    /// - Concurrency: a `prepare` of the same package while this runs waits for it; a second
+    ///   `materialize` joins the first.
+    /// - Errors name the repo, revision and URL (`WeightMaterializer.MaterializeError.source`).
+    ///
+    /// - Throws: `.packageNotRegistered`; `.materializationUnavailable` for a `SelfMaterializing`
+    ///   or undeclared configuration, no model store, or a source still missing afterwards;
+    ///   `.insufficientDisk`; the materializer's error.
+    @discardableResult
+    public func materialize(package id: PackageID,
+                            progress: WeightDownloadProgress.Sink? = nil) async throws -> MaterializationReport {
+        guard let entry = packages[id] else { throw EngineError.packageNotRegistered(id) }
+        let configuration = entry.configuration
+        let pkg = id.description
+        let caps = entry.registration.manifest.capabilities
+        let root = modelStore.root
+
+        guard let sourcing = configuration as? WeightSourcing else {
+            if configuration is BundledWeightSourcing, !(configuration is SelfMaterializing) {
+                return MaterializationReport(packageID: pkg, storeRoot: root,
+                                             materialization: .bundled,
+                                             downloaded: [], alreadyPresent: [])
+            }
+            throw EngineError.materializationUnavailable(id, reason: configuration is SelfMaterializing
+                ? "the configuration is SelfMaterializing: the package downloads inside load(), so prepare() is the only way to fetch it"
+                : "the configuration declares no WeightSourcing, so the engine does not know what to fetch; prepare() fetches through the package's own cache")
+        }
+        guard !(configuration is SelfMaterializing) else {
+            throw EngineError.materializationUnavailable(id, reason:
+                "the configuration is SelfMaterializing: the package downloads inside load(), so prepare() is the only way to fetch it")
+        }
+        guard let root else {
+            throw EngineError.materializationUnavailable(id, reason:
+                "the engine has no model store; call useModelStore(_:) first")
+        }
+
+        // What this call reports as downloaded: missing now, whether this call or a joined one fetches it.
+        let missing = sourcing.missingWeightSources(storeRoot: root)
+        if let inflight = materializations[id] {
+            try await inflight.value
+        } else {
+            if !missing.isEmpty {
+                let wasResident = residents[id] != nil
+                // Registered before its first suspension, so a concurrent `materialize` or
+                // `prepare` of this package joins it instead of starting a second download.
+                let task = Task { [materializer, preparation] in
+                    try await self.assertDiskFits(entry)
+                    let sink: WeightDownloadProgress.Sink = { fraction, bps in
+                        progress?(fraction, bps)
+                        guard !wasResident else { return }
+                        Task { @MainActor in
+                            for cap in caps {
+                                preparation.update(cap, package: pkg,
+                                                   to: .downloading(fraction: fraction, bytesPerSecond: bps))
+                            }
+                        }
+                    }
+                    try await WeightDownloadProgress.$sink.withValue(sink) {
+                        try await materializer.materialize(missing, into: root)
+                    }
+                }
+                materializations[id] = task
+                if !wasResident {
+                    await updatePhase(.downloading(fraction: 0, bytesPerSecond: nil), caps: caps, package: pkg)
+                }
+                do {
+                    try await withTaskCancellationHandler {
+                        try await task.value
+                    } onCancel: {
+                        task.cancel()
+                    }
+                } catch {
+                    materializations[id] = nil
+                    if !wasResident { await updatePhase(.failed("\(error)"), caps: caps, package: pkg) }
+                    throw error
+                }
+                materializations[id] = nil
+                if !wasResident { await updatePhase(.idle, caps: caps, package: pkg) }
+            }
+        }
+
+        let stillMissing = sourcing.missingWeightSources(storeRoot: root)
+        guard stillMissing.isEmpty else {
+            throw EngineError.materializationUnavailable(id, reason:
+                "the download finished but the configuration still reports "
+                + stillMissing.map { "\($0.repo)@\($0.revision ?? "main")" }.joined(separator: ", ")
+                + " missing; its missingWeightSources(storeRoot:) checks for files its weightSources do not fetch")
+        }
+        // Stamp the storage UI's install markers, as a prepare would (`resident()`).
+        for source in sourcing.weightSources {
+            modelStore.writeMarker(repo: source.repo, revision: source.revision ?? "main",
+                                   capabilities: caps)
+        }
+        return MaterializationReport(packageID: pkg, storeRoot: root, materialization: .engine,
+                                     downloaded: missing,
+                                     alreadyPresent: sourcing.weightSources.filter { !missing.contains($0) })
+    }
+
+    /// `materialize(package:)` for the package a capability routes to (its default, or `package`).
+    @discardableResult
+    public func materialize(_ capability: Capability, package: PackageID? = nil,
+                            progress: WeightDownloadProgress.Sink? = nil) async throws -> MaterializationReport {
+        try await materialize(package: try resolve(capability, package), progress: progress)
+    }
+
+    // MARK: - Exported facts (1.57.0, AB-A-0206 items 1 and 5)
+
+    /// The registered configuration's resolved lane, as data: the footprint split the governor
+    /// charges, its sources, and who materializes them. Equal to `ResolvedLane(manifest:
+    /// configuration: budgetBytes:)` against this engine's budget — the value a plugin build
+    /// writes into its manifest.
+    public func resolvedLane(for id: PackageID) throws -> ResolvedLane {
+        guard let entry = packages[id] else { throw EngineError.packageNotRegistered(id) }
+        return ResolvedLane(manifest: entry.registration.manifest,
+                            configuration: entry.configuration,
+                            budgetBytes: governor.budgetBytes)
+    }
+
+    /// What this engine holds, for the host that assigned its `WorkerBudget` — or for any host
+    /// that wants the declared charge and the measured footprint side by side.
+    public func workerMemoryReport() -> WorkerMemoryReport {
+        let snapshot = memory
+        let pool = gpuPoolSnapshot()
+        return WorkerMemoryReport(
+            budgetBytes: snapshot.budgetBytes,
+            residentBytes: snapshot.residentBytes,
+            transientReserveBytes: snapshot.transientReserveBytes,
+            availableBytes: snapshot.availableBytes,
+            physFootprintBytes: snapshot.realResidentBytes,
+            gpuActiveBytes: pool?.activeBytes,
+            gpuCacheBytes: pool?.cacheBytes,
+            residents: residentFootprint.reduce(into: [:]) { $0[$1.key.description] = $1.value },
+            running: Array(Set(activeRuns.values.map(\.id.description))).sorted())
+    }
+
     // MARK: - Wired-limit tickets (HV1)
 
     /// Start the `.reservation` ticket for a freshly loaded resident: its persistent weights now
@@ -2351,6 +2554,13 @@ public actor MLXServeEngine {
             // wrappers whose runtime fetches internally); packages that still self-materialize
             // defensively stay correct — their own missing-check finds nothing left. No store
             // root ⇒ nothing the engine can execute into; the package falls back to its cache.
+            if let inflight = materializations[id] {
+                // A download-only `materialize` of this package is running (1.57.0): let it land
+                // (or fail) first, then the probe below decides what is still missing.
+                await updatePhase(.downloading(fraction: 0, bytesPerSecond: nil), caps: caps, package: pkg)
+                _ = try? await inflight.value
+                try Task.checkCancellation()
+            }
             if let root = modelStore.root,
                let sourcing = configuration as? WeightSourcing,
                !(configuration is SelfMaterializing) {

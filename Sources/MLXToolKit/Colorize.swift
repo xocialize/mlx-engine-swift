@@ -5,7 +5,7 @@ import Foundation
 /// transform — there is no full-reference quality floor gating it (cf. `imageRestore`). Quality/style
 /// tier rides `mode` (`ColorizeContract.fast`/`.best`/`.artistic`). Contract 1.7.0; introduced by DDColor.
 /// Canonical output is an `Image` at the same dimensions.
-public struct ColorizeRequest: CapabilityRequest {
+public struct ColorizeRequest: CapabilityRequest, Codable {
     public static var capability: Capability { .imageColorize }
 
     /// The image to colorize (canonical `Image` artifact). A colour image is accepted and treated as
@@ -22,7 +22,7 @@ public struct ColorizeRequest: CapabilityRequest {
 }
 
 /// Canonical colorization response: the colorized image (same dimensions as the input).
-public struct ColorizeResponse: CapabilityResponse {
+public struct ColorizeResponse: CapabilityResponse, Codable {
     public let image: Image
     public init(image: Image) { self.image = image }
 }

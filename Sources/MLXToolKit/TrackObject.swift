@@ -13,7 +13,7 @@ import Foundation
 /// convention); the runtime package decodes it to frames (`FrameStreamNative`, the FFmpeg-free native
 /// path), runs the stateful tracker, and returns lossless per-frame mattes. V1 tracks a **single**
 /// object; multi-object (an array of prompt sets → array of tracks) is an additive follow-up.
-public struct TrackObjectRequest: CapabilityRequest {
+public struct TrackObjectRequest: CapabilityRequest, Codable {
     public static var capability: Capability { .trackObject }
 
     /// The source video to track through (canonical `Video` artifact, serialized container bytes).
@@ -45,7 +45,7 @@ public struct TrackObjectRequest: CapabilityRequest {
 /// resolution — a lossless masklet (binary mattes, never a re-encoded mask video, so hard edges survive).
 /// `scores[i]` is the model's confidence (predicted IoU / object-presence) for `masks[i]`; a low score
 /// marks a frame where the object is occluded or absent. `masks.count == scores.count == frame count`.
-public struct TrackObjectResponse: CapabilityResponse {
+public struct TrackObjectResponse: CapabilityResponse, Codable {
     /// Per-frame mattes in frame order (`count` == the source video's frame count).
     public let masks: [Matte]
     /// Per-frame confidence aligned with `masks` (predicted IoU / object-presence; ≤0 ≈ occluded/absent).

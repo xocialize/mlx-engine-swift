@@ -20,7 +20,7 @@ public enum T2IBackground: String, Sendable, Codable {
 }
 
 /// Canonical T2I request.
-public struct T2IRequest: CapabilityRequest {
+public struct T2IRequest: CapabilityRequest, Codable {
     public static var capability: Capability { .textToImage }
 
     public let prompt: String
@@ -76,7 +76,7 @@ extension T2IRequest: AdapterCarrying {
 }
 
 /// Canonical T2I response — one `Image` artifact.
-public struct T2IResponse: CapabilityResponse {
+public struct T2IResponse: CapabilityResponse, Codable {
     public let image: Image
     public init(image: Image) { self.image = image }
 }

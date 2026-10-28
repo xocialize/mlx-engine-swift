@@ -6,7 +6,7 @@
 /// compose (the TTS `Audio` output drops straight into `audio` here). Introduced by MuseTalk.
 /// (A still portrait is driven by passing a looped/single-frame video as `source`.)
 /// Package-specific levers — crop bbox shift, blend mode, batch size — ride `metaData` (C5).
-public struct TalkingHeadRequest: CapabilityRequest {
+public struct TalkingHeadRequest: CapabilityRequest, Codable {
     public static var capability: Capability { .talkingHead }
 
     /// The source face video to re-lip-sync.
@@ -32,7 +32,7 @@ public struct TalkingHeadRequest: CapabilityRequest {
 }
 
 /// Canonical talkingHead response — one `Video` artifact.
-public struct TalkingHeadResponse: CapabilityResponse {
+public struct TalkingHeadResponse: CapabilityResponse, Codable {
     public let video: Video
     public init(video: Video) { self.video = video }
 }

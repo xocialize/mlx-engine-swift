@@ -5,7 +5,7 @@ import Foundation
 /// optimization tier — typically gated by `imageQualityScore` ("restore only where it pays")
 /// and chained onto the output of a generative or decode stage.
 /// Canonical output is an `Image` at the same dimensions.
-public struct ImageRestoreRequest: CapabilityRequest {
+public struct ImageRestoreRequest: CapabilityRequest, Codable {
     public static var capability: Capability { .imageRestore }
 
     /// The image to restore (canonical `Image` artifact).
@@ -37,7 +37,7 @@ public struct ImageRestoreRequest: CapabilityRequest {
 }
 
 /// Canonical image-restoration response: the restored image (same dimensions as the input).
-public struct ImageRestoreResponse: CapabilityResponse {
+public struct ImageRestoreResponse: CapabilityResponse, Codable {
     public let image: Image
 
     /// The strength actually applied, or `nil` when the package has no strength notion and ignored

@@ -110,14 +110,11 @@ public struct MemoryGovernor: Sendable {
 
     /// The base `QuantFootprint` both resolutions start from: the quant match, else
     /// largest-that-fits, else smallest. ONE function so the split and the scaling can never be
-    /// read off two different footprints.
+    /// read off two different footprints — and the one `ResolvedLane` exports through (1.57.0),
+    /// so what the engine charges and what a host schedules from are the same number.
     private func chosenFootprint(for requirements: RequirementsManifest,
                                  quant: Quant?) -> QuantFootprint? {
-        if let quant, let match = requirements.footprints.first(where: { $0.quant == quant }) {
-            return match
-        }
-        let sorted = requirements.footprints.sorted { $0.residentBytes < $1.residentBytes }
-        return sorted.last(where: { $0.residentBytes <= budgetBytes }) ?? sorted.first
+        requirements.chosenFootprint(quant: quant, budgetBytes: budgetBytes)
     }
 
     public mutating func charge(_ bytes: UInt64) {

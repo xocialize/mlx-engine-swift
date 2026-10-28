@@ -81,7 +81,7 @@ extension Mode {
 }
 
 /// Canonical TTS request. Canonical output is always `.wav` (see `TTSResponse`).
-public struct TTSRequest: CapabilityRequest {
+public struct TTSRequest: CapabilityRequest, Codable {
     public static var capability: Capability { .tts }
 
     public let text: String
@@ -175,7 +175,7 @@ public struct TTSRequest: CapabilityRequest {
 }
 
 /// Canonical TTS response. Always returns `.wav` audio in serialized round-trip form.
-public struct TTSResponse: CapabilityResponse {
+public struct TTSResponse: CapabilityResponse, Codable {
     public let audio: Audio
     public init(audio: Audio) { self.audio = audio }
 }

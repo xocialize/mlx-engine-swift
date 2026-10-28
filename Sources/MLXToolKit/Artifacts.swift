@@ -5,12 +5,17 @@ import Foundation
 /// V1 rule: artifacts cross every boundary in **serialized round-trip form** (`data`).
 /// The in-process zero-copy path (tensor / IOSurface) is a V2 additive optimization behind
 /// the same type, and must not fork the artifact contract.
+///
+/// Across a PROCESS boundary (contract 1.57.0) the bytes may travel as a file instead: encode
+/// with an `ArtifactSpool` in the encoder's `userInfo` and each artifact writes its bytes to the
+/// spool and emits `"file": "<path>"` in place of base64 `"data"`. Decoding accepts either
+/// form. Without a spool the encoding is exactly the pre-1.57 one. See `ArtifactSpool`.
 public protocol Artifact: Sendable, Codable {
     var data: Data { get }
 }
 
 /// Canonical audio artifact. TTS always returns `.wav`.
-public struct Audio: Artifact, Sendable, Codable, Equatable {
+public struct Audio: Artifact, Sendable, Equatable {
     public enum Format: String, Sendable, Codable { case wav }
     public let format: Format
     public let data: Data
@@ -38,7 +43,7 @@ public struct Audio: Artifact, Sendable, Codable, Equatable {
 /// `premultipliedLast | byteOrder16Little`, and `kCVPixelFormatType_64RGBALE` in CoreVideo. Same rules as
 /// `.rawBGRA8`: `width`/`height` required, `bytesPerRow` optional (defaults to `width * 8`). A package reads it
 /// only where its surface declares it (`ToolDescriptor.rawImageFormats`); the engine refuses it elsewhere.
-public struct Image: Artifact, Sendable, Codable, Equatable {
+public struct Image: Artifact, Sendable, Equatable {
     public enum Format: String, Sendable, Codable { case png, jpeg, rawBGRA8, rawRGBA16 }
     public let format: Format
     public let data: Data
@@ -73,7 +78,7 @@ public struct Image: Artifact, Sendable, Codable, Equatable {
 /// serialized as a grayscale PNG. The first-class output of the `matting` capability; consumable as a
 /// weight-map signal by other capabilities (region-aware restore/upscale, flow-guided propagation),
 /// not just as a cutout source. `kind` records whether the map is a hard segmentation or a soft matte.
-public struct Matte: Artifact, Sendable, Codable, Equatable {
+public struct Matte: Artifact, Sendable, Equatable {
     public enum Format: String, Sendable, Codable { case png }
     /// Hard binary segmentation vs. soft alpha matte (fine hair/fur/semi-transparency).
     public enum Kind: String, Sendable, Codable { case binary, softAlpha }
@@ -98,7 +103,7 @@ public struct Matte: Artifact, Sendable, Codable, Equatable {
 /// `vertexCount`/`faceCount` are optional descriptive metadata (a consumer can read the true counts
 /// from the GLB). `hasVertexColors` flags whether per-vertex color is baked in (TRELLIS.2 V1 ships
 /// geometry + vertex color; a PBR-texture follow-on stays the same `.glb` artifact, so no fork).
-public struct Mesh: Artifact, Sendable, Codable, Equatable {
+public struct Mesh: Artifact, Sendable, Equatable {
     public enum Format: String, Sendable, Codable { case glb }
     public let format: Format
     public let data: Data
@@ -117,7 +122,7 @@ public struct Mesh: Artifact, Sendable, Codable, Equatable {
 }
 
 /// Canonical video artifact.
-public struct Video: Artifact, Sendable, Codable, Equatable {
+public struct Video: Artifact, Sendable, Equatable {
     public enum Format: String, Sendable, Codable { case mp4, mov }
     public let format: Format
     public let data: Data
@@ -129,5 +134,118 @@ public struct Video: Artifact, Sendable, Codable, Equatable {
         self.data = data
         self.durationSeconds = durationSeconds
         self.frameRate = frameRate
+    }
+}
+
+// MARK: - Codable (contract 1.57.0: `data` inline, or `file` through an `ArtifactSpool`)
+
+extension Audio: Codable {
+    private enum CodingKeys: String, CodingKey { case format, data, file, sampleRate, channels }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        format = try c.decode(Format.self, forKey: .format)
+        data = try ArtifactSpool.decodeBytes(c, data: .data, file: .file, decoder: decoder)
+        sampleRate = try c.decodeIfPresent(Int.self, forKey: .sampleRate)
+        channels = try c.decodeIfPresent(Int.self, forKey: .channels)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(format, forKey: .format)
+        try ArtifactSpool.encodeBytes(data, fileExtension: format.rawValue, &c,
+                                      data: .data, file: .file, encoder: encoder)
+        try c.encodeIfPresent(sampleRate, forKey: .sampleRate)
+        try c.encodeIfPresent(channels, forKey: .channels)
+    }
+}
+
+extension Image: Codable {
+    private enum CodingKeys: String, CodingKey { case format, data, file, width, height, bytesPerRow }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        format = try c.decode(Format.self, forKey: .format)
+        data = try ArtifactSpool.decodeBytes(c, data: .data, file: .file, decoder: decoder)
+        width = try c.decodeIfPresent(Int.self, forKey: .width)
+        height = try c.decodeIfPresent(Int.self, forKey: .height)
+        bytesPerRow = try c.decodeIfPresent(Int.self, forKey: .bytesPerRow)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(format, forKey: .format)
+        try ArtifactSpool.encodeBytes(data, fileExtension: format == .jpeg ? "jpg" : format.rawValue, &c,
+                                      data: .data, file: .file, encoder: encoder)
+        try c.encodeIfPresent(width, forKey: .width)
+        try c.encodeIfPresent(height, forKey: .height)
+        try c.encodeIfPresent(bytesPerRow, forKey: .bytesPerRow)
+    }
+}
+
+extension Matte: Codable {
+    private enum CodingKeys: String, CodingKey { case format, data, file, width, height, kind }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        format = try c.decode(Format.self, forKey: .format)
+        data = try ArtifactSpool.decodeBytes(c, data: .data, file: .file, decoder: decoder)
+        width = try c.decodeIfPresent(Int.self, forKey: .width)
+        height = try c.decodeIfPresent(Int.self, forKey: .height)
+        kind = try c.decode(Kind.self, forKey: .kind)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(format, forKey: .format)
+        try ArtifactSpool.encodeBytes(data, fileExtension: format.rawValue, &c,
+                                      data: .data, file: .file, encoder: encoder)
+        try c.encodeIfPresent(width, forKey: .width)
+        try c.encodeIfPresent(height, forKey: .height)
+        try c.encode(kind, forKey: .kind)
+    }
+}
+
+extension Mesh: Codable {
+    private enum CodingKeys: String, CodingKey { case format, data, file, vertexCount, faceCount, hasVertexColors }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        format = try c.decode(Format.self, forKey: .format)
+        data = try ArtifactSpool.decodeBytes(c, data: .data, file: .file, decoder: decoder)
+        vertexCount = try c.decodeIfPresent(Int.self, forKey: .vertexCount)
+        faceCount = try c.decodeIfPresent(Int.self, forKey: .faceCount)
+        hasVertexColors = try c.decode(Bool.self, forKey: .hasVertexColors)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(format, forKey: .format)
+        try ArtifactSpool.encodeBytes(data, fileExtension: format.rawValue, &c,
+                                      data: .data, file: .file, encoder: encoder)
+        try c.encodeIfPresent(vertexCount, forKey: .vertexCount)
+        try c.encodeIfPresent(faceCount, forKey: .faceCount)
+        try c.encode(hasVertexColors, forKey: .hasVertexColors)
+    }
+}
+
+extension Video: Codable {
+    private enum CodingKeys: String, CodingKey { case format, data, file, durationSeconds, frameRate }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        format = try c.decode(Format.self, forKey: .format)
+        data = try ArtifactSpool.decodeBytes(c, data: .data, file: .file, decoder: decoder)
+        durationSeconds = try c.decodeIfPresent(Double.self, forKey: .durationSeconds)
+        frameRate = try c.decodeIfPresent(Double.self, forKey: .frameRate)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(format, forKey: .format)
+        try ArtifactSpool.encodeBytes(data, fileExtension: format.rawValue, &c,
+                                      data: .data, file: .file, encoder: encoder)
+        try c.encodeIfPresent(durationSeconds, forKey: .durationSeconds)
+        try c.encodeIfPresent(frameRate, forKey: .frameRate)
     }
 }

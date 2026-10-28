@@ -3,7 +3,7 @@ import Foundation
 /// Canonical neural-audio-codec request: encode an audio clip into discrete codec tokens
 /// (the inverse — decoding tokens back to audio — is a separate future capability). Canonical
 /// output is **codes** (see `AudioCodecResponse`).
-public struct AudioCodecRequest: CapabilityRequest {
+public struct AudioCodecRequest: CapabilityRequest, Codable {
     public static var capability: Capability { .audioCodec }
 
     /// The audio to encode (canonical `Audio` artifact; any rate/channels — the package resamples
@@ -21,7 +21,7 @@ public struct AudioCodecRequest: CapabilityRequest {
 
 /// Canonical neural-audio-codec response: the discrete token grid produced by the encoder.
 /// `codes[q][t]` is the codebook index for quantizer `q` at frame `t` (residual/split RVQ).
-public struct AudioCodecResponse: CapabilityResponse {
+public struct AudioCodecResponse: CapabilityResponse, Codable {
     /// Per-codebook token rows: `codes.count == numCodebooks`, each row length = number of frames.
     public let codes: [[Int32]]
     /// Number of codebooks / quantizers (== `codes.count`).

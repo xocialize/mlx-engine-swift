@@ -5,7 +5,7 @@ import Foundation
 /// …). A `Video → Video` transform of the visual optimization tier — chains onto T2V output
 /// (low-fps generations) or any decoded source before encode.
 /// Canonical output is a `Video` at the same dimensions with `factor ×` the frame rate.
-public struct FrameInterpolateRequest: CapabilityRequest {
+public struct FrameInterpolateRequest: CapabilityRequest, Codable {
     public static var capability: Capability { .frameInterpolate }
 
     /// The video to interpolate (canonical `Video` artifact).
@@ -24,7 +24,7 @@ public struct FrameInterpolateRequest: CapabilityRequest {
 }
 
 /// Canonical frame-interpolation response: the interpolated video and the multiplier applied.
-public struct FrameInterpolateResponse: CapabilityResponse {
+public struct FrameInterpolateResponse: CapabilityResponse, Codable {
     public let video: Video
     /// The frame-rate multiplier actually applied.
     public let appliedFactor: Int

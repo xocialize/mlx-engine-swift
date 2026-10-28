@@ -4,7 +4,7 @@ import Foundation
 /// `Video → Video` transform of the visual optimization tier — chains onto T2V output or a
 /// decode stage before encode.
 /// Canonical output is a `Video` at `scale ×` the input frame dimensions (same duration/fps).
-public struct VideoUpscaleRequest: CapabilityRequest {
+public struct VideoUpscaleRequest: CapabilityRequest, Codable {
     public static var capability: Capability { .videoUpscale }
 
     /// The video to upscale (canonical `Video` artifact, serialized container bytes).
@@ -23,7 +23,7 @@ public struct VideoUpscaleRequest: CapabilityRequest {
 }
 
 /// Canonical video super-resolution response: the upscaled video and the factor actually applied.
-public struct VideoUpscaleResponse: CapabilityResponse {
+public struct VideoUpscaleResponse: CapabilityResponse, Codable {
     public let video: Video
     /// The scale factor actually applied.
     public let appliedScale: Int

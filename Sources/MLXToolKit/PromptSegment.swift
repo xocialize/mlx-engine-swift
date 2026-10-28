@@ -7,7 +7,7 @@ import Foundation
 ///
 /// At least one prompt is required. Coordinates are in **source-image pixels**; the package maps them
 /// into model space. Foreground/background is per-point via `pointLabels` (1 = include, 0 = exclude).
-public struct PromptSegmentRequest: CapabilityRequest {
+public struct PromptSegmentRequest: CapabilityRequest, Codable {
     public static var capability: Capability { .promptSegment }
 
     public let image: Image
@@ -33,7 +33,7 @@ public struct PromptSegmentRequest: CapabilityRequest {
 
 /// Canonical promptable-segmentation response: the selected object `Matte` (source dimensions) + the
 /// model's confidence (`score`, the predicted IoU of the returned mask).
-public struct PromptSegmentResponse: CapabilityResponse {
+public struct PromptSegmentResponse: CapabilityResponse, Codable {
     public let matte: Matte
     public let score: Float
     public init(matte: Matte, score: Float) { self.matte = matte; self.score = score }

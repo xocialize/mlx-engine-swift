@@ -1334,5 +1334,51 @@ public enum ContractVersion {
     //     round-trips unchanged.
     //   Additive: one Capability case (C12 tolerance), one SurfaceControls case (⚠️ an exhaustive switch
     //     over SurfaceControls needs `case .music`, the 1.54.0 note), one defaulted init argument.
-    public static let current = SemanticVersion(major: 1, minor: 56, patch: 0)
+    // 1.57.0 (2026-10-27, additive): THE WORKER SEAMS — what a host needs to run each model in a
+    //   process of its own and schedule memory across them without linking MLX (AB-A-0206; Gaea's
+    //   `.gaeaplugin` workers, AB-D-0163/0164/0170). The engine still owns the model inside the worker;
+    //   these make its facts DATA and its jobs WIRE-CODABLE.
+    //   • `ResolvedLane` (ResolvedLane.swift, `Codable`): a configuration's lane as the engine resolves it
+    //     at register() — selected and footprint quant, `persistentBytes` / `peakTransientBytes` AFTER
+    //     `FootprintConfigured` hints (each labelled `.hint` / `.quantMatch` / `.largestThatFits`), the
+    //     activation scaling, read volume and crash floor, `weightSources`, `selfMaterializing`, who
+    //     materializes (`.engine` / `.package` / `.bundled` / `.undeclared`), and the capabilities the
+    //     surface quant floors admit. `ResolvedLane(manifest:configuration:budgetBytes:)` is MLX-free (a
+    //     plugin build writes it beside its manifest); `MLXServeEngine.resolvedLane(for:)` is the
+    //     registered one. `RequirementsManifest.chosenFootprint(quant:budgetBytes:)` is now the ONE
+    //     footprint choice the governor and the export share.
+    //   • Download-only materialization: `MLXServeEngine.materialize(package:progress:)` (and the
+    //     capability-routed overload) fetches a registered package's missing `WeightSourcing` sources
+    //     into the store and stops — no construction, no load(), no charge — returning a `Codable`
+    //     `MaterializationReport {downloaded, alreadyPresent, storeRoot}`. Progress on
+    //     `PreparationMonitor` (.downloading → .idle) and the optional sink; cancel by cancelling the
+    //     task (chunk ledgers resume); a concurrent prepare() of the same package waits for it.
+    //     `EngineError.packageNotRegistered` and `.materializationUnavailable(_, reason:)` (a
+    //     SelfMaterializing or undeclared configuration, no store, a source still missing after).
+    //     `WeightMaterializer.MaterializeError.source(repo:revision:path:url:underlying:)` now wraps every
+    //     listing and file failure, so an error names the repo, revision and URL (a never-published repo
+    //     says so) — prepare() inherits it (AB-A-0153's class). Cancellation is never wrapped.
+    //   • Wire envelopes (Wire.swift): every canonical request and response is `Codable`;
+    //     `CapabilityRequestEnvelope {capability, package?, request}` and `CapabilityResponseEnvelope`
+    //     decode the concrete type through `CapabilityWire.requestType(for:)` / `responseType(for:)` (stt =
+    //     the one-shot `STTRequest`). `ArtifactSpool` in an encoder's userInfo (`CapabilityWire.encoder(
+    //     spool:)`) moves every Audio / Image / Matte / Mesh / Video's bytes to a spool file and encodes
+    //     `"file": "<path>"` for `"data"`; decoding takes either (relative paths against the decoder's
+    //     spool; bytes memory-mapped). No spool = the pre-1.57 encoding byte for byte.
+    //   • Monitor streams: `PreparationMonitor.events()` → `AsyncStream<PreparationEvent>` and
+    //     `RunMonitor.events()` → `AsyncStream<RunEvent>` (nil report = the run ended), nonisolated,
+    //     one independent stream per call. `PreparePhase` gains a flat Codable wire form
+    //     (`{"phase":"downloading","fraction":…}`), `PreparationKey` and `RunPhaseReport` are Codable.
+    //   • Host-assigned budget: `MLXServeEngine(workerBudget: WorkerBudget {ceilingBytes,
+    //     cacheLimitBytes?, wiresWeights})` budgets the governor at the ceiling, caps the MLX pool at
+    //     `cacheLimitBytes` (else the automatic rule against the ceiling) and coordinates the wired limit up
+    //     to the ceiling, instead of sizing against the machine; `workerMemoryReport()` returns a Codable
+    //     `WorkerMemoryReport` {budget, resident, transient reserve, available, phys_footprint, GPU
+    //     active/cache, per-package residents, running}. WorkerBudget / WorkerMemoryReport live in
+    //     MLXToolKit so an MLX-free host builds and reads them.
+    //   Additive, with two notes: an exhaustive switch over `EngineError` or `MaterializeError` needs the
+    //     new cases (the 1.53.0 precedent), and a caller that caught a bare `HubMetadataError` out of
+    //     materialization now finds it as `MaterializeError.source(...).underlying`. NOT in this version:
+    //     the governor's admission/eviction policy in an MLX-free target (AB-A-0206 item 6, planned 1.58.0).
+    public static let current = SemanticVersion(major: 1, minor: 57, patch: 0)
 }

@@ -265,7 +265,7 @@ public struct MusicControls: Sendable, Codable, Equatable {
 /// Everything else is honored only where the surface declares the matching `MusicFeature`; the engine
 /// refuses the rest before admission (`MusicControls.refusal(for:)`). Package levers that steer one
 /// model family — sampling temperatures, ODE step counts, the LM tier — ride `metaData` (C5).
-public struct MusicRequest: CapabilityRequest {
+public struct MusicRequest: CapabilityRequest, Codable {
     public static var capability: Capability { .music }
 
     /// The style text: genre, mood, instrumentation, vocal description. YuE2 calls it the style tags,
@@ -355,7 +355,7 @@ public struct MusicRequest: CapabilityRequest {
 /// `durationSeconds` cut the plan or the song before its natural end. `score` is present on every
 /// run of a surface declaring `.planning` (the plan it made or the score it was given, in ABC);
 /// `timestamps` on every run of one declaring `.timestamps`.
-public struct MusicResponse: CapabilityResponse {
+public struct MusicResponse: CapabilityResponse, Codable {
     public let audio: Audio
     /// The plan or the song hit a cap before its natural end.
     public let truncated: Bool

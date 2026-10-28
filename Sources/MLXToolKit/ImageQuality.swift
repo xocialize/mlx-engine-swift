@@ -4,7 +4,7 @@ import Foundation
 /// reference. The first *assessment* capability of the visual optimization tier — its score
 /// drives pipeline decisions (e.g. "does restoration pay on this source?").
 /// Canonical output is **structured text** (a score + optional sub-metrics).
-public struct ImageQualityScoreRequest: CapabilityRequest {
+public struct ImageQualityScoreRequest: CapabilityRequest, Codable {
     public static var capability: Capability { .imageQualityScore }
 
     /// The image to assess (canonical `Image` artifact).
@@ -20,7 +20,7 @@ public struct ImageQualityScoreRequest: CapabilityRequest {
 }
 
 /// Canonical no-reference image-quality response.
-public struct ImageQualityScoreResponse: CapabilityResponse {
+public struct ImageQualityScoreResponse: CapabilityResponse, Codable {
     /// Overall quality in [0, 1] (model-defined semantics; e.g. "restoration-pays": low where
     /// enhancement helps, high on clean content).
     public let score: Float

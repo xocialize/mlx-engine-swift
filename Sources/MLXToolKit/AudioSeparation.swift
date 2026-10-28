@@ -29,7 +29,7 @@ extension Stem {
 /// Canonical output is `.wav` audio per stem (see `AudioSeparationResponse`). `stems` requests a
 /// subset; an empty set means "every stem this package produces". A package may derive a
 /// requested stem by complement (e.g. `instrumental = mixture - vocals`) when it can.
-public struct AudioSeparationRequest: CapabilityRequest {
+public struct AudioSeparationRequest: CapabilityRequest, Codable {
     public static var capability: Capability { .audioSeparation }
 
     /// The mixture to separate (canonical `Audio` artifact).
@@ -52,7 +52,7 @@ public struct AudioSeparationRequest: CapabilityRequest {
 
 /// Canonical audio-separation response. Returns one `.wav` audio artifact per produced stem,
 /// keyed by `Stem`, in serialized round-trip form.
-public struct AudioSeparationResponse: CapabilityResponse {
+public struct AudioSeparationResponse: CapabilityResponse, Codable {
     public let stems: [Stem: Audio]
     public init(stems: [Stem: Audio]) { self.stems = stems }
 

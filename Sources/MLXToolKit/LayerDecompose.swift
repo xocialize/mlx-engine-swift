@@ -8,7 +8,7 @@ import Foundation
 /// plan ("Decompose this image into 4 layers … Layer 1: the headline text …"), and a model without a
 /// spec input still honours `layerCount`. Writing a precise spec from a rough plan is a VLM job — a host
 /// composes it (e.g. `imageAnalysis` → `layerDecompose`); it is not this surface's.
-public struct LayerDecomposeRequest: CapabilityRequest {
+public struct LayerDecomposeRequest: CapabilityRequest, Codable {
     public static var capability: Capability { .layerDecompose }
 
     /// The flattened design to decompose (RGB or RGBA; alpha, if any, is the package's to interpret).
@@ -56,7 +56,7 @@ public struct LayerDecomposeRequest: CapabilityRequest {
 ///   the input's aspect ratio; the package may work at a smaller bucket.
 /// - `composite` is the model's own full-canvas frame when it produces one (Ming emits it as a leading
 ///   frame) — useful as a recomposition check, never needed to rebuild the stack. nil when not produced.
-public struct LayerDecomposeResponse: CapabilityResponse {
+public struct LayerDecomposeResponse: CapabilityResponse, Codable {
     public let layers: [Image]
     public let composite: Image?
 

@@ -13,7 +13,7 @@
 /// SCAIL's 28-channel color-coded mask compression, Animate's pose/face extraction — are
 /// **package-internal preprocessing**, not request fields (the caller supplies a plain RGB
 /// `drivingMask` video). Package-specific levers ride `metaData` (C5).
-public struct CharacterAnimationRequest: CapabilityRequest {
+public struct CharacterAnimationRequest: CapabilityRequest, Codable {
     public static var capability: Capability { .characterAnimation }
 
     /// The reference character whose identity is animated / inserted.
@@ -66,7 +66,7 @@ public struct CharacterAnimationRequest: CapabilityRequest {
 }
 
 /// Canonical characterAnimation response — one `Video` artifact.
-public struct CharacterAnimationResponse: CapabilityResponse {
+public struct CharacterAnimationResponse: CapabilityResponse, Codable {
     public let video: Video
     public init(video: Video) { self.video = video }
 }

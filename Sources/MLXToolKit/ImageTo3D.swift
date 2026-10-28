@@ -13,7 +13,7 @@ import Foundation
 /// BiRefNet `matting`), not a request field.
 ///
 /// Canonical output is a `Mesh` artifact (GLB bytes), geometry + vertex color in V1.
-public struct ImageTo3DRequest: CapabilityRequest {
+public struct ImageTo3DRequest: CapabilityRequest, Codable {
     public static var capability: Capability { .imageTo3D }
 
     /// The primary image to reconstruct a 3D mesh from (canonical `Image` artifact).
@@ -34,7 +34,7 @@ public struct ImageTo3DRequest: CapabilityRequest {
 }
 
 /// Canonical single-image → 3D response: the generated triangle mesh (GLB bytes).
-public struct ImageTo3DResponse: CapabilityResponse {
+public struct ImageTo3DResponse: CapabilityResponse, Codable {
     public let mesh: Mesh
     public init(mesh: Mesh) { self.mesh = mesh }
 }

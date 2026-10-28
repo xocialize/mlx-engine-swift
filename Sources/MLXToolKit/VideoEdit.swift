@@ -6,7 +6,7 @@
 /// these references"). v2v = source video + prompt; rv2v = source video + prompt + references.
 /// (Reference-conditioned *generation* with no source video is `textToVideo` +
 /// `referenceImages`, not this surface.) Package-specific levers ride `metaData` (C5).
-public struct VEditRequest: CapabilityRequest {
+public struct VEditRequest: CapabilityRequest, Codable {
     public static var capability: Capability { .videoEdit }
 
     /// The source video to edit.
@@ -72,7 +72,7 @@ extension VEditRequest: AdapterCarrying {
 }
 
 /// Canonical video-edit response — one `Video` artifact.
-public struct VEditResponse: CapabilityResponse {
+public struct VEditResponse: CapabilityResponse, Codable {
     public let video: Video
     public init(video: Video) { self.video = video }
 }

@@ -10,7 +10,7 @@ import Foundation
 /// Canonical output is a `Matte` at the source image's dimensions. Background removal is a *consumer*
 /// of this matte (composite over transparency); the matte itself is reusable as a weight-map signal by
 /// other capabilities (region-aware `imageRestore`/`imageUpscale`, `opticalFlow`-guided propagation).
-public struct MattingRequest: CapabilityRequest {
+public struct MattingRequest: CapabilityRequest, Codable {
     public static var capability: Capability { .matting }
 
     /// The image to extract a foreground matte from (canonical `Image` artifact).
@@ -34,7 +34,7 @@ public struct MattingRequest: CapabilityRequest {
 
 /// Canonical matte-extraction response: the foreground matte (same dimensions as the input image).
 /// `matte.kind` reports the kind actually produced (may differ from `preferredKind`).
-public struct MattingResponse: CapabilityResponse {
+public struct MattingResponse: CapabilityResponse, Codable {
     public let matte: Matte
     public init(matte: Matte) { self.matte = matte }
 }

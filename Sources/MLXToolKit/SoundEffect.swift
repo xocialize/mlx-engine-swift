@@ -7,7 +7,7 @@
 /// package-specific levers ride `metaData`.
 
 /// Canonical sound-effect request.
-public struct SoundEffectRequest: CapabilityRequest {
+public struct SoundEffectRequest: CapabilityRequest, Codable {
     public static var capability: Capability { .soundEffect }
 
     public let prompt: String
@@ -40,7 +40,7 @@ public struct SoundEffectRequest: CapabilityRequest {
 }
 
 /// Canonical sound-effect response — one `Audio` artifact (`.wav`).
-public struct SoundEffectResponse: CapabilityResponse {
+public struct SoundEffectResponse: CapabilityResponse, Codable {
     public let audio: Audio
     public init(audio: Audio) { self.audio = audio }
 }

@@ -115,7 +115,7 @@ public enum ResponseFormat: Sendable, Codable, Equatable {
 }
 
 /// Canonical LLM request. Output is always text.
-public struct LLMRequest: CapabilityRequest {
+public struct LLMRequest: CapabilityRequest, Codable {
     public static var capability: Capability { .llm }
 
     public let messages: [ChatMessage]
@@ -222,7 +222,7 @@ public struct LLMUsage: Sendable, Codable, Equatable {
 }
 
 /// Canonical LLM response. The canonical artifact is text.
-public struct LLMResponse: CapabilityResponse {
+public struct LLMResponse: CapabilityResponse, Codable {
     public let text: String
     public let finishReason: FinishReason?
     /// Measured token counts + timing, when the package reports them (contract 1.26.0).

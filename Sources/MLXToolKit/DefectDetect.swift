@@ -12,7 +12,7 @@ import Foundation
 /// `.softAlpha` is the raw per-pixel defect probability, for callers that want their own threshold
 /// or a confidence display. `threshold` applies to `.binary` only (`nil` = the package's default —
 /// packages document theirs; BOPBTL's reference uses 0.4).
-public struct DefectDetectRequest: CapabilityRequest {
+public struct DefectDetectRequest: CapabilityRequest, Codable {
     public static var capability: Capability { .defectDetect }
 
     /// The image to inspect (canonical `Image` artifact).
@@ -40,7 +40,7 @@ public struct DefectDetectRequest: CapabilityRequest {
 /// Canonical defect-detection response: the defect mask at the input image's dimensions.
 /// `mask.kind` reports what was actually produced; `appliedThreshold` is the threshold that made a
 /// `.binary` mask (`nil` for `.softAlpha` — no threshold was applied).
-public struct DefectDetectResponse: CapabilityResponse {
+public struct DefectDetectResponse: CapabilityResponse, Codable {
     public let mask: Matte
     public let appliedThreshold: Float?
 

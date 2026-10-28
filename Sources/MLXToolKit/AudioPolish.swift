@@ -7,7 +7,7 @@ import Foundation
 /// The loudness/mastering target is a per-request `mode` (e.g. `.broadcast` -23 LUFS, `.streaming`
 /// -16 LUFS) — the audio analog of a visual quality target. Package-specific stage knobs ride
 /// `metaData`.
-public struct AudioPolishRequest: CapabilityRequest {
+public struct AudioPolishRequest: CapabilityRequest, Codable {
     public static var capability: Capability { .audioPolish }
 
     /// The audio to polish/master (canonical `Audio` artifact).
@@ -31,7 +31,7 @@ extension Mode {
 
 /// Canonical audio-polish response: the mastered audio (`.wav`), plus the measured integrated
 /// loudness before/after so a caller (or the pipeline planner) can verify the target was hit.
-public struct AudioPolishResponse: CapabilityResponse {
+public struct AudioPolishResponse: CapabilityResponse, Codable {
     public let audio: Audio
     /// Integrated loudness (LUFS) of the input, if measured.
     public let inputLUFS: Double?
