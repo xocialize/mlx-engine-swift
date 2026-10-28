@@ -1,10 +1,12 @@
-import Foundation
 import MLXToolKit
 
 /// Memory budgeting + watermark policy for resident working sets. The engine owns the resident set
 /// and calls `charge`/`release` as packages load/unload; the governor answers "does this fit?" and
-/// "are we under pressure?". v1 evicts **idle** residents (LRU) at admission; mid-run preemption +
-/// requeue is the next layer.
+/// "are we under pressure?". What to evict, in what order, is `MemoryPolicy`'s (1.58.0).
+///
+/// MLX-free since 1.58.0 (it moved here from MLXServeCore with the rest of the policy). The
+/// budget is injected: `MemoryGovernor.forDevice(_:fraction:)`, which asks Metal for the OS's
+/// recommended working set, stays in MLXServeCore.
 public struct MemoryGovernor: Sendable {
     /// Total bytes the engine may hold resident.
     public let budgetBytes: UInt64
@@ -17,28 +19,6 @@ public struct MemoryGovernor: Sendable {
         self.budgetBytes = budgetBytes
         self.highWatermark = max(0, min(1, highWatermark))
         self.residentBytes = 0
-    }
-
-    /// Size a governor for the device. An explicit `fraction` budgets that share of total
-    /// unified memory (the pre-1.31 behavior at 0.7). By default (`nil`), when `device`
-    /// describes THIS machine, the budget is the OS's own answer — Metal's
-    /// `recommendedMaxWorkingSetSize` — queried, never hardcoded: it scales with capacity
-    /// and OS release (macOS 26: ~74% @16 GB → ~84% @128 GB; a flat 0.7 under-budgets a
-    /// 128 GB machine by ~18 GB). Falls back to 0.7 × total when Metal is unavailable
-    /// (CI/test runners) or when the profile is synthetic (total ≠ this host's physical
-    /// memory — fabricated-profile tests must not inherit the real machine's number).
-    /// NEUROSTREAM-ACTIONS QW3 / teardown §3.2.
-    public static func forDevice(_ device: DeviceProfile, fraction: Double? = nil) -> MemoryGovernor {
-        if let fraction {
-            return MemoryGovernor(
-                budgetBytes: UInt64(Double(device.totalMemoryBytes) * max(0, min(1, fraction))))
-        }
-        if device.totalMemoryBytes == ProcessInfo.processInfo.physicalMemory,
-           let recommended = HostMemory.recommendedGPUWorkingSetBytes(),
-           recommended > 0, recommended < device.totalMemoryBytes {
-            return MemoryGovernor(budgetBytes: recommended)
-        }
-        return MemoryGovernor(budgetBytes: UInt64(Double(device.totalMemoryBytes) * 0.7))
     }
 
     public var availableBytes: UInt64 { budgetBytes > residentBytes ? budgetBytes - residentBytes : 0 }

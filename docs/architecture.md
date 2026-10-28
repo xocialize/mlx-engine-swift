@@ -9,6 +9,8 @@ engine does the coordination around them.
 - **Execution serialization** — the `InferenceActor` global actor serializes inference onto the
   compute resources; `ModelPackage` lifecycle methods are isolated to it.
 - **Memory governance** — a `MemoryGovernor` watermark ladder drives load/evict (see **R-MEM-1**).
+  The rules are `MemoryPolicy`'s, in the MLX-free MLXMemoryPolicy product (1.58.0): the engine
+  builds a `MemoryState` from its bookkeeping and executes each `AdmissionStep` the policy decides.
   A package declares which `Backend`s it needs (`.metalGPU` / `.coreMLANE` / `.coreMLCPU` /
   `.coreMLGPU`) and the engine gates admission on device eligibility (C10). It does **not** model
   *placement* — where weights physically land is the substrate's call, not the coordinator's.
@@ -319,7 +321,7 @@ offline contract builds are unaffected.
   `@InferenceActor` `load` / `run` / `unload`. Erased dispatch over `any CapabilityRequest`.
 - `PackageRegistration` — manifest + a license-gated factory the engine calls to construct.
 
-## Running the engine in a worker process (contract 1.57.0)
+## Running the engine in a worker process (contracts 1.57.0, 1.58.0)
 
 A host can run each model in a process of its own (Gaea's `.gaeaplugin` workers, AB-A-0206). The
 engine still owns the model inside the worker; the host links no MLX and schedules memory across
@@ -333,12 +335,35 @@ object on the host side:
 | Jobs across the process boundary as JSON plus spool files | `CapabilityRequestEnvelope`, `CapabilityResponseEnvelope`, `ArtifactSpool`, `CapabilityWire` | MLXToolKit |
 | Progress relayed to the host | `PreparationMonitor.events()`, `RunMonitor.events()` (Codable events) | MLXToolKit |
 | Live inside the host's slice, report back | `MLXServeEngine(workerBudget:)`, `workerMemoryReport()` → `WorkerMemoryReport` | MLXServeCore / MLXToolKit |
+| Admit and evict across workers by the engine's rules | `MemoryPolicy` (`nextStep`, `plan` → `AdmissionPlan`, `availableBytes(_:afterEvictingIdleExcept:)`) | MLXMemoryPolicy |
 
 `ResolvedLane`'s numbers are the governor's own: both read the base footprint through
 `RequirementsManifest.chosenFootprint(quant:budgetBytes:)`, then apply the `FootprintConfigured`
 hints. A `SelfMaterializing` configuration cannot be materialized without `load()`, and
-`materialize` says so rather than loading. The governor's admission and eviction policy is not yet
-in an MLX-free target (planned for 1.58.0); until then a cross-process host applies its own.
+`materialize` says so rather than loading.
+
+**The policy across processes (1.58.0).** `MemoryPolicy` is the governor's ladder with no MLX, no
+actor and no clock. A host maps each worker to a `MemoryTenant` (opaque id, declared persistent
+bytes, the largest peak transient of what it holds, its measured `phys_footprint`, last use), each
+job in flight to a `MemoryRun` on that tenant, and anything it cannot evict to an
+`ExternalTenantDeclaration`. Then:
+
+- `plan(_:in:conduct:measuredReading:)` projects a whole admission: the refusal, or the steps in
+  order (evict, preempt, await, end a session) and whether they make it fit. `verdict` reduces it
+  to fits / evict / preempt / refuse.
+- `nextStep(_:in:conduct:)` is one rung at a time; the engine calls it against fresh state between
+  steps, since a run can end and a tenant can shrink while it waits.
+- `availableBytes(_:afterEvictingIdleExcept:)` is what evicting every idle tenant would free,
+  committing nothing, for choosing among a model's lanes before planning.
+
+Two knobs separate the in-process rules from a host's. In-process, an idle resident keeps its peak
+transient in the one-max reserve (`.everyResident`), because a resident package may run again
+without a new admission. A host that admits every job, one GPU job at a time, uses
+`.admittedRunsOnly`: an idle worker is charged its bytes, never its peak, and only the job being
+admitted (and any run still in flight) reserves a transient. With `.largerOfDeclaredAndMeasured`, an
+idle worker is charged the larger of its declared persistent bytes and its measured footprint; a
+busy worker is charged its declared bytes, since its reading includes the activations its run's
+reserve already covers.
 
 ## Boundary with `mlx-porting`
 

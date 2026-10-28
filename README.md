@@ -2,7 +2,7 @@
 
 > ## Status — usable, evolving
 >
-> MLXEngine is **published and consumable**: tagged **v0.72.0** (capability contract **1.57.0**),
+> MLXEngine is **published and consumable**: tagged **v0.73.0** (capability contract **1.58.0**),
 > and already serving **65 published model packages** (86 tracked, incl. WIP + research — see
 > [the model registry](docs/model-registry.md)) that back **all 37 of the contract's capabilities**
 > save the newest, **music (lyrics-to-song)**, whose first three packages are in flight —
@@ -74,6 +74,10 @@ cross-model work is uniform from a programming standpoint.
 > `packages(for:)` → `manifest(for:)` → `surfaces`, then invoke `run(_:package:)`. Those types are
 > public and `Codable`, so the bridge owns its wire format while the engine stays protocol-agnostic.
 > C0–C14's C11 exists to make that client possible.
+- **MLXMemoryPolicy** — the governor's admission and eviction rules as pure functions
+  (`MemoryPolicy`, `MemoryGovernor`, `PreemptionPolicy`): value-typed tenants, runs and sessions in,
+  an admission plan out. MLX-free (MLXToolKit only), so a host that runs each model in a process of
+  its own schedules memory by the rules `MLXServeEngine` runs in-process. MLXServeCore re-exports it.
 - **MLXServeConformance** — the C0–C14 self-check harness, plus the offline **MAT** (weight
   auto-materialization) and **CAN** (cooperative-cancellation cadence) gates each package runs in
   its own test suite. **MLXServeConformanceNN** carries the MLXNN half of the C14 **INF** gate

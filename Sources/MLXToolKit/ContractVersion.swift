@@ -1378,7 +1378,41 @@ public enum ContractVersion {
     //     MLXToolKit so an MLX-free host builds and reads them.
     //   Additive, with two notes: an exhaustive switch over `EngineError` or `MaterializeError` needs the
     //     new cases (the 1.53.0 precedent), and a caller that caught a bare `HubMetadataError` out of
-    //     materialization now finds it as `MaterializeError.source(...).underlying`. NOT in this version:
-    //     the governor's admission/eviction policy in an MLX-free target (AB-A-0206 item 6, planned 1.58.0).
-    public static let current = SemanticVersion(major: 1, minor: 57, patch: 0)
+    //     materialization now finds it as `MaterializeError.source(...).underlying`. The governor's
+    //     admission/eviction policy in an MLX-free target (AB-A-0206 item 6) followed in 1.58.0.
+    // 1.58.0 (2026-10-28, additive): THE GOVERNOR'S POLICY, MLX-FREE (AB-A-0206 item 6, AB-T-0357,
+    //   AB-D-0170: one rule shared by MLXServeEngine and a multi-process host). A new library product,
+    //   **MLXMemoryPolicy**, depending on MLXToolKit only (`swift build --target MLXMemoryPolicy`
+    //   compiles no mlx-swift).
+    //   • `MemoryPolicy` — the admission and eviction rules as pure functions over value types:
+    //     `MemoryState {tenants: [MemoryTenant], runs: [MemoryRun], liveSessions: [MemoryLiveSession],
+    //     externalTenants: [ExternalTenantDeclaration]}` with opaque String ids; a `MemoryAdmission
+    //     {tenant, persistentBytes, transientBytes}` in. Accounting: `charge`, `residency`,
+    //     `tenantReserve`, `transientReserve`, `required` (Σ persistent + ONE max transient + external),
+    //     `availableBytes(_:)` and `availableBytes(_:afterEvictingIdleExcept:)` (what eviction of every
+    //     idle tenant would free, committing nothing). The ladder: `ownPeakRefusal`,
+    //     `externalTenantDeficit` / `externalRefusal`, `idleVictim` / `idleTenants` (LRU), `runVictim`
+    //     (lowest progress; cancelled below `preserveNearlyDoneFraction`, else awaited), `liveSessionVictim`
+    //     (longest idle, first attempts only), `nextStep(_:in:conduct:)` → `AdmissionDecision {fits,
+    //     step(AdmissionStep), exhausted(shortByBytes:)}`, `nextRealPressureStep` (R-MEM-1),
+    //     `credited(_:released:)`, `shrinkOrder`. `plan(_:in:conduct:measuredReading:)` → a Codable
+    //     `AdmissionPlan {externalTenantRequestBytes, steps, outcome (fits / overcommitted / refused),
+    //     realPressureEvictions}` with `verdict` = fits / evict([ids]) / preempt(runs:evicting:) /
+    //     refuse(AdmissionRefusal). `AdmissionStep`: evict / preempt / awaitRun / endLiveSession.
+    //     `AdmissionConduct` (idleOnly / preempting / waiting) is public.
+    //   • Two accounting knobs whose defaults are the engine's rules: `TransientAccounting`
+    //     (`.everyResident` — an idle resident keeps its peak in the one-max reserve, since it may run
+    //     without a new admission; `.admittedRunsOnly` — only runs, sessions and the admission reserve,
+    //     for a host that admits every job) and `IdleCharge` (`.declared`;
+    //     `.largerOfDeclaredAndMeasured` — an idle tenant is charged max(declared, measured)).
+    //   • Moved from MLXServeCore, unchanged in API: `MemoryGovernor` (minus `forDevice(_:fraction:)`,
+    //     which asks Metal and stays in MLXServeCore as an extension), `MemorySnapshot`,
+    //     `PreemptionPolicy`, and `ExternalFootprint` (now also `Codable`). MLXServeCore re-exports
+    //     MLXMemoryPolicy, so `import MLXServeCore` sees them as before; only a module-qualified name
+    //     (`MLXServeCore.MemoryGovernor`) needs the new module.
+    //   • MLXServeEngine's admission executes the policy's decisions step by step against fresh state
+    //     (`makeHeadroom`, the external claim, R-MEM-1): no behavior change in-process. Two tie-breaks
+    //     that were dictionary order are now deterministic (equal last-use: package id order; equal
+    //     run progress: the older run token).
+    public static let current = SemanticVersion(major: 1, minor: 58, patch: 0)
 }

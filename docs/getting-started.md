@@ -28,6 +28,8 @@ conformant package:
 - **MLXServeCore** — the runtime coordinator: registration, the two-layer license gate,
   admission + `MemoryGovernor`, residency, the GPU buffer-pool policy, run lifecycle. Links MLX
   (allocator API only).
+- **MLXMemoryPolicy** — the governor's admission and eviction rules (`MemoryPolicy`,
+  `MemoryGovernor`, `PreemptionPolicy`) as pure functions. MLX-free; re-exported by MLXServeCore.
 - **MLXServeConformance** — the C0–C14 self-check harness, plus the offline MAT and CAN gates.
   MLX-free. **MLXServeConformanceNN** adds the MLXNN half of the C14 INF gate; take it only if
   your package has a `Module` graph.

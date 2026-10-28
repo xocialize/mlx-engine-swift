@@ -15,6 +15,9 @@ let package = Package(
     products: [
         .library(name: "MLXToolKit", targets: ["MLXToolKit"]),
         .library(name: "MLXServeCore", targets: ["MLXServeCore"]),
+        // The governor's admission and eviction rules as pure functions (1.58.0, AB-D-0170):
+        // MLX-free, so a multi-process host (Gaea) runs the rules MLXServeEngine runs in-process.
+        .library(name: "MLXMemoryPolicy", targets: ["MLXMemoryPolicy"]),
         .library(name: "MLXServeConformance", targets: ["MLXServeConformance"]),
         // The MLXNN-dependent half of the INF gate (C14). Split from MLXServeConformance so that
         // target stays MLX-free — mlx-audio-polish-swift (the non-MLX capability seam) consumes
@@ -53,9 +56,15 @@ let package = Package(
         // Links MLX for the GPU buffer-pool policy (N5) — allocator API only, no kernels.
         .target(name: "MLXServeCore", dependencies: [
             "MLXToolKit",
+            "MLXMemoryPolicy",
             "MLXHubMetadata",
             .product(name: "MLX", package: "mlx-swift"),
         ]),
+
+        // Admission + eviction policy (1.58.0): MemoryGovernor, MemoryPolicy, PreemptionPolicy,
+        // ExternalFootprint. MLXToolKit only — no MLX, no actor, no clock. MLXServeCore executes
+        // its decisions and re-exports it.
+        .target(name: "MLXMemoryPolicy", dependencies: ["MLXToolKit"]),
 
         // Metadata-only HF access (URLSession + Foundation; no MLX, no downloads). Keeps
         // MLXToolKit network-free while letting the engine size a materialization before it runs.
@@ -97,6 +106,7 @@ let package = Package(
         .target(name: "MLXRetrievalKit", dependencies: ["MLXRetrievalKitContracts"]),
 
         .testTarget(name: "MLXToolKitTests", dependencies: ["MLXToolKit"]),
+        .testTarget(name: "MLXMemoryPolicyTests", dependencies: ["MLXMemoryPolicy", "MLXToolKit"]),
         .testTarget(name: "MLXHubMetadataTests", dependencies: ["MLXHubMetadata", "MLXToolKit"]),
         .testTarget(name: "MLXServeCoreTests", dependencies: [
             "MLXServeCore", "MLXToolKit", "MLXHubMetadata",

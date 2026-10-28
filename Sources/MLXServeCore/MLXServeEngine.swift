@@ -1,6 +1,7 @@
 import Foundation
 import MLX
 import MLXHubMetadata
+import MLXMemoryPolicy
 import MLXToolKit
 
 /// Errors the coordinator raises around admission and routing.
@@ -1204,9 +1205,9 @@ public actor MLXServeEngine {
                                        ledger: inout ExternalShrinkLedger) async {
         pruneWithdrawnExternalTenants()
         var remaining = deficit
-        let tenants = liveExternalTenants()
-            .filter { !ledger.asked.contains(ObjectIdentifier($0)) }
-            .sorted { $0.footprint.totalBytes > $1.footprint.totalBytes }
+        let tenants = MemoryPolicy.shrinkOrder(
+            liveExternalTenants().filter { !ledger.asked.contains(ObjectIdentifier($0)) },
+            footprint: \.footprint)
         for tenant in tenants where remaining > 0 {
             guard let handler = tenant.handler else { continue }
             ledger.asked.insert(ObjectIdentifier(tenant))
@@ -1242,14 +1243,14 @@ public actor MLXServeEngine {
     {
         var ledger = ExternalShrinkLedger(reason: .admission, package: id)
         guard !externalTenantStates.isEmpty else { return ledger }
-        let required = accountedRequired(persistent: p, transient: t, excluding: id)
-        if required > governor.budgetBytes {
-            await requestExternalShrink(required - governor.budgetBytes, ledger: &ledger)
+        let policy = memoryPolicy
+        let admission = MemoryAdmission(tenant: id.rawValue, persistentBytes: p, transientBytes: t)
+        let deficit = policy.externalTenantDeficit(admission, in: memoryState())
+        if deficit > 0 {
+            await requestExternalShrink(deficit, ledger: &ledger)
         }
-        let external = externalDeclared().totalBytes
-        if p &+ t &+ external > governor.budgetBytes {
-            throw EngineError.externalTenantsHoldMemory(required: p &+ t, external: external,
-                                                        budget: governor.budgetBytes)
+        if let refusal = policy.externalRefusal(admission, in: memoryState()) {
+            throw EngineError(refusal)
         }
         return ledger
     }
@@ -1403,18 +1404,6 @@ public actor MLXServeEngine {
                 await drainActiveRuns()
             }
         }
-    }
-
-    /// How an admission may claim headroom beyond idle-LRU eviction (V3).
-    private enum AdmissionConduct {
-        /// v1 semantics: evict idle residents only; never touch a running inference
-        /// (`prepare`, and all admissions when `PreemptionPolicy.enabled == false`).
-        case idleOnly
-        /// May preempt a running victim as a last resort (a request's FIRST attempt).
-        case preempting
-        /// May wait for a running victim to finish and then evict it, but never cancels it
-        /// (REQUEUED attempts — structurally prevents preemption ping-pong).
-        case waiting
     }
 
     private enum RunAttemptOutcome {
@@ -1831,16 +1820,6 @@ public actor MLXServeEngine {
         }
     }
 
-    /// The live session the governor should sacrifice next: not the contender's package, still
-    /// resident, and the one that has gone longest without a `push` — the most likely to be an
-    /// abandoned handle rather than someone mid-sentence.
-    private func liveVictimToken(excluding id: PackageID) -> UInt64? {
-        liveSessions
-            .filter { $0.value.id != id && residents[$0.value.id] != nil }
-            .max(by: { $0.value.activity.idleSeconds < $1.value.activity.idleSeconds })?
-            .key
-    }
-
     /// Last-resort reclaim of a live session's residency. Unlike `reclaimActiveRun` there is no
     /// `.waiting` variant: a session ends when the speaker stops, which is not a wait the
     /// admission path can make.
@@ -2138,11 +2117,47 @@ public actor MLXServeEngine {
 
     // MARK: - Memory accounting (serialized-inference reserve)
 
+    /// The admission policy (1.58.0, MLXMemoryPolicy): the governor's budget and watermark under
+    /// the engine's preemption policy, with the engine's accounting — every resident keeps its
+    /// idle transient in the reserve (a resident package runs again without a new admission) and
+    /// is charged its declared persistent bytes.
+    private var memoryPolicy: MemoryPolicy {
+        MemoryPolicy(governor: governor, preemption: preemption)
+    }
+
+    /// The engine's bookkeeping as the policy reads it, fresh at every accounting step. Tenants are
+    /// the charged packages (a package mid-unload is still charged but no longer evictable), runs
+    /// and live sessions are keyed by their tokens, in token order — the policy breaks ties by
+    /// that order.
+    private func memoryState() -> MemoryState {
+        let ids = Set(residentFootprint.keys).union(residentTransient.keys)
+            .sorted { $0.rawValue < $1.rawValue }
+        return MemoryState(
+            tenants: ids.map { id in
+                MemoryTenant(id: id.rawValue,
+                             persistentBytes: residentFootprint[id] ?? 0,
+                             peakTransientBytes: residentTransient[id] ?? 0,
+                             lastUsed: lastUsed[id] ?? 0,
+                             evictable: residents[id] != nil)
+            },
+            runs: activeRuns.sorted { $0.key < $1.key }.map { token, run in
+                MemoryRun(token: String(token), tenant: run.id.rawValue,
+                          transientBytes: run.transientBytes, progress: progressFraction(run))
+            },
+            liveSessions: liveSessions.sorted { $0.key < $1.key }.map { token, live in
+                MemoryLiveSession(token: String(token), tenant: live.id.rawValue,
+                                  reservedTransientBytes: live.reservedTransientBytes,
+                                  idleSeconds: live.activity.idleSeconds)
+            },
+            externalTenants: externalTenantStates.sorted { $0.key < $1.key }.map { _, state in
+                ExternalTenantDeclaration(id: state.id, footprint: state.footprint)
+            })
+    }
+
     /// Σ persistent resident weights, optionally excluding one id (the incoming, not yet charged),
     /// plus every external tenant's declared persistent bytes (1.43.0).
     private func residency(excluding skip: PackageID? = nil) -> UInt64 {
-        residentFootprint.reduce(0) { $1.key == skip ? $0 : $0 &+ $1.value }
-            &+ externalDeclared().persistentBytes
+        memoryPolicy.residency(memoryState(), excluding: skip?.rawValue)
     }
 
     /// The single transient activation headroom to reserve: `max(peakActivation)` across residents,
@@ -2152,27 +2167,22 @@ public actor MLXServeEngine {
     /// `extra` folds in an incoming model's transient; `skip` excludes one id. External tenants'
     /// transients (1.43.0) are ADDED on top — they are not serialized with package runs.
     private func transientReserve(extra: UInt64 = 0, excluding skip: PackageID? = nil) -> UInt64 {
-        packageTransientReserve(extra: extra, excluding: skip) &+ externalDeclared().transientBytes
+        memoryPolicy.transientReserve(memoryState(), extra: extra, excluding: skip?.rawValue)
     }
 
     /// The packages' own serialized reserve: the max over residents, in-flight runs, and open
     /// live sessions (an open-ended session contributes 0 — it rides its resident's scalar).
     private func packageTransientReserve(extra: UInt64 = 0,
                                          excluding skip: PackageID? = nil) -> UInt64 {
-        var m = extra
-        for (id, t) in residentTransient where id != skip { m = max(m, t) }
-        for run in activeRuns.values where run.id != skip { m = max(m, run.transientBytes) }
-        for live in liveSessions.values where live.id != skip {
-            m = max(m, live.reservedTransientBytes)
-        }
-        return m
+        memoryPolicy.tenantReserve(memoryState(), extra: extra, excluding: skip?.rawValue)
     }
 
     /// Total budget to account for if `(persistent, transient)` were resident alongside the current
     /// residents (excluding `id`): Σ persistent + one max transient.
     private func accountedRequired(persistent p: UInt64, transient t: UInt64,
                                    excluding id: PackageID) -> UInt64 {
-        residency(excluding: id) &+ p &+ transientReserve(extra: t, excluding: id)
+        memoryPolicy.required(MemoryAdmission(tenant: id.rawValue, persistentBytes: p,
+                                              transientBytes: t), in: memoryState())
     }
 
     // MARK: - Admission
@@ -2503,9 +2513,9 @@ public actor MLXServeEngine {
             // accounting fits.
             let persistent = entry.persistent &+ loadTimeAdapterBytes(id)
             let transient = entry.transient
-            guard governor.fitsBudget(persistent &+ transient) else {
-                throw EngineError.exceedsMemoryBudget(required: persistent &+ transient,
-                                                      budget: governor.budgetBytes)
+            if let refusal = memoryPolicy.ownPeakRefusal(persistentBytes: persistent,
+                                                         transientBytes: transient) {
+                throw EngineError(refusal)
             }
             // Per-run reserve sizing (1.42.0): the package fits at its representative case, but
             // THIS run may reserve more — check that before loading a working set only to refuse
@@ -2866,46 +2876,50 @@ public actor MLXServeEngine {
     private func makeHeadroom(persistent p: UInt64, transient t: UInt64, keeping id: PackageID,
                               conduct: AdmissionConduct = .idleOnly,
                               shrunk: inout ExternalShrinkLedger) async {
+        // The policy decides (MLXMemoryPolicy, 1.58.0); the engine executes, one step at a time
+        // against fresh state — a run can end and a tenant can shrink across each await.
+        let policy = memoryPolicy
+        let admission = MemoryAdmission(tenant: id.rawValue, persistentBytes: p, transientBytes: t)
+
         // (1) Declared-byte headroom under the serialized-inference accounting (Σ persistent + one
-        // max transient). Idle LRU first; a running victim only as a last resort.
-        while accountedRequired(persistent: p, transient: t, excluding: id) > governor.budgetBytes {
-            if let victim = lruIdleVictim(excluding: id) {
-                await evictResident(victim)
-                continue
+        // max transient). Idle LRU first; a running victim only as a last resort; live sessions
+        // rank BELOW batch runs (1.39.0: a preempted run requeues and loses nothing, a preempted
+        // session loses audio nobody can replay), and only a first attempt may take one —
+        // `.waiting` has no way to wait for a session, which ends when the speaker does. Stops
+        // when nothing is left to evict (or reclaim).
+        while case .step(let step) = policy.nextStep(admission, in: memoryState(), conduct: conduct) {
+            switch step {
+            case .evict(let tenant):
+                await evictResident(PackageID(tenant))
+            case .preempt(let run, _):
+                await reclaimActiveRun(runToken(run), cancel: true)
+            case .awaitRun(let run, _):
+                await reclaimActiveRun(runToken(run), cancel: false)
+            case .endLiveSession(let session, _):
+                await reclaimLiveSession(runToken(session))
             }
-            guard conduct != .idleOnly else { break }
-            if let token = activeVictimToken(excluding: id) {
-                await reclaimActiveRun(token, conduct: conduct)
-                continue
-            }
-            // Live sessions rank BELOW batch runs as victims (1.39.0): a preempted run requeues
-            // and loses nothing, a preempted session loses audio nobody can replay. Only a first
-            // attempt may take one — `.waiting` has no way to wait for a session, which ends when
-            // the speaker does.
-            if conduct == .preempting, let token = liveVictimToken(excluding: id) {
-                await reclaimLiveSession(token)
-                continue
-            }
-            break // nothing left to evict (or reclaim)
         }
 
         // (2) R-MEM-1: real-memory pressure trigger. Tenants first, credited by their declared
-        // drop (the real reading lags a Metal release); then idle LRU residents.
-        let ceiling = realPressureCeiling
+        // drop (the real reading lags a Metal release); then idle LRU residents. Stops when none
+        // remain: the remaining pressure is external.
+        let ceiling = policy.realPressureCeiling
         while let real = physFootprint() {
             let effective = await creditedRealReading(real, ceiling: ceiling, shrunk: &shrunk)
-            guard effective > ceiling else { break }
-            guard let victim = lruIdleVictim(excluding: id) else {
-                break // reclaimed everything we can; remaining pressure is external
-            }
-            await evictResident(victim)
+            guard case .step(.evict(let victim)) = policy.nextRealPressureStep(
+                admitting: id.rawValue, reading: effective, in: memoryState()) else { break }
+            await evictResident(PackageID(victim))
         }
     }
 
-    /// The R-MEM-1 ceiling: `budget × highWatermark`, compared against `phys_footprint`.
-    private var realPressureCeiling: UInt64 {
-        UInt64(Double(governor.budgetBytes) * governor.highWatermark)
+    /// A run or live-session token as the engine keys it (the policy carries it as a string).
+    private func runToken(_ token: String) -> UInt64 {
+        guard let value = UInt64(token) else { preconditionFailure("not an engine token: \(token)") }
+        return value
     }
+
+    /// The R-MEM-1 ceiling: `budget × highWatermark`, compared against `phys_footprint`.
+    private var realPressureCeiling: UInt64 { memoryPolicy.realPressureCeiling }
 
     /// R-MEM-1's tenant step (1.44.0): `real` net of the declared bytes tenants dropped during
     /// this admission. When that is still over `ceiling`, and the admission has not yet asked under
@@ -2914,36 +2928,13 @@ public actor MLXServeEngine {
     /// here. Without tenants this makes no request, and without a credit it returns `real`.
     private func creditedRealReading(_ real: UInt64, ceiling: UInt64,
                                      shrunk: inout ExternalShrinkLedger) async -> UInt64 {
-        var effective = real > shrunk.releasedBytes ? real - shrunk.releasedBytes : 0
+        var effective = MemoryPolicy.credited(real, released: shrunk.releasedBytes)
         if effective > ceiling, !shrunk.askedUnderRealPressure, !externalTenantStates.isEmpty {
             shrunk.askedUnderRealPressure = true
             await requestExternalShrink(effective - ceiling, ledger: &shrunk)
-            effective = real > shrunk.releasedBytes ? real - shrunk.releasedBytes : 0
+            effective = MemoryPolicy.credited(real, released: shrunk.releasedBytes)
         }
         return effective
-    }
-
-    /// The least-recently-used **idle** resident other than `id`, or nil if none remain.
-    /// A package with a run in flight is not idle — it is never an LRU victim (V3).
-    private func lruIdleVictim(excluding id: PackageID) -> PackageID? {
-        // A package with an OPEN LIVE SESSION is not idle either, even though no run is in
-        // flight between buffers — evicting it would unload the model out from under a
-        // microphone. The governor may still take it, but only through `liveVictimToken`,
-        // where the loss is deliberate and surfaces as `livePreempted`.
-        let running = Set(activeRuns.values.map(\.id)).union(liveSessions.values.map(\.id))
-        return residents.keys
-            .filter { $0 != id && !running.contains($0) }
-            .min(by: { (lastUsed[$0] ?? 0) < (lastUsed[$1] ?? 0) })
-    }
-
-    /// The in-flight run whose eviction the governor should consider next: backs a resident
-    /// package other than the contender's, lowest reported progress first (an unreported run
-    /// reads as fraction 0 — nothing measurable to preserve).
-    private func activeVictimToken(excluding id: PackageID) -> UInt64? {
-        activeRuns
-            .filter { $0.value.id != id && residents[$0.value.id] != nil }
-            .min(by: { progressFraction($0.value) < progressFraction($1.value) })?
-            .key
     }
 
     /// The V2 progress signal as a fraction: `step/totalSteps` of the run's latest report,
@@ -2955,17 +2946,16 @@ public actor MLXServeEngine {
         return Double(step) / Double(total)
     }
 
-    /// Last-resort reclaim of a running victim's residency. `.preempting` cancels it first —
-    /// marking the handle so the victim's own `run()` recognizes the engine's doing and
-    /// requeues — unless its progress reads at/past the nearly-done threshold, where waiting
-    /// preserves the work. `.waiting` never cancels. Either way the run ends before its weights
-    /// are evicted. The handle stays in `activeRuns` (the victim's catch path still reads its
+    /// Last-resort reclaim of a running victim's residency. `cancel` (the policy's `.preempt`)
+    /// cancels it first — marking the handle so the victim's own `run()` recognizes the engine's
+    /// doing and requeues; the policy awaits instead (`.awaitRun`) when the conduct is `.waiting`
+    /// or the run's progress reads at/past the nearly-done threshold, where waiting preserves the
+    /// work. Either way the run ends before its weights are evicted. The handle stays in `activeRuns` (the victim's catch path still reads its
     /// `preempted` marker; the victim's own `runAttempt` defer removes it) — eviction makes the
     /// package non-resident, which is what disqualifies it from being picked again.
-    private func reclaimActiveRun(_ token: UInt64, conduct: AdmissionConduct) async {
+    private func reclaimActiveRun(_ token: UInt64, cancel: Bool) async {
         guard let run = activeRuns[token] else { return }
-        if conduct == .preempting,
-           progressFraction(run) < preemption.preserveNearlyDoneFraction {
+        if cancel {
             activeRuns[token]?.preempted = true
             run.task.cancel()
         }
@@ -3304,4 +3294,16 @@ public actor MLXServeEngine {
     /// `wiredLimitCeilingBytes` is what it resolved to on this device in this process — nil
     /// when `.disabled` or when the process can't initialize MLX's Metal device).
     public nonisolated var wiredLimitConfiguration: WiredLimitConfiguration { wiredLimit }
+}
+
+extension EngineError {
+    /// The engine's error for a refusal by the admission policy (1.58.0).
+    init(_ refusal: AdmissionRefusal) {
+        switch refusal {
+        case .exceedsBudget(let required, let budget):
+            self = .exceedsMemoryBudget(required: required, budget: budget)
+        case .externalTenantsHoldMemory(let required, let external, let budget):
+            self = .externalTenantsHoldMemory(required: required, external: external, budget: budget)
+        }
+    }
 }
