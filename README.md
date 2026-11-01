@@ -2,7 +2,7 @@
 
 > ## Status — usable, evolving
 >
-> MLXEngine is **published and consumable**: tagged **v0.73.0** (capability contract **1.58.0**),
+> MLXEngine is **published and consumable**: tagged **v0.73.1** (capability contract **1.58.0**),
 > and already serving **65 published model packages** (86 tracked, incl. WIP + research — see
 > [the model registry](docs/model-registry.md)) that back **all 37 of the contract's capabilities**
 > save the newest, **music (lyrics-to-song)**, whose first three packages are in flight —
