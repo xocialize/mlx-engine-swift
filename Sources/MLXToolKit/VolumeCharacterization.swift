@@ -18,8 +18,10 @@ public struct VolumeCharacterization: Sendable, Equatable {
     public let isRemovable: Bool?
     /// Free capacity for important usage, when determinable.
     public let freeBytes: UInt64?
-    /// Measured sustained sequential read over a real weight file, page cache bypassed
-    /// (`F_NOCACHE`). `nil` when no suitable file was available to probe.
+    /// Measured sustained sequential read over a real weight file, read from a window whose
+    /// pages were not in the page cache (chosen by residency, evicted first when every window
+    /// was warm) with `F_NOCACHE`. `nil` when no suitable file was available to probe, or when
+    /// no window could be read uncached — a speed read from memory would pass any floor.
     public let sustainedReadBytesPerSecond: UInt64?
     /// The file the measurement read, for the receipt trail.
     public let probedFile: String?
@@ -66,8 +68,9 @@ public struct StorageAdvisory: Sendable, Equatable {
         /// MEASURED volume speed. Informational always — slowness is not a crash. The engine
         /// deliberately applies no threshold: it computes, the app decides what is worth showing.
         case projectedIO
-        /// A crash floor is declared but nothing was probeable — UNVERIFIABLE, surfaced so the
-        /// caller knows the floor was not checked (never treated as passed).
+        /// A crash floor is declared but nothing was probeable, or nothing could be read
+        /// uncached — UNVERIFIABLE, surfaced so the caller knows the floor was not checked
+        /// (never treated as passed).
         case floorUnverifiable
     }
 

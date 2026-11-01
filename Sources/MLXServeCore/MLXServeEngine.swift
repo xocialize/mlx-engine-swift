@@ -2639,6 +2639,18 @@ public actor MLXServeEngine {
                         } else {
                             print("[MLXServeEngine] ⚠️ storage floor (override active): \(msg)")
                         }
+                    } else if let floor, measured == nil {
+                        // The probe found weights but could not read a cold window of them (the
+                        // page cache would not let go, AB-A-0242): a speed from memory would have
+                        // passed any floor, so there is no speed — and no speed is unverifiable.
+                        let msg = "a storage floor of \(floor) B/s is declared but the weights "
+                            + "volume \(characterization.volumePath) could not be measured "
+                            + "uncached — the floor is UNVERIFIABLE for this prepare "
+                            + "(proceeding; unverifiable is never treated as passed)."
+                        storageAdvisories[pkg, default: []].append(StorageAdvisory(
+                            package: pkg, kind: .floorUnverifiable, message: msg,
+                            requiredBytesPerSecond: floor))
+                        print("[MLXServeEngine] ⚠️ \(pkg): \(msg)")
                     }
                 } else if let floor {
                     let msg = "a storage floor of \(floor) B/s is declared but no probeable "
