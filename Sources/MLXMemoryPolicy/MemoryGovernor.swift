@@ -53,7 +53,7 @@ public struct MemoryGovernor: Sendable {
     }
 
     /// Fully config-aware footprint. Resolution order: an explicit `hint` (from a `FootprintConfigured`
-    /// config — the measured max-phase bytes for the selected variant) wins over the `quant`-keyed
+    /// config — the selected variant's persistent bytes, see `footprintSplit`) wins over the `quant`-keyed
     /// `QuantFootprint` match, which wins over the largest-that-fits survey. The `hint` resolves the
     /// same-quant multi-mode case (e.g. BiRefNet `fast` vs `best`, both fp16) that `quant` alone can't
     /// express. Every fallback is safe — it never under-reserves a single-footprint manifest.

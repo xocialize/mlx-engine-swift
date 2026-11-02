@@ -23,12 +23,19 @@ public protocol QuantConfigured {
 /// the affordable tier the expensive tier's bytes and make it inadmissible on small machines.
 ///
 /// `residentBytesHint` lets the config declare the **selected** configuration's resident bytes
-/// directly. The value is the **max-over-phase** working set for that variant
-/// (`max(encode, dit+activation, decode-transient)` — NOT the sum of phases; per-phase eviction means
-/// only one phase is resident at peak), measured with the in-app footprint probe. It takes precedence
-/// over the `QuantConfigured` quant match at registration; `nil` falls through to the quant /
-/// largest-that-fits resolution, so adopting the protocol is safe even for variants with no special
-/// hint. Detected by `as?` at registration, mirroring the `QuantConfigured` / `ModelStorable` opt-ins.
+/// directly: the PERSISTENT half of the split the governor charges (`MemoryGovernor.footprintSplit`),
+/// i.e. what stays resident between runs, measured as phys_footprint after prepare. It pairs with
+/// `peakActivationBytesHint`, the transient on top: the selected variant's measured peak minus this
+/// floor (max-over-phase, not the sum — per-phase eviction means only one phase is resident at peak).
+/// A lane that loads a stage per run and frees it (a staged conditioner, an evicted DiT) declares a
+/// small floor and puts the staged weights in the transient (AB-A-0246; Boogu and Ming-Image declare
+/// their QuantFootprints the same way), so it co-resides while idle and its stage weights become the
+/// one serialized transient reserve while it runs. Before 1.14.0 there was no split and this hint was
+/// the whole max-over-phase working set; a conformer that declares only this hint and no transient
+/// still gets the quant-matched `peakActivationBytes`. It takes precedence over the `QuantConfigured`
+/// quant match at registration; `nil` falls through to the quant / largest-that-fits resolution, so
+/// adopting the protocol is safe even for variants with no special hint. Detected by `as?` at
+/// registration, mirroring the `QuantConfigured` / `ModelStorable` opt-ins.
 public protocol FootprintConfigured {
     var residentBytesHint: UInt64? { get }
     /// Expected weight bytes read from disk per run for the SELECTED lane (1.35.0, additive;
