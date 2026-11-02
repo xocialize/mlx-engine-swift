@@ -241,6 +241,63 @@ private final class UndeclaredEditPackage: ModelPackage {
     }
 }
 
+/// The AuK shape (contract 1.59.0): no transcript, a length, trained grids. Answers with the length it
+/// was asked for in the transcript slot, so a test sees `targetDuration` arrive.
+@InferenceActor
+private final class AuKEditPackage: ModelPackage {
+    typealias Configuration = StandardConfiguration
+    nonisolated static var manifest: PackageManifest {
+        controlsManifest(surfaces: [SpeechEditContract.descriptor(
+            name: "auk", summary: "m",
+            controls: SpeechEditControls(operations: [.replaceWords, .speed, .volume],
+                                         speedFactors: [0.5, 0.75, 1.25, 1.5, 2.0],
+                                         volumeDecibels: [-15, -10, -5, 5, 10, 15],
+                                         transcript: .unused, supportsTargetDuration: true))])
+    }
+    nonisolated init(configuration: StandardConfiguration) {}
+    func load() async throws {}
+    func unload() async {}
+    func run(_ request: any CapabilityRequest) async throws -> any CapabilityResponse {
+        guard let edit = request as? SpeechEditRequest else {
+            throw PackageError.unsupportedCapability(request.capability)
+        }
+        return SpeechEditResponse(audio: Audio(format: .wav, data: Data(count: 44)),
+                                  transcript: edit.targetDuration.map { "\($0)" } ?? "")
+    }
+}
+
+/// An audioSeparation surface that keeps the n-th speaker (contract 1.59.0).
+@InferenceActor
+private final class SpeakerPickPackage: ModelPackage {
+    typealias Configuration = StandardConfiguration
+    nonisolated static var manifest: PackageManifest {
+        controlsManifest(surfaces: [AudioSeparationContract.descriptor(
+            name: "pick", summary: "m",
+            controls: AudioSeparationControls(stems: [.speaker], speakerSelection: [.ordinal]))])
+    }
+    nonisolated init(configuration: StandardConfiguration) {}
+    func load() async throws {}
+    func unload() async {}
+    func run(_ request: any CapabilityRequest) async throws -> any CapabilityResponse {
+        AudioSeparationResponse(stems: [.speaker: Audio(format: .wav, data: Data(count: 44))])
+    }
+}
+
+/// A pre-1.59 separator: stems only, no declaration.
+@InferenceActor
+private final class StemOnlyPackage: ModelPackage {
+    typealias Configuration = StandardConfiguration
+    nonisolated static var manifest: PackageManifest {
+        controlsManifest(surfaces: [AudioSeparationContract.descriptor(name: "stems", summary: "m")])
+    }
+    nonisolated init(configuration: StandardConfiguration) {}
+    func load() async throws {}
+    func unload() async {}
+    func run(_ request: any CapabilityRequest) async throws -> any CapabilityResponse {
+        AudioSeparationResponse(stems: [.vocals: Audio(format: .wav, data: Data(count: 44))])
+    }
+}
+
 /// A layerDecompose package (contract 1.48.0): returns one layer per requested count, front-most
 /// first, tagged by index so the order can be checked end to end.
 @InferenceActor
@@ -599,6 +656,79 @@ private let take = Audio(format: .wav, data: Data(count: 44))
         Issue.record("expected unsupportedRequestFeature")
     } catch {
         #expect(unsupportedFeature(error)?.contains("speechEditControls") == true)
+    }
+}
+
+// MARK: - speechEdit, the AuK kinds (contract 1.59.0, AB-A-0188)
+
+// A transcript-free content edit with a length reaches the package intact.
+@Test func anAuKContentEditRoutesWithoutATranscript() async throws {
+    let engine = MLXServeEngine()
+    try await engine.register(PackageRegistration.of(AuKEditPackage.self), configuration: mockConfig())
+    let response = try await engine.run(SpeechEditRequest(
+        audio: take, edit: .replaceWords(original: "rain", new: "sun"), targetDuration: 4.5))
+    #expect((response as? SpeechEditResponse)?.transcript == "4.5")
+    _ = try await engine.run(SpeechEditRequest(audio: take, edit: .speed(factor: 0.75)))
+}
+
+// Off the trained grid never reaches the weights.
+@Test func anOffGridSpeedEditIsRefusedBeforeTheRun() async throws {
+    let engine = MLXServeEngine()
+    try await engine.register(PackageRegistration.of(AuKEditPackage.self), configuration: mockConfig())
+    do {
+        _ = try await engine.run(SpeechEditRequest(audio: take, edit: .speed(factor: 1.1)))
+        Issue.record("expected unsupportedRequestFeature")
+    } catch {
+        #expect(unsupportedFeature(error)?.contains("speedFactors") == true)
+        #expect(unsupportedFeature(error)?.contains("[") == true)
+    }
+}
+
+// Step-Audio-EditX needs the words and takes no length; both are refused, not ignored.
+@Test func aTranscriptOrLengthTheSurfaceCannotUseIsRefused() async throws {
+    let engine = MLXServeEngine()
+    try await engine.register(PackageRegistration.of(SpeechEditPackage.self),
+                              configuration: mockConfig())
+    do {
+        _ = try await engine.run(SpeechEditRequest(audio: take, edit: .denoise))
+        Issue.record("expected unsupportedRequestFeature")
+    } catch {
+        #expect(unsupportedFeature(error)?.contains("transcript") == true)
+    }
+    do {
+        _ = try await engine.run(SpeechEditRequest(audio: take, transcript: "t", edit: .denoise,
+                                                   targetDuration: 3))
+        Issue.record("expected unsupportedRequestFeature")
+    } catch {
+        #expect(unsupportedFeature(error)?.contains("supportsTargetDuration") == true)
+    }
+}
+
+// MARK: - audioSeparation speaker picks (contract 1.59.0)
+
+@Test func aDeclaredSpeakerPickRoutes() async throws {
+    let engine = MLXServeEngine()
+    try await engine.register(PackageRegistration.of(SpeakerPickPackage.self), configuration: mockConfig())
+    let response = try await engine.run(AudioSeparationRequest(audio: take, speaker: .ordinal(1)))
+    #expect((response as? AudioSeparationResponse)?[.speaker] != nil)
+    do {
+        _ = try await engine.run(AudioSeparationRequest(audio: take, speaker: .saying("hello")))
+        Issue.record("expected unsupportedRequestFeature")
+    } catch {
+        #expect(unsupportedFeature(error)?.contains("saying") == true)
+    }
+}
+
+// A separator from before 1.59.0 still separates by stem, and refuses a pick it would ignore.
+@Test func anUndeclaredSeparatorRefusesASpeakerPick() async throws {
+    let engine = MLXServeEngine()
+    try await engine.register(PackageRegistration.of(StemOnlyPackage.self), configuration: mockConfig())
+    _ = try await engine.run(AudioSeparationRequest(audio: take, stems: [.vocals]))
+    do {
+        _ = try await engine.run(AudioSeparationRequest(audio: take, speaker: .ordinal(1)))
+        Issue.record("expected unsupportedRequestFeature")
+    } catch {
+        #expect(unsupportedFeature(error)?.contains("audioSeparationControls") == true)
     }
 }
 

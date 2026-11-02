@@ -2341,21 +2341,32 @@ public actor MLXServeEngine {
                     + "supportsTransparentBackground, or generate opaque and matte the result")
         }
 
-        // speechEdit (contract 1.50.0, AB-A-0137): every edit is declaration-gated — the operation,
-        // and for emotion / style the label too when the surface declares a vocabulary. The check
-        // runs here, before a multi-GB load, rather than inside the package after it.
+        // speechEdit (contract 1.50.0, AB-A-0137; 1.59.0, AB-A-0188): every edit is declaration-gated —
+        // the operation, a label or grid step outside a declared set, an empty transcript a surface
+        // requires, a length it does not take. The check runs here, before a multi-GB load, rather than
+        // inside the package after it; the rule lives in MLXToolKit so a directly driven package
+        // refuses identically.
         if let speech = request as? SpeechEditRequest {
-            let kind = speech.edit.kind
-            guard let declared = surface.speechEditControls, declared.operations.contains(kind) else {
+            guard let declared = surface.speechEditControls else {
                 throw PackageError.unsupportedRequestFeature(
-                    "edit(.\(kind.rawValue)) — \(id) declares no such speech edit "
+                    "edit(.\(speech.edit.kind.rawValue)) — \(id) declares no such speech edit "
                         + "(ToolDescriptor.speechEditControls)")
             }
-            let vocabulary = declared.vocabulary(for: kind)
-            if let label = speech.edit.label, !vocabulary.isEmpty, !vocabulary.contains(label) {
+            if let reason = declared.refusal(for: speech) {
+                throw PackageError.unsupportedRequestFeature("\(reason) [\(id)]")
+            }
+        }
+
+        // audioSeparation speaker picks (contract 1.59.0, AB-A-0188): declaration-gated, because a
+        // separator that ignored the pick returns every voice — the wrong stem, under the right name.
+        if let separation = request as? AudioSeparationRequest, let speaker = separation.speaker {
+            guard let declared = surface.audioSeparationControls else {
                 throw PackageError.unsupportedRequestFeature(
-                    "edit(.\(kind.rawValue)(\"\(label)\")) — not one of the \(kind.rawValue) labels "
-                        + "\(id) declares (SpeechEditControls)")
+                    "speaker(.\(speaker.kind.rawValue)) — \(id) declares no speaker selection "
+                        + "(ToolDescriptor.audioSeparationControls)")
+            }
+            if let reason = declared.refusal(for: separation) {
+                throw PackageError.unsupportedRequestFeature("\(reason) [\(id)]")
             }
         }
 

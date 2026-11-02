@@ -2,11 +2,11 @@
 
 > ## Status — usable, evolving
 >
-> MLXEngine is **published and consumable**: tagged **v0.73.1** (capability contract **1.58.0**),
+> MLXEngine is **published and consumable**: tagged **v0.74.0** (capability contract **1.59.0**),
 > and already serving **65 published model packages** (86 tracked, incl. WIP + research — see
 > [the model registry](docs/model-registry.md)) that back **all 37 of the contract's capabilities**
 > save the newest, **music (lyrics-to-song)**, whose first three packages are in flight —
-> LLM (with **image input** on vision-language packages), TTS (incl. **two-speaker scenes**), **speech editing**,
+> LLM (with **image input** on vision-language packages), TTS (incl. **two-speaker scenes**), **speech editing** (incl. **content, speed, pitch and timbre edits**),
 > **speech-to-text** (one-shot and **live**), text→image (with **native alpha**) /
 > text→video (image-, reference- and **audio-conditioned**, + image/video editing, with
 > **typed, engine-fetched adapters (LoRA)**), **layer

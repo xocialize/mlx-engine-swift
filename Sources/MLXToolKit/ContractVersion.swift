@@ -1414,5 +1414,42 @@ public enum ContractVersion {
     //     (`makeHeadroom`, the external claim, R-MEM-1): no behavior change in-process. Two tie-breaks
     //     that were dictionary order are now deterministic (equal last-use: package id order; equal
     //     run progress: the older run token).
-    public static let current = SemanticVersion(major: 1, minor: 58, patch: 0)
+    // 1.59.0 (2026-11-01, additive): THE AuK EDIT KINDS ON speechEdit + SPEAKER PICKS ON
+    //   audioSeparation, closing AB-A-0188 (mlx-audio, E18 / AB-T-0325 / AB-D-0153). AuK / AuK-Flash
+    //   (`mlx-auk-swift`) edits what 1.50.0 left out because Step-Audio-EditX could not: content and
+    //   speed (SpeechEditBench content 91.8 vs EditX 16.5, prosody 71.3 vs 20.1).
+    //   • `SpeechEditOperation` + `SpeechEditControls.Operation` gain eleven kinds: `.replaceWords(
+    //     original:new:)`, `.insertWords(text:anchor:before:)`, `.removeWords(text:anchor:before:)`;
+    //     `.speed(factor:)`, `.pitch(semitones:)`, `.volume(dB:)`; `.timbre(description:)`, `.deAccent`,
+    //     `.dereverberate`; `.addNonverbal(sound:atEnd:)` and `.removeNonverbal(sound:)` (nil = every
+    //     sound) — AuK adds only at the take's start or end, so `.paralinguistic(targetTranscript:)`
+    //     does not carry it. Whisper ↔ normal stays `.style("whisper")` / `.style("normal")`.
+    //     `SpeechEditOperation.changesLength` names the edits a length is for; `label` now also
+    //     carries a nonverbal sound.
+    //   • `SpeechEditControls` gains `nonverbalSounds` (closed when non-empty, the emotion rule), the
+    //     numeric grids `speedFactors` / `pitchSemitones` / `volumeDecibels` (non-empty = the only
+    //     values admitted: AuK's trained 0.5–2.0x, ±1…3 st, ±5/10/15 dB), `transcript: TranscriptUse`
+    //     (`required` — the default and every pre-1.59 declaration — / `optional` / `unused`), and
+    //     `supportsTargetDuration`. A custom decoder defaults each, so pre-1.59 descriptor JSON decodes
+    //     unchanged.
+    //   • `SpeechEditRequest.targetDuration: TimeInterval?` (the `TTSRequest` field), and the
+    //     transcript MAY be empty: the property stays `String` (no reader breaks), the init defaults
+    //     it to "", and the decoder accepts a missing key. An empty one is admitted only where the
+    //     surface declares `.optional` / `.unused`. The descriptor marks `transcript` required only
+    //     for `.required`, and advertises `targetDuration` only when declared.
+    //   • The checks move into MLXToolKit as `SpeechEditControls.refusal(for:)` (the 1.56.0
+    //     `MusicControls` pattern); the engine throws its reason, suffixed `[package-id]`, before
+    //     admission. New refusals: an off-grid factor / step, a whitespace-only transcript on a
+    //     `required` surface (it was documented required; EditX would condition on nothing), a
+    //     `targetDuration` on an undeclared surface or ≤ 0.
+    //   • audioSeparation: `Stem.singing` / `.voices` / `.speaker`; `AudioSeparationRequest.speaker:
+    //     SpeakerSelection?` (`.ordinal(Int)` from 1, `.saying(String)`), the kept voice returned as
+    //     `.speaker`; `AudioSeparationControls {stems, speakerSelection}` as
+    //     `SurfaceControls.audioSeparation`, read via `audioSeparationControls`, OPTIONAL (a separator
+    //     without one runs exactly as before). Engine-enforced: a speaker pick to a surface that does
+    //     not declare its kind is refused before admission — an ignored pick returns every voice.
+    //   Additive: new enum cases, new defaulted members and init arguments, one `SurfaceControls` case.
+    //     ⚠️ Exhaustive switches over `SpeechEditOperation`, `SpeechEditControls.Operation` or
+    //     `SurfaceControls` need the new cases (the 1.53.0 / 1.56.0 note).
+    public static let current = SemanticVersion(major: 1, minor: 59, patch: 0)
 }
