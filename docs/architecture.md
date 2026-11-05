@@ -275,6 +275,38 @@ This is the repo's one runtime dependency (`mlx-swift`, scoped to `MLXServeCore`
 only, still no inference math in the engine). `MLXToolKit` stays dependency-free, so packages'
 offline contract builds are unaffected.
 
+#### Where mlx-swift comes from: the leak-fix floor (v0.74.1, AB-A-0249)
+
+Decision: AB-D-0208.
+
+- **The leak.** mlx-swift ≤ 0.32.3's `MLXArray._updateInternal` assigns over the old array
+  (`mlx_array_set`, a C++ copy assignment), which skips `~array()` and the sibling-cycle break only
+  the destructor does. `Module.update(parameters:)` goes through it, and a freshly built
+  `QuantizedLinear`'s weight/scales/biases are unevaluated siblings of one `quantized(...)`, so
+  every quantized load leaks 4 scalar Metal buffers per quantized layer. Load-once packages never
+  notice; LTX 2.5 reloads its Gemma 4 encoder per run and hit MLX's 499,000-buffer limit after ~379
+  runs (AB-T-0429, AB-L-0330). Watch `GPUPoolSnapshot.active` between runs to see it.
+- **The fix** is upstream ml-explore/mlx-swift#501, shipped in **0.33.0**. The fleet can't take
+  0.33 yet: mlx-swift-lm 3.32.3 (its newest release) and ltx-2-mlx-swift cap mlx-swift < 0.33.0.
+- **So from v0.74.1 the engine depends on `https://github.com/xocialize/mlx-swift` `from: "0.32.4"`.**
+  That fork's `0.32.4` tag is upstream 0.32.3 plus #501's commit and nothing else. Every version
+  the range admits carries the fix: the fork's 0.32.4, or upstream ≥ 0.33.0.
+- **Same identity, two URLs.** Both URLs are package identity `mlx-swift`, so a graph holds one.
+  A **root** package's declaration always wins. Between transitive declarations SwiftPM keeps
+  whichever it meets last, silently, so don't count on the engine's URL winning.
+- **What a consumer does:**
+  - **Need the fix guaranteed** (anything that reloads a quantized model in one process): require
+    `mlx-engine-swift` `from: "0.74.1"`. If the graph caps mlx-swift < 0.33 (mlx-swift-lm 3.32.x,
+    ltx-2-mlx-swift), also declare
+    `.package(url: "https://github.com/xocialize/mlx-swift", from: "0.32.4")` at the root, in place
+    of any root `ml-explore/mlx-swift` line. A root `ml-explore/mlx-swift` line plus a < 0.33 cap
+    is unsatisfiable with ≥ 0.74.1, and the resolver says so.
+  - **On upstream 0.33+ already:** keep a root `ml-explore/mlx-swift` `from: "0.33.0"`. It wins,
+    and it satisfies the floor.
+  - **No action:** a graph that can satisfy neither just resolves v0.74.0 or older, as before.
+- **Retiring it.** When mlx-swift-lm releases on 0.33, the engine returns to ml-explore's URL with
+  `from: "0.33.0"`, and consumers drop their root fork line.
+
 ### R-NUM-1 — fp32 numerics: MLX's TF32 default is left on (AB-A-0118, decided 2026-10-07)
 
 - **What MLX does.** `MLX_ENABLE_TF32` defaults to 1 and is read once, at first use (a static in
