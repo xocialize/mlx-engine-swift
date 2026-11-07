@@ -157,21 +157,26 @@ public enum WeightSourceProbe {
     /// signal we want (a broken link still reads as present; content is the hub client's problem).
     static func relativeFiles(in root: URL) -> [String] {
         let fm = FileManager.default
-        guard let walker = fm.enumerator(at: root,
-                                         includingPropertiesForKeys: [.isRegularFileKey],
-                                         options: [.skipsHiddenFiles])
-        else { return [] }
-        let prefix = root.standardizedFileURL.path.hasSuffix("/")
-            ? root.standardizedFileURL.path
-            : root.standardizedFileURL.path + "/"
+        // Enumerate by path and take the walker's own relative paths, so the result never depends
+        // on the root's spelling matching the on-disk spelling (a case-insensitive volume handed
+        // `/Volumes/X/models` for a folder on disk as `/Volumes/X/Models`, AB-A-0220) or on a
+        // symlinked root (`/var` vs `/private/var`). The root itself is resolved so a symlinked
+        // repo folder is walked rather than read as an empty file.
+        let resolved = root.resolvingSymlinksInPath().path
+        guard let walker = fm.enumerator(atPath: resolved) else { return [] }
         var out: [String] = []
-        for case let url as URL in walker {
-            // A symlink to a blob reports isRegularFile == false, so accept anything that isn't a
-            // directory rather than requiring a regular file.
-            let isDirectory = (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
-            if isDirectory { continue }
-            let path = url.standardizedFileURL.path
-            out.append(path.hasPrefix(prefix) ? String(path.dropFirst(prefix.count)) : path)
+        for case let relative as String in walker {
+            // `.skipsHiddenFiles`: drop (and do not descend into) anything with a dot-prefixed component.
+            if relative.split(separator: "/").contains(where: { $0.hasPrefix(".") }) {
+                if (walker.fileAttributes?[.type] as? FileAttributeType) == .typeDirectory {
+                    walker.skipDescendants()
+                }
+                continue
+            }
+            // A symlink to a blob is `.typeSymbolicLink` here (lstat), so it counts as a file; only a
+            // real directory is skipped. A broken link still reads as present.
+            if (walker.fileAttributes?[.type] as? FileAttributeType) == .typeDirectory { continue }
+            out.append(relative)
         }
         return out
     }

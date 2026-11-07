@@ -47,6 +47,18 @@ private struct Hinted: PackageConfiguration, QuantConfigured, FootprintConfigure
 
 private struct Plain: PackageConfiguration {}
 
+/// NAFNet's shape (AB-A-0216): conforms to BOTH, and a variant declares only bundled sources.
+private struct BothBundledOnly: PackageConfiguration, WeightSourcing, BundledWeightSourcing {
+    var weightSources: [WeightSource] { [] }
+    var bundledWeightSources: [BundledWeightSource] {
+        [BundledWeightSource(role: "checkpoint", url: URL(fileURLWithPath: "/tmp/x.safetensors"))]
+    }
+}
+private struct BothNetworkSources: PackageConfiguration, WeightSourcing, BundledWeightSourcing {
+    var weightSources: [WeightSource] { [WeightSource(role: "main", repo: "a/b")] }
+    var bundledWeightSources: [BundledWeightSource] { [] }
+}
+
 private struct Bundled: PackageConfiguration, BundledWeightSourcing {
     var bundledWeightSources: [BundledWeightSource] { [] }
 }
@@ -95,6 +107,11 @@ final class ResolvedLaneTests: XCTestCase {
         XCTAssertEqual(manifest.requirements.chosenFootprint(quant: nil, budgetBytes: 1)?.quant, .int4,
                        "nothing fits: the smallest")
         XCTAssertEqual(ResolvedLane(manifest: manifest, configuration: Bundled()).materialization, .bundled)
+    }
+
+    func testADualConformingConfigurationWithOnlyBundledSourcesResolvesBundled() {
+        XCTAssertEqual(ResolvedLane(manifest: manifest, configuration: BothBundledOnly()).materialization, .bundled)
+        XCTAssertEqual(ResolvedLane(manifest: manifest, configuration: BothNetworkSources()).materialization, .engine)
     }
 
     func testRoundTripsThroughJSON() throws {

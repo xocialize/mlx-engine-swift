@@ -203,6 +203,37 @@ final class WeightSourceProbeTests: XCTestCase {
         XCTAssertEqual(config.missingWeightSources(storeRoot: root).map(\.role), ["main"])
     }
 
+    /// AB-A-0220: a store root spelled in a different case from the folder on disk (APFS is
+    /// case-insensitive) must not turn a complete snapshot into a missing one.
+    func testFlatDirectoryIgnoresTheSpellingCaseOfTheRoot() throws {
+        let dir = root.appending(path: "Case-Mixed", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try Data("x".utf8).write(to: dir.appending(path: "model.safetensors"))
+        let flipped = root.appending(path: "case-mixed", directoryHint: .isDirectory)
+        // Only meaningful on a case-insensitive volume; on a case-sensitive one `flipped` does not exist.
+        guard FileManager.default.fileExists(atPath: flipped.path) else { return }
+        XCTAssertTrue(WeightSourceProbe.flatDirectory(flipped, satisfies: ["*.safetensors"]))
+        XCTAssertTrue(WeightSourceProbe.flatDirectory(dir, satisfies: ["*.safetensors"]))
+    }
+
+    /// A repo folder that is a symlink to the real snapshot still satisfies the probe.
+    func testFlatDirectoryFollowsASymlinkedRoot() throws {
+        let real = root.appending(path: "real", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: real, withIntermediateDirectories: true)
+        try Data("x".utf8).write(to: real.appending(path: "model.safetensors"))
+        let link = root.appending(path: "link", directoryHint: .isDirectory)
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: real)
+        XCTAssertTrue(WeightSourceProbe.flatDirectory(link, satisfies: ["*.safetensors"]))
+    }
+
+    /// Hidden entries are skipped, as before.
+    func testHiddenFilesDoNotSatisfyTheProbe() throws {
+        let dir = root.appending(path: "hidden", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try Data("x".utf8).write(to: dir.appending(path: ".model.safetensors"))
+        XCTAssertFalse(WeightSourceProbe.flatDirectory(dir, satisfies: ["*.safetensors"]))
+    }
+
     // MARK: - Fixtures
 
     /// A minimal `WeightSourcing` configuration that takes the MS-2 default probe.

@@ -46,8 +46,11 @@ enum WeightPrewarmer {
             }
             onProgress?(1.0)
             let secs = Date().timeIntervalSince(start)
-            print(String(format: "[Prewarm] %@: paged %d file(s) / %.1f GB into cache in %.1fs",
-                         label, files.count, Double(done) / 1_000_000_000, secs))
+            // stderr, never stdout: a host that speaks a protocol on stdout (a Gaea plugin worker)
+            // must not find a log line in the middle of it (AB-A-0216).
+            FileHandle.standardError.write(Data(String(format:
+                "[Prewarm] %@: paged %d file(s) / %.1f GB into cache in %.1fs\n",
+                label, files.count, Double(done) / 1_000_000_000, secs).utf8))
         }.value
     }
 

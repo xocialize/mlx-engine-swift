@@ -125,7 +125,8 @@ public struct ResolvedLane: Sendable, Codable, Equatable {
         let materialization: Materialization
         let sources = (configuration as? WeightSourcing)?.weightSources ?? []
         let selfMaterializing = configuration is SelfMaterializing
-        if configuration is WeightSourcing {
+        let bundled = (configuration as? BundledWeightSourcing)?.bundledWeightSources ?? []
+        if configuration is WeightSourcing, !(sources.isEmpty && !bundled.isEmpty && !selfMaterializing) {
             materialization = selfMaterializing ? .package : .engine
         } else if configuration is BundledWeightSourcing {
             materialization = .bundled
