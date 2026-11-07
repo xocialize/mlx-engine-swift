@@ -176,6 +176,12 @@ public enum SurfaceControls: Sendable, Codable, Equatable {
     /// The stems an audio-separation surface produces and the speaker picks it honors (contract 1.59.0,
     /// AB-A-0188). Optional.
     case audioSeparation(AudioSeparationControls)
+    /// Retake and extend on a video-edit surface (contract 1.61.0, AB-A-0236). Optional.
+    case videoEdit(VEditControls)
+    /// The content kinds a video upscaler is told apart by (contract 1.61.0). Optional.
+    case videoUpscale(VideoUpscaleControls)
+    /// A target frame rate on a frame-interpolation surface (contract 1.61.0). Optional.
+    case frameInterpolate(FrameInterpolateControls)
 }
 
 /// Self-description a package publishes so the registry — and any out-of-process tool client, such
@@ -211,7 +217,8 @@ public struct ToolDescriptor: Sendable, Codable, Equatable {
     /// surface declares none, which is every pre-1.38 conformer. Read it through the
     /// `ttsControls` / `sttControls` / `t2vControls` / `t2iControls` / `speechEditControls`
     /// accessors below (and, since 1.54.0, `llmControls`; since 1.56.0, `musicControls`; since 1.59.0,
-    /// `audioSeparationControls`).
+    /// `audioSeparationControls`; since 1.61.0, `videoEditControls` / `videoUpscaleControls` /
+    /// `frameInterpolateControls`).
     public let controls: SurfaceControls?
     /// The raw `Image` formats this surface reads AND returns in kind, beyond the png/jpeg every image
     /// surface takes (contract 1.52.0, additive). A descriptor-level member, like `quantFloor`, because
@@ -352,6 +359,25 @@ extension ToolDescriptor {
         return nil
     }
 
+    /// The `videoEdit` control declaration, or nil when this surface declares none (contract 1.61.0). A
+    /// `VEditRequest.retake` / `.extend` is admitted only for what it lists (`VEditControls.refusal(for:)`).
+    public var videoEditControls: VEditControls? {
+        if case .videoEdit(let declared) = controls { return declared }
+        return nil
+    }
+
+    /// The `videoUpscale` control declaration, or nil when this surface declares none (contract 1.61.0).
+    public var videoUpscaleControls: VideoUpscaleControls? {
+        if case .videoUpscale(let declared) = controls { return declared }
+        return nil
+    }
+
+    /// The `frameInterpolate` control declaration, or nil when this surface declares none (contract 1.61.0).
+    public var frameInterpolateControls: FrameInterpolateControls? {
+        if case .frameInterpolate(let declared) = controls { return declared }
+        return nil
+    }
+
     /// Whether a declared controls block matches this surface's capability. `false` is a package
     /// bug: the block would describe a surface the descriptor does not name.
     public var controlsMatchCapability: Bool {
@@ -365,6 +391,9 @@ extension ToolDescriptor {
         case .llm: return capability == .llm
         case .music: return capability == .music
         case .audioSeparation: return capability == .audioSeparation
+        case .videoEdit: return capability == .videoEdit
+        case .videoUpscale: return capability == .videoUpscale
+        case .frameInterpolate: return capability == .frameInterpolate
         }
     }
 }

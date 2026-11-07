@@ -82,6 +82,33 @@ public struct RunPhaseReport: Sendable, Equatable, Codable {
     }
 }
 
+/// A finished or decoded frame a running package hands to its caller before the run ends — the
+/// preview a Media Engine `job.preview` still is (contract 1.61.0, AB-A-0236; MES Base §11, Video
+/// §1.14). A per-frame package (upscale, interpolate) reports each finished frame; a staged one (LTX)
+/// reports a decoded stage-one frame while stage two still denoises. A preview is a PROGRESS signal,
+/// never the result: its size and quality are the package's (a stage-one frame is half resolution),
+/// and nothing about it is promised to appear in the final clip.
+public struct RunPreviewFrame: Sendable, Equatable, Codable {
+    /// The frame, in a canonical `Image` format (png / jpeg unless the package says otherwise).
+    public var image: Image
+    /// Where the frame sits in the OUTPUT clip, in seconds from its first frame (MES `at_s`).
+    public var atSeconds: Double
+    /// The frame's 0-based index in the output when the package knows it.
+    public var frameIndex: Int?
+    /// The stage that produced it, with the same 1-based convention as `RunPhaseReport.stage`.
+    public var stage: Int?
+    public var totalStages: Int?
+
+    public init(image: Image, atSeconds: Double, frameIndex: Int? = nil,
+                stage: Int? = nil, totalStages: Int? = nil) {
+        self.image = image
+        self.atSeconds = atSeconds
+        self.frameIndex = frameIndex
+        self.stage = stage
+        self.totalStages = totalStages
+    }
+}
+
 /// Ambient run-progress reporter — the run-time mirror of `WeightDownloadProgress`. The engine
 /// binds a sink around a package's `run()` (task-locals scope it to that run, so concurrent
 /// runs never cross-talk); the package reports coarse phases into it. No-op when unbound, so
@@ -107,6 +134,32 @@ public enum RunProgress {
     public typealias Sink = @Sendable (RunPhaseReport) -> Void
 
     @TaskLocal public static var sink: Sink?
+
+    /// Receives the frames a package previews while it runs (contract 1.61.0).
+    public typealias PreviewSink = @Sendable (RunPreviewFrame) -> Void
+
+    /// The preview sink a HOST binds around `MLXServeEngine.run`, exactly as it binds `sink`. The
+    /// engine does not rebind this one (a preview is not recorded on the run monitor — a frame is
+    /// megabytes, the monitor holds the latest of a tiny struct): a task-local flows from the host's
+    /// call into the package's run, so the package sees the host's own closure.
+    /// ```swift
+    /// try await RunProgress.$previewSink.withValue({ frame in jobs.preview(jobID, frame) }) {
+    ///     try await engine.run(request)
+    /// }
+    /// ```
+    /// The sink runs on the package's run loop, so it must be cheap and must not block.
+    @TaskLocal public static var previewSink: PreviewSink?
+
+    /// Whether anyone is listening for previews. A package decodes and encodes a preview frame only
+    /// when this is true — producing one nobody reads costs a VAE decode and an encode.
+    public static var wantsPreviews: Bool { previewSink != nil }
+
+    /// Hand a preview frame to the host's sink (no-op if none is bound). Call only for a surface
+    /// that declares `emitsFramePreviews`, and guard the work of producing the frame with
+    /// `wantsPreviews`.
+    public static func reportPreview(_ frame: RunPreviewFrame) {
+        previewSink?(frame)
+    }
 
     /// Report a run-phase observation to the ambient sink (no-op if none is bound).
     public static func report(_ report: RunPhaseReport) {

@@ -1479,5 +1479,75 @@ public enum ContractVersion {
     //     `.bundled` (AB-A-0216); `WeightSourceProbe` no longer misreads a complete snapshot as
     //     missing when the store root's spelling differs in case from the folder on disk, and
     //     follows a symlinked root (AB-A-0220).
-    public static let current = SemanticVersion(major: 1, minor: 60, patch: 0)
+    // 1.61.0 (2026-11-07, additive): THE MES VIDEO 0.1 LEVERS, closing AB-A-0236 (mlx-apps / Gaea G3).
+    //   Plugins reached into `metaData` for retake spans, keyframe paths, extend lengths; every lever
+    //   below replaces one of those routes with a typed, declared, engine-refused field in the
+    //   `music` (1.56.0) / `speechEdit` (1.59.0) mould: controls struct on the descriptor, refusal
+    //   before admission, `refusal(for:)` in MLXToolKit so a directly driven package refuses
+    //   identically, descriptor advertises only what is declared. All new request fields are optional
+    //   or defaulted and `VEditRequest` / `T2VRequest` gain custom decoders (also tolerant of the
+    //   pre-1.53 absence of `adapters`), so every earlier JSON decodes. A surface that declares
+    //   nothing runs every pre-1.61 request exactly as before and REFUSES every new lever (the engine
+    //   checks it against an empty controls value), the way an undeclared a2v track is refused.
+    //   • `VEditRequest.retake: VideoRetake? {span: VideoSpan, modality: .picture/.sound/.both}` and
+    //     `.extend: VideoExtend? {length, unit, direction: .after/.before}`, mutually exclusive
+    //     (refused together whatever is declared). `VEditControls` (`SurfaceControls.videoEdit`,
+    //     `videoEditControls`, OPTIONAL) declares `retakeModalities` (non-empty ⇔ retake),
+    //     `extendDirections` (non-empty ⇔ extend), `spanUnits`, `maxExtendSeconds`.
+    //     DECIDED: a span is `start`/`end` with a `unit` of `.seconds` (the canonical unit, always
+    //     honored) or `.frames` (only where declared), half-open [start, end) from the source's first
+    //     frame; a span past the source's end is refused where the source's `durationSeconds` /
+    //     `frameCount` are stated, judged by nothing where they are not. `before` is in the contract
+    //     for packages that can; none must. A package that cannot separate tracks (LTX) declares
+    //     `[.both]` and a picture-only retake is refused rather than regenerating the sound too.
+    //   • `T2VRequest.keyframes: [VideoKeyframe {image, frame, strength?}]` and `.includeAudio: Bool?`.
+    //     DECIDED: the final frame is a keyframe, not a separate field — `frame` is a 0-based output
+    //     index and a NEGATIVE index counts from the end (`-1` = last: a caller does not know the
+    //     resolved frame count, which a package may round to its 8k+1 grid); `VideoKeyframe.last(_:)`
+    //     is the spelling. `initImage` stays the opening-frame conditioning and a frame-0 keyframe
+    //     alongside it is refused (name the frame once). `T2VControls` gains `keyframes:
+    //     VideoKeyframeSupport {maxCount, placement: .endpoints/.anyFrame, supportsStrength}`,
+    //     `audioOutput: VideoAudioOutput {silent, always, switchable}?` and `emitsFramePreviews`
+    //     (custom decoder; pre-1.61 JSON carries only `supportsInitAudio`). DECIDED: undeclared
+    //     `audioOutput` refuses any `includeAudio`; `.always` (LTX muxes) refuses `false`,
+    //     `.silent` refuses `true` — the engine never pretends a track was dropped or conjured; the
+    //     descriptor offers the `includeAudio` toggle only on `.switchable`. Duplicate or out-of-range
+    //     frames, a strength outside 0…1 or on a surface without `supportsStrength`, and a count past
+    //     `maxCount` are refused.
+    //   • `VideoUpscaleRequest.content: VideoContent? {liveAction, drawn}` — `VideoUpscaleControls
+    //     {contents, emitsFramePreviews}` (`SurfaceControls.videoUpscale`). Declaration-gated: an
+    //     upscaler told "drawn" that ignored it ran the live-action model (MES Video §3.4: never
+    //     guessed). A package serving both with one network lists both.
+    //   • `FrameInterpolateRequest.targetFrameRate: Double?` (exclusive with `factor`), response
+    //     `appliedFrameRate: Double?`. `FrameInterpolateControls {targetFrameRate:
+    //     TargetFrameRateSupport {ratios: .integerMultiples/.any, maxFrameRate}?, emitsFramePreviews}`
+    //     (`SurfaceControls.frameInterpolate`). DECIDED: a target FPS, not a timestep. RIFE's
+    //     arbitrary timestep is how a package honors a non-integer ratio (it places each output
+    //     frame on the target's time grid and interpolates at the fractional position), an
+    //     implementation detail the caller should not need; a lone timestep also cannot express "60 fps".
+    //     A target below the source's rate is refused (interpolation raises it); with `.integerMultiples`
+    //     a non-multiple is refused where the source's rate is stated. `appliedFactor` is the ratio
+    //     rounded for a non-integer target.
+    //   • `Video` gains `width`, `height`, `frameCount` and `audio: VideoAudioFacts? {hasAudio,
+    //     sampleRate, channels}` — optional, in the `Codable` form and the `ArtifactSpool` file form.
+    //     nil = unknown; `VideoAudioFacts.noAudio` = no soundtrack (not `.none`: `audio: .none`
+    //     resolves to `Optional.none`, the opposite fact — the test that found it is
+    //     `testVideoFactsRoundTripAndAreOptional`).
+    //   • THE FRAME HOOK: `RunPreviewFrame {image, atSeconds, frameIndex?, stage?, totalStages?}` and
+    //     `RunProgress.previewSink` / `reportPreview(_:)` / `wantsPreviews`. DECIDED: a SEPARATE
+    //     task-local, not a field on `RunPhaseReport` — a frame is megabytes and `RunMonitor` /
+    //     `RunEvent` hold and broadcast the latest report; a preview is delivered to the host's sink
+    //     and kept nowhere. The engine does NOT rebind it: a host binds `RunProgress.$previewSink`
+    //     around `MLXServeEngine.run` and the package's run, a child `Task`, inherits that exact
+    //     closure (verified by `aHostBoundPreviewSinkSeesTheFramesAPackageReports`). `wantsPreviews`
+    //     lets a package skip the VAE decode and encode when nobody listens. `atSeconds` is the frame's
+    //     position in the OUTPUT clip (MES `at_s`); a stage-one frame is the package's own resolution.
+    //     `emitsFramePreviews` on `T2VControls` / `VEditControls` / `VideoUpscaleControls` /
+    //     `FrameInterpolateControls` is OUTPUT-side (a host renders a preview strip) — nothing to refuse.
+    //   Packages adopt at their pace: the LTX / RIFE / VOSR adapters (AB-A-0197) read the typed fields
+    //   instead of `metaData` and declare what they honor; until a package declares, the engine
+    //   refuses the lever rather than let the plugin's `metaData` shim and the typed field diverge.
+    //   Additive: new defaulted members and init arguments, three `SurfaceControls` cases.
+    //     ⚠️ Exhaustive switches over `SurfaceControls` need the three new cases (the 1.59.0 note).
+    public static let current = SemanticVersion(major: 1, minor: 61, patch: 0)
 }

@@ -33,6 +33,16 @@ public struct T2VRequest: CapabilityRequest, Codable {
     /// Distinct from `talkingHead`, which regenerates a *source face's* mouth — a2v has no
     /// source video at all, which is also why it is not a `videoEdit` field.
     public let initAudio: Audio?
+    /// Images pinned to frames of the output, replacing the `metaData` file-path route (LTX's
+    /// `kf.keyframes`): `[{image, frame, strength?}]`. Contract 1.61.0 (AB-A-0236). The final frame is
+    /// the keyframe at `frame == -1` (`VideoKeyframe.last`). **Declaration-gated** — an ignored
+    /// keyframe yields a clip that never reaches the frame pinned — through
+    /// `T2VControls.keyframes`; empty = none, which is every pre-1.61 request.
+    public let keyframes: [VideoKeyframe]
+    /// Whether the output carries a soundtrack (contract 1.61.0): `true` = include, `false` = a
+    /// silent clip, nil = the package's default (LTX muxes its audio today). Declaration-gated
+    /// through `T2VControls.audioOutput` — see `VideoAudioOutput` for what each declaration refuses.
+    public let includeAudio: Bool?
     public let numFrames: Int?
     public let fps: Double?
     public let width: Int?
@@ -54,6 +64,8 @@ public struct T2VRequest: CapabilityRequest, Codable {
                 initImage: Image? = nil,
                 referenceImages: [Image]? = nil,
                 initAudio: Audio? = nil,
+                keyframes: [VideoKeyframe] = [],
+                includeAudio: Bool? = nil,
                 numFrames: Int? = nil,
                 fps: Double? = nil,
                 width: Int? = nil,
@@ -69,6 +81,8 @@ public struct T2VRequest: CapabilityRequest, Codable {
         self.initImage = initImage
         self.referenceImages = referenceImages
         self.initAudio = initAudio
+        self.keyframes = keyframes
+        self.includeAudio = includeAudio
         self.numFrames = numFrames
         self.fps = fps
         self.width = width
@@ -79,6 +93,36 @@ public struct T2VRequest: CapabilityRequest, Codable {
         self.adapters = adapters
         self.mode = mode
         self.metaData = metaData
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case prompt, negativePrompt, initImage, referenceImages, initAudio, keyframes, includeAudio
+        case numFrames, fps, width, height, steps, guidanceScale, seed
+        case adapters, resolvedAdapters, mode, metaData
+    }
+
+    /// Tolerant of every earlier shape (contract 1.61.0): the keys added at 1.40 / 1.53 / 1.61
+    /// default when absent, so a request encoded by an older host decodes unchanged.
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        prompt = try c.decode(String.self, forKey: .prompt)
+        negativePrompt = try c.decodeIfPresent(String.self, forKey: .negativePrompt)
+        initImage = try c.decodeIfPresent(Image.self, forKey: .initImage)
+        referenceImages = try c.decodeIfPresent([Image].self, forKey: .referenceImages)
+        initAudio = try c.decodeIfPresent(Audio.self, forKey: .initAudio)
+        keyframes = try c.decodeIfPresent([VideoKeyframe].self, forKey: .keyframes) ?? []
+        includeAudio = try c.decodeIfPresent(Bool.self, forKey: .includeAudio)
+        numFrames = try c.decodeIfPresent(Int.self, forKey: .numFrames)
+        fps = try c.decodeIfPresent(Double.self, forKey: .fps)
+        width = try c.decodeIfPresent(Int.self, forKey: .width)
+        height = try c.decodeIfPresent(Int.self, forKey: .height)
+        steps = try c.decodeIfPresent(Int.self, forKey: .steps)
+        guidanceScale = try c.decodeIfPresent(Double.self, forKey: .guidanceScale)
+        seed = try c.decodeIfPresent(UInt64.self, forKey: .seed)
+        adapters = try c.decodeIfPresent([AdapterRef].self, forKey: .adapters) ?? []
+        resolvedAdapters = try c.decodeIfPresent([ResolvedAdapter].self, forKey: .resolvedAdapters) ?? []
+        mode = try c.decodeIfPresent(Mode.self, forKey: .mode)
+        metaData = try c.decodeIfPresent(MetaData.self, forKey: .metaData) ?? [:]
     }
 }
 
@@ -107,9 +151,50 @@ public struct T2VControls: Sendable, Codable, Equatable {
     /// The surface generates video against `T2VRequest.initAudio` (a2v). `false` = the field is
     /// refused by the engine pre-flight, never silently dropped.
     public let supportsInitAudio: Bool
+    /// The keyframes the surface honors (contract 1.61.0, AB-A-0236). nil = `T2VRequest.keyframes` is
+    /// refused by the engine pre-flight (`refusal(for:)`).
+    public let keyframes: VideoKeyframeSupport?
+    /// Whether the surface returns a soundtrack and whether `T2VRequest.includeAudio` switches it
+    /// (contract 1.61.0). nil = undeclared: `includeAudio` is refused. See `VideoAudioOutput`.
+    public let audioOutput: VideoAudioOutput?
+    /// The package emits `RunPreviewFrame`s (a decoded stage-one frame) while it runs — see
+    /// `RunProgress.reportPreview`. OUTPUT-side: it tells a host to render a preview. Nothing to
+    /// refuse. Contract 1.61.0.
+    public let emitsFramePreviews: Bool
 
-    public init(supportsInitAudio: Bool = false) {
+    public init(supportsInitAudio: Bool = false,
+                keyframes: VideoKeyframeSupport? = nil,
+                audioOutput: VideoAudioOutput? = nil,
+                emitsFramePreviews: Bool = false) {
         self.supportsInitAudio = supportsInitAudio
+        self.keyframes = keyframes
+        self.audioOutput = audioOutput
+        self.emitsFramePreviews = emitsFramePreviews
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case supportsInitAudio, keyframes, audioOutput, emitsFramePreviews
+    }
+
+    /// Pre-1.61 descriptor JSON carries only `supportsInitAudio`; the rest default.
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        supportsInitAudio = try c.decodeIfPresent(Bool.self, forKey: .supportsInitAudio) ?? false
+        keyframes = try c.decodeIfPresent(VideoKeyframeSupport.self, forKey: .keyframes)
+        audioOutput = try c.decodeIfPresent(VideoAudioOutput.self, forKey: .audioOutput)
+        emitsFramePreviews = try c.decodeIfPresent(Bool.self, forKey: .emitsFramePreviews) ?? false
+    }
+
+    /// Internal inconsistencies of the declaration; empty for a coherent one.
+    public var declarationProblems: [String] {
+        var problems: [String] = []
+        if let keyframes {
+            if keyframes.maxCount < 1 { problems.append("keyframes.maxCount must be at least 1") }
+            if keyframes.placement == .endpoints, keyframes.maxCount > 2 {
+                problems.append("an endpoints keyframe surface takes at most 2 keyframes")
+            }
+        }
+        return problems
     }
 }
 
@@ -143,6 +228,23 @@ public enum T2VContract {
                 name: "initAudio", kind: .audio, required: false,
                 summary: "Optional driving audio (audio-to-video): the clip is generated against "
                     + "this track, which is returned untouched in the output."), at: 4)
+        }
+        // Keyframes and the audio switch (contract 1.61.0) are advertised only when DECLARED, by the
+        // same rule — an `includeAudio` toggle is offered only on a `.switchable` surface (a silent
+        // or always-muxed one has nothing to switch).
+        if let support = controls?.keyframes {
+            parameters.append(ParameterSchema(
+                name: "keyframes", kind: .array, required: false,
+                summary: "Images pinned to frames, each {image, frame, strength?}; up to \(support.maxCount), "
+                    + (support.placement == .endpoints
+                        ? "first (frame 0) and last (frame -1) only"
+                        : "any frame (a negative index counts from the end; -1 is the last)")
+                    + (support.supportsStrength ? "; strength 0…1." : ".")))
+        }
+        if controls?.audioOutput == .switchable {
+            parameters.append(ParameterSchema(
+                name: "includeAudio", kind: .boolean, required: false,
+                summary: "Include the generated soundtrack in the output (false = a silent clip)."))
         }
         return ToolDescriptor(
             name: name,

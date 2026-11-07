@@ -122,18 +122,37 @@ public struct Mesh: Artifact, Sendable, Equatable {
 }
 
 /// Canonical video artifact.
+///
+/// Every fact beyond `format` and `data` is optional and describes the container's contents, so a
+/// consumer need not reopen the file to learn them (contract 1.61.0, AB-A-0236; MES RFC 0005 reports
+/// the same). nil = unstated, not zero: a producer that does not know a fact leaves it nil, and a
+/// consumer that needs it reads the container.
 public struct Video: Artifact, Sendable, Equatable {
     public enum Format: String, Sendable, Codable { case mp4, mov }
     public let format: Format
     public let data: Data
     public let durationSeconds: Double?
     public let frameRate: Double?
+    /// Picture size in pixels (contract 1.61.0).
+    public let width: Int?
+    public let height: Int?
+    /// Number of picture frames (contract 1.61.0).
+    public let frameCount: Int?
+    /// The soundtrack, as facts (contract 1.61.0): nil = unknown; `VideoAudioFacts.noAudio` = the clip
+    /// carries no audio; otherwise its sample rate and channel count.
+    public let audio: VideoAudioFacts?
 
-    public init(format: Format, data: Data, durationSeconds: Double? = nil, frameRate: Double? = nil) {
+    public init(format: Format, data: Data, durationSeconds: Double? = nil, frameRate: Double? = nil,
+                width: Int? = nil, height: Int? = nil, frameCount: Int? = nil,
+                audio: VideoAudioFacts? = nil) {
         self.format = format
         self.data = data
         self.durationSeconds = durationSeconds
         self.frameRate = frameRate
+        self.width = width
+        self.height = height
+        self.frameCount = frameCount
+        self.audio = audio
     }
 }
 
@@ -230,7 +249,9 @@ extension Mesh: Codable {
 }
 
 extension Video: Codable {
-    private enum CodingKeys: String, CodingKey { case format, data, file, durationSeconds, frameRate }
+    private enum CodingKeys: String, CodingKey {
+        case format, data, file, durationSeconds, frameRate, width, height, frameCount, audio
+    }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -238,6 +259,10 @@ extension Video: Codable {
         data = try ArtifactSpool.decodeBytes(c, data: .data, file: .file, decoder: decoder)
         durationSeconds = try c.decodeIfPresent(Double.self, forKey: .durationSeconds)
         frameRate = try c.decodeIfPresent(Double.self, forKey: .frameRate)
+        width = try c.decodeIfPresent(Int.self, forKey: .width)
+        height = try c.decodeIfPresent(Int.self, forKey: .height)
+        frameCount = try c.decodeIfPresent(Int.self, forKey: .frameCount)
+        audio = try c.decodeIfPresent(VideoAudioFacts.self, forKey: .audio)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -247,5 +272,9 @@ extension Video: Codable {
                                       data: .data, file: .file, encoder: encoder)
         try c.encodeIfPresent(durationSeconds, forKey: .durationSeconds)
         try c.encodeIfPresent(frameRate, forKey: .frameRate)
+        try c.encodeIfPresent(width, forKey: .width)
+        try c.encodeIfPresent(height, forKey: .height)
+        try c.encodeIfPresent(frameCount, forKey: .frameCount)
+        try c.encodeIfPresent(audio, forKey: .audio)
     }
 }

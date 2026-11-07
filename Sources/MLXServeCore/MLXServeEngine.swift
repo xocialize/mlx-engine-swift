@@ -2360,6 +2360,16 @@ public actor MLXServeEngine {
                     + "supportsInitAudio, or drop the track")
         }
 
+        // MES Video 0.1 levers (contract 1.61.0, AB-A-0236): every one is declaration-gated, because
+        // an ignored lever is wrong output nothing in the file reveals — a retake that regenerated the
+        // whole clip, a keyframe the clip never reaches, an upscaler run for the wrong content. A
+        // surface with no controls block refuses all of them (`Controls()` declares nothing), so a
+        // package that declares nothing behaves exactly as before. The rules live in MLXToolKit so a
+        // directly driven package refuses identically.
+        if let reason = Self.videoLeverRefusal(request, surface: surface) {
+            throw PackageError.unsupportedRequestFeature("\(reason) [\(id)]")
+        }
+
         // Native alpha (contract 1.48.0): declaration-gated like a2v. An ignored `.transparent` comes
         // back OPAQUE — a caller compositing it gets a full-canvas rectangle over its layout, and
         // nothing in the response says so short of inspecting alpha.
@@ -2462,6 +2472,23 @@ public actor MLXServeEngine {
                 "rawRGBA16 image — \(id) declares no 16-bit boundary "
                     + "(ToolDescriptor.rawImageFormats); send .rawBGRA8 or png, or choose a package "
                     + "that declares .rawRGBA16")
+        }
+    }
+
+    /// The MES Video 0.1 refusal for `request` against `surface` (contract 1.61.0), or nil. Static and
+    /// pure so a test can drive it without an engine.
+    static func videoLeverRefusal(_ request: any CapabilityRequest, surface: ToolDescriptor) -> String? {
+        switch request {
+        case let edit as VEditRequest:
+            return (surface.videoEditControls ?? VEditControls()).refusal(for: edit)
+        case let t2v as T2VRequest:
+            return (surface.t2vControls ?? T2VControls()).refusal(for: t2v)
+        case let upscale as VideoUpscaleRequest:
+            return (surface.videoUpscaleControls ?? VideoUpscaleControls()).refusal(for: upscale)
+        case let interpolate as FrameInterpolateRequest:
+            return (surface.frameInterpolateControls ?? FrameInterpolateControls()).refusal(for: interpolate)
+        default:
+            return nil
         }
     }
 

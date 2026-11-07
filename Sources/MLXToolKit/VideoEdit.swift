@@ -15,6 +15,14 @@ public struct VEditRequest: CapabilityRequest, Codable {
     public let prompt: String
     /// Optional reference image(s) steering the edit toward their subject(s) (rv2v).
     public let referenceImages: [Image]?
+    /// Regenerate a stretch of the source and keep the rest (contract 1.61.0, AB-A-0236): the span,
+    /// and which track (`VideoModality`). Replaces the `metaData` route (LTX's `retake.start` /
+    /// `retake.duration`). **Declaration-gated** (`VEditControls.retakeModalities`) — an ignored span
+    /// regenerates the whole clip. Mutually exclusive with `extend`.
+    public let retake: VideoRetake?
+    /// Grow the clip by a length, in a direction (contract 1.61.0): LTX's `extend.seconds`.
+    /// **Declaration-gated** (`VEditControls.extendDirections`). Mutually exclusive with `retake`.
+    public let extend: VideoExtend?
     public let negativePrompt: String?
     public let width: Int?
     public let height: Int?
@@ -35,6 +43,8 @@ public struct VEditRequest: CapabilityRequest, Codable {
     public init(video: Video,
                 prompt: String,
                 referenceImages: [Image]? = nil,
+                retake: VideoRetake? = nil,
+                extend: VideoExtend? = nil,
                 negativePrompt: String? = nil,
                 width: Int? = nil,
                 height: Int? = nil,
@@ -49,6 +59,8 @@ public struct VEditRequest: CapabilityRequest, Codable {
         self.video = video
         self.prompt = prompt
         self.referenceImages = referenceImages
+        self.retake = retake
+        self.extend = extend
         self.negativePrompt = negativePrompt
         self.width = width
         self.height = height
@@ -60,6 +72,34 @@ public struct VEditRequest: CapabilityRequest, Codable {
         self.adapters = adapters
         self.mode = mode
         self.metaData = metaData
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case video, prompt, referenceImages, retake, extend, negativePrompt
+        case width, height, numFrames, fps, steps, guidanceScale, seed
+        case adapters, resolvedAdapters, mode, metaData
+    }
+
+    /// Tolerant of every earlier shape (contract 1.61.0): keys added at 1.53 / 1.61 default when absent.
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        video = try c.decode(Video.self, forKey: .video)
+        prompt = try c.decode(String.self, forKey: .prompt)
+        referenceImages = try c.decodeIfPresent([Image].self, forKey: .referenceImages)
+        retake = try c.decodeIfPresent(VideoRetake.self, forKey: .retake)
+        extend = try c.decodeIfPresent(VideoExtend.self, forKey: .extend)
+        negativePrompt = try c.decodeIfPresent(String.self, forKey: .negativePrompt)
+        width = try c.decodeIfPresent(Int.self, forKey: .width)
+        height = try c.decodeIfPresent(Int.self, forKey: .height)
+        numFrames = try c.decodeIfPresent(Int.self, forKey: .numFrames)
+        fps = try c.decodeIfPresent(Double.self, forKey: .fps)
+        steps = try c.decodeIfPresent(Int.self, forKey: .steps)
+        guidanceScale = try c.decodeIfPresent(Double.self, forKey: .guidanceScale)
+        seed = try c.decodeIfPresent(UInt64.self, forKey: .seed)
+        adapters = try c.decodeIfPresent([AdapterRef].self, forKey: .adapters) ?? []
+        resolvedAdapters = try c.decodeIfPresent([ResolvedAdapter].self, forKey: .resolvedAdapters) ?? []
+        mode = try c.decodeIfPresent(Mode.self, forKey: .mode)
+        metaData = try c.decodeIfPresent(MetaData.self, forKey: .metaData) ?? [:]
     }
 }
 
@@ -79,12 +119,9 @@ public struct VEditResponse: CapabilityResponse, Codable {
 
 /// Canonical descriptor shape for a video-edit tool (C11).
 public enum VEditContract {
-    public static func descriptor(name: String, summary: String, modes: [Mode] = []) -> ToolDescriptor {
-        ToolDescriptor(
-            name: name,
-            capability: .videoEdit,
-            summary: summary,
-            parameters: [
+    public static func descriptor(name: String, summary: String, modes: [Mode] = [],
+                                  controls: VEditControls? = nil) -> ToolDescriptor {
+        var parameters = [
                 ParameterSchema(name: "video", kind: .video, required: true,
                                 summary: "The source video to edit."),
                 ParameterSchema(name: "prompt", kind: .string, required: true,
@@ -101,8 +138,30 @@ public enum VEditContract {
                 ParameterSchema(name: "guidanceScale", kind: .number, required: false, summary: "CFG scale."),
                 ParameterSchema(name: "seed", kind: .integer, required: false,
                                 summary: "RNG seed for reproducibility."),
-            ],
-            supportedModes: modes
+        ]
+        // Retake and extend (contract 1.61.0) are advertised only when DECLARED — a planner is never
+        // offered a knob the engine would refuse.
+        if let controls, controls.declaresRetake {
+            parameters.append(ParameterSchema(
+                name: "retake", kind: .object, required: false,
+                summary: "Regenerate a stretch of the source, keep the rest: {span: {start, end, unit?}, "
+                    + "modality?: " + controls.retakeModalities.map(\.rawValue).joined(separator: " / ")
+                    + "}. Units: " + controls.spanUnits.map(\.rawValue).joined(separator: " / ") + "."))
+        }
+        if let controls, controls.declaresExtend {
+            parameters.append(ParameterSchema(
+                name: "extend", kind: .object, required: false,
+                summary: "Grow the clip: {length, unit?, direction?: "
+                    + controls.extendDirections.map(\.rawValue).joined(separator: " / ") + "}"
+                    + (controls.maxExtendSeconds.map { " up to \(VEditControls.format($0)) s" } ?? "") + "."))
+        }
+        return ToolDescriptor(
+            name: name,
+            capability: .videoEdit,
+            summary: summary,
+            parameters: parameters,
+            supportedModes: modes,
+            controls: controls.map(SurfaceControls.videoEdit)
         )
     }
 }
