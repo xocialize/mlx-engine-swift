@@ -40,7 +40,7 @@ public protocol HubMetadataProviding: Sendable {
     func files(repo: String, revision: String?) async throws -> [HubFileEntry]
 }
 
-public enum HubMetadataError: Error, Sendable, Equatable {
+public enum HubMetadataError: Error, Sendable, Equatable, LocalizedError {
     /// The hub answered with a non-200 status (404 = private or missing repo).
     case httpStatus(Int)
     /// The response body was not the expected tree JSON.
@@ -49,6 +49,25 @@ public enum HubMetadataError: Error, Sendable, Equatable {
     case unauthorized
     /// Nothing to verify: no token in the environment, the Keychain, or the CLI token file.
     case noToken
+
+    /// A host prints `"\(error)"`; this names what happened. (The failing repo, revision and URL are
+    /// on `WeightMaterializer.MaterializeError.source`, which wraps this error — AB-A-0153.)
+    public var errorDescription: String? {
+        switch self {
+        case .httpStatus(let code):
+            let hint: String
+            switch code {
+            case 401: hint = " (the hub wants a token for this repo — private or gated)"
+            case 403: hint = " (the hub refused this token)"
+            case 404: hint = " (the repo or revision does not exist, or is private without a token)"
+            default: hint = ""
+            }
+            return "The Hugging Face hub answered HTTP \(code)\(hint)."
+        case .malformedResponse: return "The Hugging Face hub's file listing could not be parsed."
+        case .unauthorized: return "The Hugging Face hub rejected the token (expired, revoked or wrong account)."
+        case .noToken: return "There is no Hugging Face token to verify."
+        }
+    }
 }
 
 /// The account a token belongs to (`/api/whoami-v2`), for a settings UI's "verify" affordance.
@@ -177,11 +196,24 @@ public struct MaterializationPreview: Sendable, Equatable {
         public let repo: String
         /// Summed size of the files this source would fetch; `nil` when the hub couldn't be reached.
         public let expectedBytes: UInt64?
+        /// The revision the listing asked for (`nil` = the default branch, as declared).
+        public let revision: String?
+        /// Why the size is unknown, when the listing failed (contract 1.60.0, AB-A-0153): the error's
+        /// description (`HubMetadataError.httpStatus(404)` reads "the repo or revision does not
+        /// exist, or is private without a token"). `nil` when sized, or when none was recorded.
+        public let failure: String?
+        /// The HTTP status behind `failure`, when it was one (404 = missing or private, 401 = needs a
+        /// token) — so a host can tell "never published" from "unreachable" without parsing text.
+        public let failureStatus: Int?
 
-        public init(role: String, repo: String, expectedBytes: UInt64?) {
+        public init(role: String, repo: String, expectedBytes: UInt64?,
+                    revision: String? = nil, failure: String? = nil, failureStatus: Int? = nil) {
             self.role = role
             self.repo = repo
             self.expectedBytes = expectedBytes
+            self.revision = revision
+            self.failure = failure
+            self.failureStatus = failureStatus
         }
     }
 
@@ -220,8 +252,16 @@ public extension MaterializationPreview {
         var sources: [Source] = []
         var total: UInt64? = 0
         for source in missing {
-            let bytes = try? await sizeOf(source, provider: provider)
-            sources.append(Source(role: source.role, repo: source.repo, expectedBytes: bytes))
+            var bytes: UInt64?
+            var failure: String?
+            var status: Int?
+            do { bytes = try await sizeOf(source, provider: provider) }
+            catch {
+                failure = (error as? LocalizedError)?.errorDescription ?? "\(error)"
+                if case .httpStatus(let code)? = error as? HubMetadataError { status = code }
+            }
+            sources.append(Source(role: source.role, repo: source.repo, expectedBytes: bytes,
+                                  revision: source.revision, failure: failure, failureStatus: status))
             if let bytes, var running = total { running &+= bytes; total = running } else { total = nil }
         }
         return MaterializationPreview(sources: sources,

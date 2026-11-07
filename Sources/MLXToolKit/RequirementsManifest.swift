@@ -16,17 +16,22 @@ public enum Quant: String, Sendable, Codable, Hashable, CaseIterable {
     case int5
     case int4
     case mxfp4
+    /// Microscaling 8-bit (MX e4m3, group 32) — added at 1.60.0 (AB-A-0204) for mlx-community's
+    /// `-mxfp8` bundles. Ranks with `int8`.
+    case mxfp8
+    /// NVIDIA-style 4-bit float (e2m1, group 16) — added at 1.60.0 (AB-A-0204). Ranks with `int4`.
+    case nvfp4
 
     /// Precision ordering, lowest first — the axis a per-surface `quantFloor` is compared on
     /// (contract 1.23.0). Deliberately NOT `Comparable`: `fp16` and `bf16` are both 16-bit and
     /// share a rank, so `<` would be a strict-weak-ordering violation on a Comparable conformance.
-    /// `mxfp4` ranks with `int4` (4 bits, richer per-block scaling — not a precision tier above it).
+    /// `mxfp4` and `nvfp4` rank with `int4`, and `mxfp8` with `int8` (same bit width, richer per-block scaling — not a precision tier above it).
     public var precisionRank: Int {
         switch self {
-        case .int4, .mxfp4: 0
+        case .int4, .mxfp4, .nvfp4: 0
         case .int5: 1
         case .int6: 2
-        case .int8: 3
+        case .int8, .mxfp8: 3
         case .fp16, .bf16: 4
         case .fp32: 5
         }
@@ -132,14 +137,37 @@ public struct RequirementsManifest: Sendable, Codable, Equatable {
     public let requiredBackends: Set<Backend>
     public let os: OSRequirement
     public let chipFloor: ChipTier?
+    /// Process-environment variables the package needs set BEFORE its first MLX op (contract
+    /// 1.60.0, AB-A-0215) — e.g. `["MLX_ENABLE_TF32": "0"]`, which MLX reads once, on the process's
+    /// first matmul. The engine sets each one at `register` when the process has not set it, and
+    /// records a finding (`MLXServeEngine.processEnvironmentFindings`) when the host already set it
+    /// to a different value. Declaration, not a gate (the 1.28.0 stance): the engine cannot know
+    /// whether a matmul already latched the old value, so a package whose output depends on it still
+    /// probes at `load()`. Empty (the default) for every pre-1.60 manifest.
+    public let processEnvironment: [String: String]
 
     public init(footprints: [QuantFootprint],
                 requiredBackends: Set<Backend>,
                 os: OSRequirement = OSRequirement(),
-                chipFloor: ChipTier? = nil) {
+                chipFloor: ChipTier? = nil,
+                processEnvironment: [String: String] = [:]) {
         self.footprints = footprints
         self.requiredBackends = requiredBackends
         self.os = os
         self.chipFloor = chipFloor
+        self.processEnvironment = processEnvironment
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case footprints, requiredBackends, os, chipFloor, processEnvironment
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.footprints = try c.decode([QuantFootprint].self, forKey: .footprints)
+        self.requiredBackends = try c.decode(Set<Backend>.self, forKey: .requiredBackends)
+        self.os = try c.decode(OSRequirement.self, forKey: .os)
+        self.chipFloor = try c.decodeIfPresent(ChipTier.self, forKey: .chipFloor)
+        self.processEnvironment = try c.decodeIfPresent([String: String].self, forKey: .processEnvironment) ?? [:]
     }
 }

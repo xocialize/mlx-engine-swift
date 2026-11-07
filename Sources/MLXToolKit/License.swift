@@ -225,6 +225,33 @@ extension SPDXLicense {
     /// (MIT) — one level down is clean. Used by the MiniMax Music 3 `music` package (AB-T-0351).
     public static let minimaxMusic3Community: SPDXLicense = "LicenseRef-MiniMax-Music3-Community"
 
+    /// Hi3D Open License Agreement 1.0 (huggingface.co/hi3d-official/Hi3Dv1.0, `LICENSE`; summary in
+    /// AB-R-0657; operator decision AB-D-0189, 2026-10-29). Non-SPDX, referenced via `LicenseRef-`.
+    /// Reviewed against the license text:
+    /// - **§2.1 Grant.** Worldwide, non-exclusive, royalty-free; commercial use permitted, no regional
+    ///   exclusion. §9: Hi3D claims no ownership of outputs.
+    /// - **§5 Scale threshold.** Above 200,000 monthly active users or USD 1,000,000 a month in
+    ///   revenue the licensee must notify Hi3D and apply for a separate license within 60 days. A
+    ///   SCALE gate, the shape of the allowlisted `ltx2Community` (US$10 M a year) and
+    ///   `bilibiliModelUse`; a discretionary separate license above the bar, not a prohibition below
+    ///   it, and no non-compete or field-of-use clause.
+    /// - **§7 Branding.** A commercial product or service that integrates the materials or a Model
+    ///   Derivative must display "Powered by Hi3D 1.0", linking to http://hi3d.ai/ where possible. An
+    ///   ATTRIBUTION duty on the product, not on a mesh generated with it (using the output alone
+    ///   triggers nothing) — the `dinov3` "Built with DINOv3" shape. Carried, like MiniMax's, as a
+    ///   `.required` `LicenseNotice` (`requiredDisplayText`).
+    /// - **§4 Distribution.** Carry the Agreement text and NOTICE, mark modified files, pass the AUP
+    ///   (Schedule 1) downstream; quantization counts as a Model Derivative and a framework port very
+    ///   likely does too. Travels with the weights.
+    /// - **§3.1** patent-litigation termination; Hong Kong law, HKIAC arbitration.
+    ///
+    /// Classification: **allowlisted** (`permissiveAllowlist`, admitted by the default
+    /// `.permissiveOnly`). The §5 separate license is the `ltx2Community` revenue-gate precedent
+    /// (without its non-compete), not a disqualifier. CONDITIONAL on the §5 threshold and the §7 display
+    /// — record both where the weights ship and revisit at crossing (the `lfmOpen1` rule). For the
+    /// Hi3D v1.0 mesh refiner port (spike AB-T-0385).
+    public static let hi3dOpen1_0: SPDXLicense = "LicenseRef-Hi3D-Open-1.0"
+
     /// The exact string a license obliges a host to SHOW on the UI of a product using the weights, or
     /// nil for a license with no display duty. Distinct from redistribution attribution (NOTICE files,
     /// "Built with …" on shipped materials), which travels with the weights, not the screen. A package
@@ -233,6 +260,7 @@ extension SPDXLicense {
     public var requiredDisplayText: String? {
         switch self {
         case .minimaxMusic3Community: "MiniMax-Music3"
+        case .hi3dOpen1_0: "Powered by Hi3D 1.0"
         default: nil
         }
     }
@@ -241,7 +269,7 @@ extension SPDXLicense {
     public static let permissiveAllowlist: Set<SPDXLicense> = [
         .mit, .apache2, .bsd2, .bsd3, .isc, .unlicense, .funasrModel, .ccBy4, .ltx2Community, .dinov3,
         .gemmaTerms, .nvidiaOpenModel, .openMDW1_1, .lfmOpen1, .bilibiliModelUse,
-        .neteaseYoudaoModelUse, .minimaxMusic3Community,
+        .neteaseYoudaoModelUse, .minimaxMusic3Community, .hi3dOpen1_0,
     ]
 
     /// Non-permissive licenses explicitly acknowledged for **eval/research** use only. These are

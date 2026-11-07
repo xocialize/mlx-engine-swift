@@ -850,6 +850,30 @@ public actor MLXServeEngine {
         }
     }
 
+    /// Process-environment requirements a registered package declared that the process contradicts
+    /// (contract 1.60.0, AB-A-0215): the variable was already set, by the host or an earlier
+    /// package, to a value other than the one the package needs. The engine does not override it.
+    public private(set) var processEnvironmentFindings: [ProcessEnvironmentFinding] = []
+
+    /// Set each declared variable the process has not set (`setenv(…, overwrite: 0)`), BEFORE the
+    /// package's first MLX op — MLX reads some of them once, on the process's first matmul. A
+    /// variable already set differently is left alone and recorded. Declaration, not a gate.
+    private func applyProcessEnvironment(_ required: [String: String], source: String) {
+        for (name, value) in required.sorted(by: { $0.key < $1.key }) {
+            if let current = getenv(name).map({ String(cString: $0) }) {
+                guard current != value else { continue }
+                let finding = ProcessEnvironmentFinding(name: name, required: value, actual: current, requiredBy: source)
+                if !processEnvironmentFindings.contains(finding) {
+                    processEnvironmentFindings.append(finding)
+                    FileHandle.standardError.write(Data(
+                        "[Env] \(source) needs \(name)=\(value) before its first MLX op; the process has \(name)=\(current) and the engine leaves it.\n".utf8))
+                }
+            } else {
+                setenv(name, value, 0)
+            }
+        }
+    }
+
     @discardableResult
     public func register(_ registration: PackageRegistration,
                          configuration: any PackageConfiguration,
@@ -858,6 +882,8 @@ public actor MLXServeEngine {
         // outside `policy` also *blocks* is the host's call — `.advisory` since contract 1.28.0, so
         // the finding is recorded and logged like an unregistered specialty rather than thrown.
         try noteLicense(registration.manifest)
+        applyProcessEnvironment(registration.manifest.requirements.processEnvironment,
+                                source: registration.manifest.provenance.sourceRepo)
 
         let eligibility = deviceProfile.eligibility(for: registration.manifest.requirements)
         guard eligibility.isEligible else { throw EngineError.ineligible(eligibility) }
@@ -2077,7 +2103,11 @@ public actor MLXServeEngine {
             gpuActiveBytes: pool?.activeBytes,
             gpuCacheBytes: pool?.cacheBytes,
             residents: residentFootprint.reduce(into: [:]) { $0[$1.key.description] = $1.value },
-            running: Array(Set(activeRuns.values.map(\.id.description))).sorted())
+            running: Array(Set(activeRuns.values.map(\.id.description))).sorted(),
+            externalTenants: snapshot.externalTenants.mapValues {
+                ExternalTenantCharge(persistentBytes: $0.persistentBytes, transientBytes: $0.transientBytes)
+            },
+            externalBytes: snapshot.externalBytes)
     }
 
     // MARK: - Wired-limit tickets (HV1)

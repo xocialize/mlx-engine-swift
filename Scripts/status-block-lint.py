@@ -39,6 +39,7 @@ ROOT = Path(__file__).resolve().parent.parent
 README = ROOT / "README.md"
 CAPABILITY = ROOT / "Sources/MLXToolKit/Capability.swift"
 CONTRACT = ROOT / "Sources/MLXToolKit/ContractVersion.swift"
+RELEASE = ROOT / "Sources/MLXToolKit/EngineRelease.swift"
 
 
 class LintError(Exception):
@@ -89,6 +90,14 @@ def contract_version() -> str:
         raise LintError("could not read `ContractVersion.current` — did its initializer change "
                         "shape?")
     return ".".join(m.groups())
+
+
+def release_constant() -> str:
+    m = re.search(r"static\s+let\s+version\s*=\s*\"([0-9]+\.[0-9]+\.[0-9]+)\"", RELEASE.read_text())
+    if not m:
+        raise LintError("could not read `MLXEngineRelease.version` — did EngineRelease.swift move or "
+                        "change shape?")
+    return m.group(1)
 
 
 def status_block() -> str:
@@ -163,6 +172,12 @@ def main() -> int:
                 f"      If {claimed_tag} is the intended release, it was never tagged or never "
                 f"pushed.\n"
                 f"      If {actual_tag} is, the status block was not refreshed with it.")
+
+        constant = release_constant()
+        if claimed_tag != "v" + constant:
+            failures.append(
+                f"release constant: README says {claimed_tag}, MLXEngineRelease.version is "
+                f"{constant} (bump Sources/MLXToolKit/EngineRelease.swift with the tag)")
     except LintError as exc:
         print(f"status-block-lint: FAILED TO CHECK — {exc}", file=sys.stderr)
         return 2

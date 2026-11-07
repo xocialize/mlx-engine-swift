@@ -1451,5 +1451,33 @@ public enum ContractVersion {
     //   Additive: new enum cases, new defaulted members and init arguments, one `SurfaceControls` case.
     //     ⚠️ Exhaustive switches over `SpeechEditOperation`, `SpeechEditControls.Operation` or
     //     `SurfaceControls` need the new cases (the 1.53.0 / 1.56.0 note).
-    public static let current = SemanticVersion(major: 1, minor: 59, patch: 0)
+    // 1.60.0 (2026-11-07, additive): five small fleet asks answered together —
+    //   • `Quant.mxfp8` (ranks with `int8`) and `Quant.nvfp4` (ranks with `int4`) — mlx-community
+    //     ships MXFP8 / NVFP4 bundles; a package no longer declares them under `.int8` / `.int4`
+    //     (AB-A-0204). ⚠️ an exhaustive switch over `Quant` needs the two cases.
+    //   • `WorkerMemoryReport.externalTenants: [String: ExternalTenantCharge]?` and `externalBytes`
+    //     — the non-package models a worker charges via `registerExternalTenant`, by id, so a host
+    //     comparing the declared charge with its manifest no longer infers it from `availableBytes`
+    //     (AB-A-0210). Optional: a report from a pre-1.60 worker decodes with both `nil`.
+    //   • `SPDXLicense.hi3dOpen1_0` (`LicenseRef-Hi3D-Open-1.0`), ALLOWLISTED with a `.required`
+    //     display notice "Powered by Hi3D 1.0" (`requiredDisplayText`); conditional on the §5 scale
+    //     threshold (AB-A-0226, AB-D-0189).
+    //   • `MLXEngineRelease.version` / `.contract` — the tagged release a package linked, readable at
+    //     runtime; `status-block-lint` fails when it differs from the README's tag (AB-A-0248).
+    //   • `RequirementsManifest.processEnvironment: [String: String]` — environment a package needs
+    //     before its first MLX op (`MLX_ENABLE_TF32=0`). The engine `setenv`s what the process has
+    //     not set at `register` and records a `ProcessEnvironmentFinding` (and a `[Env]` line on
+    //     stderr) for a variable set to something else; it never overrides and never refuses
+    //     (the 1.28.0 stance — the engine cannot know whether a matmul already latched the old
+    //     value, so a package still probes at `load()`). Empty for every pre-1.60 manifest
+    //     (AB-A-0215).
+    //   Also (no contract surface): `HubMetadataError` is `LocalizedError`; `MaterializationPreview.
+    //     Source` carries `revision`, `failure` and `failureStatus` instead of a bare nil size
+    //     (AB-A-0153; the repo / revision / URL on materialization errors shipped at 1.57.0);
+    //     `WeightPrewarmer` logs to stderr, not stdout (AB-A-0216); a configuration conforming to
+    //     both `WeightSourcing` and `BundledWeightSourcing` with no network sources resolves
+    //     `.bundled` (AB-A-0216); `WeightSourceProbe` no longer misreads a complete snapshot as
+    //     missing when the store root's spelling differs in case from the folder on disk, and
+    //     follows a symlinked root (AB-A-0220).
+    public static let current = SemanticVersion(major: 1, minor: 60, patch: 0)
 }

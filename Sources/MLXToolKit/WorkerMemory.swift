@@ -27,6 +27,20 @@ public struct WorkerBudget: Sendable, Codable, Equatable {
     }
 }
 
+/// One external tenant's declared charge in a `WorkerMemoryReport` (contract 1.60.0): the engine's
+/// persistent + transient split for a non-package model. Mirrors `ExternalFootprint` in
+/// MLXMemoryPolicy, which MLXToolKit cannot import.
+public struct ExternalTenantCharge: Sendable, Codable, Equatable, Hashable {
+    public let persistentBytes: UInt64
+    public let transientBytes: UInt64
+    public var totalBytes: UInt64 { persistentBytes &+ transientBytes }
+
+    public init(persistentBytes: UInt64, transientBytes: UInt64) {
+        self.persistentBytes = persistentBytes
+        self.transientBytes = transientBytes
+    }
+}
+
 /// What a worker's engine holds right now, reported back to the host that assigned its budget
 /// (contract 1.57.0, AB-A-0206 item 5). `MLXServeEngine.workerMemoryReport()`.
 ///
@@ -54,11 +68,23 @@ public struct WorkerMemoryReport: Sendable, Codable, Equatable {
     /// Package ids with a run in flight.
     public let running: [String]
     public let date: Date
+    /// Each external tenant's declared charge, by the id it registered under (contract 1.60.0,
+    /// AB-A-0210): the bytes a non-package model holds (`registerExternalTenant`). NOT in
+    /// `residentBytes` / `transientReserveBytes` / `residents`, which stay the packages' own;
+    /// `residentBytes + transientReserveBytes + externalBytes + availableBytes == budgetBytes`
+    /// whenever the budget is not over-committed. `nil` in a report decoded from a pre-1.60 worker.
+    public let externalTenants: [String: ExternalTenantCharge]?
+    /// Σ persistent + transient over `externalTenants` (`nil` as above).
+    public let externalBytes: UInt64?
 
     public init(budgetBytes: UInt64, residentBytes: UInt64, transientReserveBytes: UInt64,
                 availableBytes: UInt64, physFootprintBytes: UInt64?, gpuActiveBytes: UInt64?,
                 gpuCacheBytes: UInt64?, residents: [String: UInt64], running: [String],
-                date: Date = Date()) {
+                date: Date = Date(),
+                externalTenants: [String: ExternalTenantCharge]? = nil,
+                externalBytes: UInt64? = nil) {
+        self.externalTenants = externalTenants
+        self.externalBytes = externalBytes
         self.budgetBytes = budgetBytes
         self.residentBytes = residentBytes
         self.transientReserveBytes = transientReserveBytes
