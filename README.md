@@ -5,7 +5,8 @@
 > MLXEngine is **published and consumable**: tagged **v0.76.0** (capability contract **1.61.0**),
 > and already serving **65 published model packages** (86 tracked, incl. WIP + research — see
 > [the model registry](docs/model-registry.md)) that back **all 37 of the contract's capabilities**
-> save the newest, **music (lyrics-to-song)**, whose first three packages are in flight —
+> including **music (lyrics-to-song)**, with two published packages (ACE-Step 1.5, YuE2-3B) and
+> MiniMax Music 3 in flight —
 > LLM (with **image input** on vision-language packages), TTS (incl. **two-speaker scenes**), **speech editing** (incl. **content, speed, pitch and timbre edits**),
 > **speech-to-text** (one-shot and **live**), text→image (with **native alpha**) /
 > text→video (image-, reference- and **audio-conditioned**, + image/video editing, with
