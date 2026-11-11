@@ -6,7 +6,7 @@
 /// tag, which it already asserts equals the newest tag reachable from HEAD.
 public enum MLXEngineRelease {
     /// The release version without the leading `v` (`"0.76.0"` for tag `v0.75.0`).
-    public static let version = "0.76.0"
+    public static let version = "0.77.0"
     /// The capability contract of this release (`ContractVersion.current`, as text).
     public static var contract: String { ContractVersion.current.description }
 }

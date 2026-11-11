@@ -835,6 +835,12 @@ public actor MLXServeEngine {
                       + "\"\(license.requiredDisplayText ?? "")\" and the manifest declares no .required "
                       + "LicenseNotice carrying it (LicenseDeclaration.notices).")
             }
+            // Port code under custom terms and no notice saying what linking it owes (contract 1.62.0).
+            if let license = manifest.license.portCodeLicenseLackingNotice {
+                print("[License] \(manifest.provenance.sourceRepo): port code is under \(license), not a "
+                      + "standard open-source code licence, and no LicenseNotice names it — a host that "
+                      + "links the package cannot see what it owes (LicenseDeclaration.notices).")
+            }
         }
         let gate = policy.evaluate(manifest.license)
         guard !gate.isAdmitted else { return }
@@ -2397,16 +2403,21 @@ public actor MLXServeEngine {
             }
         }
 
-        // audioSeparation speaker picks (contract 1.59.0, AB-A-0188): declaration-gated, because a
-        // separator that ignored the pick returns every voice — the wrong stem, under the right name.
-        if let separation = request as? AudioSeparationRequest, let speaker = separation.speaker {
-            guard let declared = surface.audioSeparationControls else {
+        // audioSeparation speaker picks (contract 1.59.0, AB-A-0188) and described targets with spans
+        // (1.62.0, AB-A-0268): declaration-gated, because a separator that ignored the pick returns
+        // every voice, and one that ignored a description returns its own fixed stems — the wrong
+        // sound, under the right name. A surface with no controls block runs a plain stem request
+        // exactly as before; one WITH a block is always checked, so a description-only surface
+        // refuses a request that names no target before a multi-GB load.
+        if let separation = request as? AudioSeparationRequest {
+            if let declared = surface.audioSeparationControls {
+                if let reason = declared.refusal(for: separation) {
+                    throw PackageError.unsupportedRequestFeature("\(reason) [\(id)]")
+                }
+            } else if let lever = separation.declaredLever {
                 throw PackageError.unsupportedRequestFeature(
-                    "speaker(.\(speaker.kind.rawValue)) — \(id) declares no speaker selection "
+                    "\(lever) — \(id) declares no \(separation.speaker != nil ? "speaker selection" : "described-target separation") "
                         + "(ToolDescriptor.audioSeparationControls)")
-            }
-            if let reason = declared.refusal(for: separation) {
-                throw PackageError.unsupportedRequestFeature("\(reason) [\(id)]")
             }
         }
 

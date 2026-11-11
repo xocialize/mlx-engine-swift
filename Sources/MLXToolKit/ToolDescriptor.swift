@@ -353,7 +353,8 @@ extension ToolDescriptor {
     }
 
     /// The `audioSeparation` control declaration, or nil when this surface declares none (contract
-    /// 1.59.0). An `AudioSeparationRequest.speaker` is admitted only for a pick it lists.
+    /// 1.59.0). An `AudioSeparationRequest.speaker` is admitted only for a pick it lists, and a
+    /// `targetDescription` / `spans` only where it declares `describedTarget` (1.62.0).
     public var audioSeparationControls: AudioSeparationControls? {
         if case .audioSeparation(let declared) = controls { return declared }
         return nil

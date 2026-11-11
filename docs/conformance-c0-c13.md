@@ -53,6 +53,19 @@ the rest of C7. `.informational` notices (a non-commercial clause, a rights cave
 duty) are what a user should read before choosing the package; a host may fold them behind a
 disclosure, never the `.required` ones.
 
+**C8 when the port code is not under a standard open-source licence** (added 2026-11-11, contract
+1.62.0, AB-A-0268). A Swift translation of upstream code released under custom terms is a derivative
+of it and ships under those terms — SAM-Audio's package is under Meta's SAM License, like its weights.
+Declare that licence in `portCodeLicense`; the same policy judges it as judges the weights. Because a
+port-code licence binds whoever LINKS the package (the terms are compiled into the host's binary), the
+manifest also carries a `LicenseNotice` whose `license` is the port-code licence, saying what a host
+owes — for the SAM License: redistribution only under the same agreement with a copy of it, and the
+prohibited end uses. `SPDXLicense.standardCodeLicenses` (MIT, Apache-2.0, BSD-2/3, ISC, Unlicense) is
+the set that needs no such notice, and `LicenseDeclaration.portCodeLicenseLackingNotice` is nil for a
+conformant declaration (assert it in the manifest test). The engine logs a `[License]` line when it is
+not and still registers the package. A fact about the OUTPUT rather than a licence — "every output
+carries an AudioSeal watermark" — is an `.informational` notice with no `license`.
+
 Why: the gate existed to stop early, careless mistakes while the fleet was small and it was still
 being learned which model licenses are shippable. That job is done — every entry on
 `permissiveAllowlist` now carries a written, reviewed rationale — and a blocker converts a

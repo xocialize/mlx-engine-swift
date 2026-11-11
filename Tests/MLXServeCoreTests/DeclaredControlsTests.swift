@@ -283,6 +283,30 @@ private final class SpeakerPickPackage: ModelPackage {
     }
 }
 
+/// An audioSeparation surface that separates what the caller describes (contract 1.62.0; SAM-Audio).
+/// It returns the description it was handed, so a test sees what reached the package.
+@InferenceActor
+private final class DescribedTargetPackage: ModelPackage {
+    typealias Configuration = StandardConfiguration
+    nonisolated static var manifest: PackageManifest {
+        controlsManifest(surfaces: [AudioSeparationContract.descriptor(
+            name: "described", summary: "m",
+            controls: AudioSeparationControls(stems: [.target, .residual],
+                                              describedTarget: DescribedTargetControls(supportsSpans: true)))])
+    }
+    static var loads = 0
+    nonisolated init(configuration: StandardConfiguration) {}
+    func load() async throws { Self.loads += 1 }
+    func unload() async {}
+    func run(_ request: any CapabilityRequest) async throws -> any CapabilityResponse {
+        guard let separation = request as? AudioSeparationRequest, let words = separation.targetDescription else {
+            throw PackageError.unsupportedCapability(request.capability)
+        }
+        let stem = Audio(format: .wav, data: Data(words.utf8) + Data(count: separation.spans.count))
+        return AudioSeparationResponse(stems: [.target: stem, .residual: stem])
+    }
+}
+
 /// A pre-1.59 separator: stems only, no declaration.
 @InferenceActor
 private final class StemOnlyPackage: ModelPackage {
@@ -730,6 +754,77 @@ private let take = Audio(format: .wav, data: Data(count: 44))
     } catch {
         #expect(unsupportedFeature(error)?.contains("audioSeparationControls") == true)
     }
+}
+
+// MARK: - audioSeparation described target + spans (contract 1.62.0, AB-A-0268)
+
+@Test func aDescribedTargetRoutesWithItsSpans() async throws {
+    let engine = MLXServeEngine()
+    try await engine.register(PackageRegistration.of(DescribedTargetPackage.self), configuration: mockConfig())
+    let response = try await engine.run(AudioSeparationRequest(
+        audio: take, targetDescription: "dog barking",
+        spans: [AudioSeparationSpan(startSeconds: 1, endSeconds: 3),
+                AudioSeparationSpan(startSeconds: 5, endSeconds: 6, present: false)]))
+    let stems = try #require(response as? AudioSeparationResponse)
+    #expect(stems[.target]?.data == Data("dog barking".utf8) + Data(count: 2))
+    #expect(stems[.residual] != nil)
+}
+
+// A description-only surface is refused BEFORE its load when the request names no target, has a
+// malformed span, or asks for a stem it cannot produce.
+@Test func aDescribedTargetSurfaceRefusesBeforeLoading() async throws {
+    let engine = MLXServeEngine()
+    try await engine.register(PackageRegistration.of(DescribedTargetPackage.self), configuration: mockConfig())
+    let loadsBefore = await DescribedTargetPackage.loads
+    let refused: [(AudioSeparationRequest, String)] = [
+        (AudioSeparationRequest(audio: take), "declares no fixed stems"),
+        (AudioSeparationRequest(audio: take, targetDescription: " "), "name the sound"),
+        (AudioSeparationRequest(audio: take, stems: [.vocals], targetDescription: "speech"), "stems(vocals)"),
+        (AudioSeparationRequest(audio: take, targetDescription: "speech",
+                                spans: [AudioSeparationSpan(startSeconds: 4, endSeconds: 2)]), "spans[0]"),
+        (AudioSeparationRequest(audio: take, speaker: .ordinal(1)), "speakerSelection"),
+    ]
+    for (request, expected) in refused {
+        do {
+            _ = try await engine.run(request)
+            Issue.record("expected unsupportedRequestFeature for \(expected)")
+        } catch {
+            #expect(unsupportedFeature(error)?.contains(expected) == true, "\(expected): \(error)")
+        }
+    }
+    let loadsAfter = await DescribedTargetPackage.loads
+    #expect(loadsAfter == loadsBefore)
+}
+
+// Demucs and AuK never see a description: an ignored one returns their own stems under a name the
+// caller did not ask for.
+@Test func aSeparatorThatDeclaresNoDescribedTargetRefusesOne() async throws {
+    let plain = MLXServeEngine()
+    try await plain.register(PackageRegistration.of(StemOnlyPackage.self), configuration: mockConfig())
+    do {
+        _ = try await plain.run(AudioSeparationRequest(audio: take, targetDescription: "speech"))
+        Issue.record("expected unsupportedRequestFeature")
+    } catch {
+        #expect(unsupportedFeature(error)?.contains("described-target separation") == true)
+    }
+    do {
+        _ = try await plain.run(AudioSeparationRequest(
+            audio: take, spans: [AudioSeparationSpan(startSeconds: 0, endSeconds: 1)]))
+        Issue.record("expected unsupportedRequestFeature")
+    } catch {
+        #expect(unsupportedFeature(error)?.hasPrefix("spans") == true)
+    }
+
+    let picks = MLXServeEngine()
+    try await picks.register(PackageRegistration.of(SpeakerPickPackage.self), configuration: mockConfig())
+    do {
+        _ = try await picks.run(AudioSeparationRequest(audio: take, targetDescription: "speech"))
+        Issue.record("expected unsupportedRequestFeature")
+    } catch {
+        #expect(unsupportedFeature(error)?.contains("AudioSeparationControls.describedTarget") == true)
+    }
+    // Its plain requests are untouched by the always-on check.
+    _ = try await picks.run(AudioSeparationRequest(audio: take, stems: [.speaker]))
 }
 
 // MARK: - 16-bit image boundary (contract 1.52.0, AB-A-0158)

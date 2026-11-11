@@ -252,6 +252,51 @@ extension SPDXLicense {
     /// Hi3D v1.0 mesh refiner port (spike AB-T-0385).
     public static let hi3dOpen1_0: SPDXLicense = "LicenseRef-Hi3D-Open-1.0"
 
+    /// Meta's SAM License ("SAM License, Last Updated: November 19, 2025";
+    /// huggingface.co/facebook/sam-audio-base/blob/main/LICENSE, read 2026-11-11; operator acceptance
+    /// and the full reading in AB-D-0220). Non-SPDX, referenced via `LicenseRef-`. The licence of the
+    /// SAM family's weights AND code — the first in the fleet declared on both layers of one package
+    /// (SAM-Audio: C7 and C8, AB-A-0268).
+    /// - **§1a Grant.** Non-exclusive, worldwide, royalty-free: use, reproduce, distribute, modify,
+    ///   create derivative works. Commercial use permitted; **no revenue or scale threshold, no
+    ///   non-compete, no eval-only clause**, no claim on outputs (§5a: you own your derivatives).
+    /// - **§1b-i Same-agreement redistribution.** The Materials and any derivative may be passed on
+    ///   ONLY under this Agreement, with a copy of it. Travels with the weights (the converted bundle
+    ///   ships the LICENSE) — and, where the port code is a translation of upstream's code, with the
+    ///   PACKAGE and with any app that links it: see `standardCodeLicenses`.
+    /// - **§1b-v Prohibited end uses.** No ITAR activity or Trade-Controls-prohibited end use,
+    ///   "including those related to military or warfare purposes, nuclear industries or
+    ///   applications, espionage, or the development or use of guns or illegal weapons". An AUP, the
+    ///   allowlisted `dinov3` (also Meta: "no military/weapons/ITAR") and `gemmaTerms` shape, passed
+    ///   down to whoever the host distributes to.
+    /// - **§1b-iv** no reverse engineering; **§1b-ii** acknowledge in research publications.
+    /// - **§5b** terminates on an IP claim against Meta, and the licensee **indemnifies Meta** against
+    ///   third-party claims arising from its use or distribution (the `neteaseYoudaoModelUse` §4.3
+    ///   shape). **§8** Meta may amend the Agreement, effective immediately. Recorded risks, accepted
+    ///   by the operator: re-read the LICENSE at each publish.
+    ///
+    /// Classification: **allowlisted** (`permissiveAllowlist`, admitted by the default
+    /// `.permissiveOnly`) on BOTH layers. As a weight licence it is strictly less restrictive than
+    /// the allowlisted `ltx2Community` / `lfmOpen1` / `minimaxMusic3Community` (each a revenue gate)
+    /// and the same shape as the allowlisted `dinov3` and `gemmaTerms` (commercial use, a copy of the
+    /// terms with what you distribute, an AUP). It has no UI display duty (`requiredDisplayText` is
+    /// nil). It is NOT a standard open-source code licence, so as a PORT-CODE licence it is admitted
+    /// by the same gate and additionally owes a notice — `LicenseDeclaration.portCodeLicenseLackingNotice`.
+    /// The pass is CONDITIONAL on §1b-v, §5b and §8.
+    public static let sam: SPDXLicense = "LicenseRef-SAM"
+
+    /// The licences a host can link port code under and owe nothing but attribution: the standard
+    /// permissive open-source code licences. Every fleet package's port code was one of these until
+    /// SAM-Audio (contract 1.62.0, AB-A-0268), whose Swift code translates code Meta released under
+    /// the SAM License and so ships under it. `permissiveAllowlist` cannot say this: it mixes code
+    /// licences with reviewed MODEL licences, which were only ever judged as terms on weights.
+    public static let standardCodeLicenses: Set<SPDXLicense> = [
+        .mit, .apache2, .bsd2, .bsd3, .isc, .unlicense,
+    ]
+
+    /// Whether port code under this licence can be linked on attribution alone.
+    public var isStandardCodeLicense: Bool { SPDXLicense.standardCodeLicenses.contains(self) }
+
     /// The exact string a license obliges a host to SHOW on the UI of a product using the weights, or
     /// nil for a license with no display duty. Distinct from redistribution attribution (NOTICE files,
     /// "Built with …" on shipped materials), which travels with the weights, not the screen. A package
@@ -269,7 +314,7 @@ extension SPDXLicense {
     public static let permissiveAllowlist: Set<SPDXLicense> = [
         .mit, .apache2, .bsd2, .bsd3, .isc, .unlicense, .funasrModel, .ccBy4, .ltx2Community, .dinov3,
         .gemmaTerms, .nvidiaOpenModel, .openMDW1_1, .lfmOpen1, .bilibiliModelUse,
-        .neteaseYoudaoModelUse, .minimaxMusic3Community, .hi3dOpen1_0,
+        .neteaseYoudaoModelUse, .minimaxMusic3Community, .hi3dOpen1_0, .sam,
     ]
 
     /// Non-permissive licenses explicitly acknowledged for **eval/research** use only. These are
@@ -399,6 +444,11 @@ public struct LicenseDeclaration: Sendable, Codable, Equatable {
     /// still ships with the weights (NOTICE / THIRD_PARTY_NOTICES); this field is what the gate and
     /// a host read.
     public let additionalWeightLicenses: [SPDXLicense]?
+    /// The licence of the package's own code (C8). Normally a standard open-source code licence
+    /// (`SPDXLicense.standardCodeLicenses`). Where the code is a derivative of upstream code under
+    /// custom terms (SAM-Audio, contract 1.62.0), declare THAT licence here — the same gate judges it
+    /// — and say in a notice naming it what a host that links the package owes
+    /// (`portCodeLicenseLackingNotice`).
     public let portCodeLicense: SPDXLicense
 
     public init(weightLicense: SPDXLicense, additionalWeightLicenses: [SPDXLicense]? = nil,
@@ -444,7 +494,10 @@ public struct LicenseNotice: Sendable, Codable, Equatable {
     public let text: String
     public let display: Display
     /// The license this notice serves, or nil for a note about the package as a whole (YuE2's "covers
-    /// may need the original song's rights" is about the use, not a clause).
+    /// may need the original song's rights" is about the use, not a clause). A fact about the OUTPUT
+    /// goes here too, `.informational` with a nil license: SAM-Audio's "every output carries an
+    /// AudioSeal watermark" (AB-D-0222). There is deliberately no typed watermark field yet — one
+    /// package states it and no host acts on it; promote it when a second does.
     public let license: SPDXLicense?
     /// Where the full terms are (the HF LICENSE blob, a vendor page), for a host to link.
     public let termsURL: String?
@@ -454,6 +507,24 @@ public struct LicenseNotice: Sendable, Codable, Equatable {
         self.display = display
         self.license = license
         self.termsURL = termsURL
+    }
+}
+
+extension LicenseDeclaration {
+    /// The port-code licence, when it is not a standard open-source code licence and no notice names
+    /// it; nil for a conformant declaration (contract 1.62.0, AB-A-0268).
+    ///
+    /// A weight licence binds whoever downloads the weights. A port-code licence binds whoever LINKS
+    /// the package: the terms are compiled into the host's binary, and under the SAM License §1b-i
+    /// that binary is distributed under the same agreement with a copy of it. A host cannot learn
+    /// that from an SPDX id on a list of admitted licences, so the package states it — a
+    /// `LicenseNotice` with `license` set to the port-code licence, `.informational` unless the
+    /// licence also has a display duty. A package's manifest test asserts nil; the engine logs a
+    /// `[License]` line at registration and still registers (declaration, not a gate — the 1.28.0
+    /// rule, and the `missingRequiredDisplayNotices` pattern).
+    public var portCodeLicenseLackingNotice: SPDXLicense? {
+        guard !portCodeLicense.isStandardCodeLicense else { return nil }
+        return (notices ?? []).contains { $0.license == portCodeLicense } ? nil : portCodeLicense
     }
 }
 

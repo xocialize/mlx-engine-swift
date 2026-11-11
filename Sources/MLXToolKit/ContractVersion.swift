@@ -1549,5 +1549,55 @@ public enum ContractVersion {
     //   refuses the lever rather than let the plugin's `metaData` shim and the typed field diverge.
     //   Additive: new defaulted members and init arguments, three `SurfaceControls` cases.
     //     ⚠️ Exhaustive switches over `SurfaceControls` need the three new cases (the 1.59.0 note).
-    public static let current = SemanticVersion(major: 1, minor: 61, patch: 0)
+    // 1.62.0 (2026-11-11, additive): A DESCRIBED TARGET AND TIME SPANS ON audioSeparation, and the
+    //   SAM License, closing AB-A-0268 (mlx-audio, E29 / AB-T-0470 / AB-D-0221). SAM-Audio
+    //   (`mlx-sam-audio-swift`) separates the sound a caller names in words and returns it with
+    //   everything else; 1.59.0's request had stems and a speaker pick and nowhere to put either.
+    //   • `AudioSeparationRequest.targetDescription: String?` — the sound, in words. DECIDED: not
+    //     `description` (the ask's name): that belongs to `CustomStringConvertible`. The response
+    //     carries `Stem.target` and `Stem.residual` (new common stems; not `.other`, which a
+    //     fixed-stem model uses for "none of my named stems"); `stems` may narrow to one.
+    //   • `AudioSeparationRequest.spans: [AudioSeparationSpan]` — `{startSeconds, endSeconds,
+    //     present = true}`, seconds from the start, half-open; `present: false` is a negative anchor.
+    //     DECIDED: `AudioSeparationSpan`, not `SeparationSpan` — the SAM core already exports that
+    //     name and a wrapper imports both; a non-optional array defaulting to empty (one way to say
+    //     "none"), with a custom decoder so pre-1.62 JSON decodes.
+    //   • `AudioSeparationControls.describedTarget: DescribedTargetControls? {supportsSpans,
+    //     phrasing}` — DECIDED: one optional value, not the ask's two flags, so spans without a
+    //     described target cannot be declared. `phrasing` is the wording that works ("a short
+    //     lowercase noun phrase"), carried into the descriptor's parameter summary; guidance, never
+    //     enforced. `fixedStems` = `stems` less target / residual.
+    //   • `refusal(for:audioDurationSeconds:)` refuses: a description or spans on a surface that
+    //     does not declare them; a whitespace-only description; spans, or a requested target /
+    //     residual stem, without a description; no description on a surface with no fixed stems and
+    //     no speaker picks; a description together with a speaker pick (two ways of naming the
+    //     target); any other stem alongside a description; a span that is not finite, starts before
+    //     0 or does not end after it starts; two overlapping spans that disagree on `present`.
+    //     DECIDED: "a span outside the audio" is refused only where the length is known. `Audio`
+    //     states no duration, so the engine passes nil; the package, which decodes the audio, calls
+    //     the same function with the length and refuses with the same words.
+    //   • Engine: a surface WITH `audioSeparationControls` now has every separation request checked
+    //     (before 1.62 only one carrying a speaker), so a description-only surface refuses a request
+    //     naming no target before its load; a surface with none refuses the three levers and runs a
+    //     plain stem request exactly as before.
+    //   • The descriptor advertises `targetDescription` (required when the surface has no fixed stems
+    //     and no speaker picks) and `spans` only where declared — the `speaker` pattern.
+    //   • `SPDXLicense.sam` (`LicenseRef-SAM`), ALLOWLISTED (AB-D-0220): commercial use, no scale gate,
+    //     same-agreement redistribution, a military / ITAR / nuclear / espionage / weapons AUP, §5b
+    //     indemnity and §8 amendment as recorded risks. No UI display duty.
+    //   • PORT CODE UNDER CUSTOM TERMS (C8). SAM-Audio is the first package whose own code is not
+    //     under a standard open-source licence. DECIDED: it is declared where C8 always was
+    //     (`portCodeLicense: .sam`) and judged by the same gate — no second policy — and it owes a
+    //     notice: `SPDXLicense.standardCodeLicenses` / `isStandardCodeLicense` name the licences a
+    //     host links on attribution alone, and `LicenseDeclaration.portCodeLicenseLackingNotice` is
+    //     non-nil when the port-code licence is outside that set and no `LicenseNotice` names it.
+    //     A manifest test asserts nil; the engine logs a `[License]` line and registers (the 1.28.0
+    //     stance). Every existing package's port code is in the set: nothing changes for them.
+    //   • NOT ADDED: a typed "outputs are watermarked" field. It is an `.informational`
+    //     `LicenseNotice` with a nil license (the YuE2 "about the use" slot); one package states it
+    //     and no host acts on it. Promote it when a second does.
+    //   Additive: new defaulted members and init arguments, two `Stem` constants, one licence.
+    //     ⚠️ `AudioSeparationControls.refusal(for:)` gained a defaulted second parameter — source
+    //     compatible for callers, not for code taking it as a function reference.
+    public static let current = SemanticVersion(major: 1, minor: 62, patch: 0)
 }
