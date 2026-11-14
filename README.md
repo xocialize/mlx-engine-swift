@@ -3,7 +3,7 @@
 > ## Status — usable, evolving
 >
 > MLXEngine is **published and consumable**: tagged **v0.78.0** (capability contract **1.63.0**),
-> and already serving **65 published model packages** (86 tracked, incl. WIP + research — see
+> and already serving **67 published model packages** (87 tracked, incl. WIP + research — see
 > [the model registry](docs/model-registry.md)) that back **all 38 of the contract's capabilities**
 > except the newest, **character parts** (`characterPart`: a picture or point cloud and a body → a rigged,
 > fitted part; hair first, HairDeck in flight),
