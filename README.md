@@ -2,9 +2,11 @@
 
 > ## Status — usable, evolving
 >
-> MLXEngine is **published and consumable**: tagged **v0.77.0** (capability contract **1.62.0**),
+> MLXEngine is **published and consumable**: tagged **v0.78.0** (capability contract **1.63.0**),
 > and already serving **65 published model packages** (86 tracked, incl. WIP + research — see
-> [the model registry](docs/model-registry.md)) that back **all 37 of the contract's capabilities**
+> [the model registry](docs/model-registry.md)) that back **all 38 of the contract's capabilities**
+> except the newest, **character parts** (`characterPart`: a picture or point cloud and a body → a rigged,
+> fitted part; hair first, HairDeck in flight),
 > including **music (lyrics-to-song)**, with two published packages (ACE-Step 1.5, YuE2-3B) and
 > MiniMax Music 3 in flight —
 > LLM (with **image input** on vision-language packages), TTS (incl. **two-speaker scenes**), **speech editing** (incl. **content, speed, pitch and timbre edits**),

@@ -150,6 +150,18 @@ failure *class* rather than the known mechanism — statistic drift, live `Dropo
 training-mode-sensitive not yet met — and is what would have caught BiRefNet without anyone knowing
 `BatchNorm` was the mechanism.
 
+**C2 / C5 on `characterPart`** (added 2026-11-13, contract 1.63.0, AB-A-0277). A package that makes a
+body-fitted part of a character (hair, a garment, an accessory) registers under `characterPart`, not
+`imageTo3D` with a specialty: the box the part is read from and the body it goes on are typed fields
+(`CharacterPartRequest.subjectBox`, `.body`), and putting either in `metaData` fails C5. The surface is
+built with `CharacterPartContract.descriptor(controls:)` — the declaration is required, and a manifest
+test asserts `CharacterPartControls.declarationProblems` is empty. The engine refuses, before
+admission, a source the surface does not read, a box or body it does not declare, a missing required
+box, and any request on a surface with no declaration; a package driven directly calls
+`CharacterPartControls.refusal(for:)` for the same words. C2: the response's `mesh` is the part alone
+as a GLB (an item, not an avatar), `fittedToBody` is true exactly when a body was given and used, and
+`part` names what was made.
+
 **C5 and typed adapters — the ADP gate** (added 2026-10-19, contract 1.53.0, AB-A-0189). Adapters
 (LoRA) left `metaData`: under C5 they are now a should-be-canonical parameter, so a package that takes
 adapters declares `ToolDescriptor.adapters` (`AdapterSupport`: base model, key dialects, kinds, how many,

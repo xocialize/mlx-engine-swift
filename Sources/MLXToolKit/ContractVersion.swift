@@ -1599,5 +1599,44 @@ public enum ContractVersion {
     //   Additive: new defaulted members and init arguments, two `Stem` constants, one licence.
     //     ⚠️ `AudioSeparationControls.refusal(for:)` gained a defaulted second parameter — source
     //     compatible for callers, not for code taking it as a function reference.
-    public static let current = SemanticVersion(major: 1, minor: 62, patch: 0)
+    // 1.63.0 (2026-11-13, additive): THE characterPart CAPABILITY, closing AB-A-0277 (mlx-3d,
+    //   HairDeck / AB-P-0012 / AB-T-0481). HairDeck turns one character picture plus the head box —
+    //   or a 10,000-point cloud of a hairstyle — into a hair ITEM: card geometry with per-card
+    //   colours, chain bones and a `VRMC_springBone` block, placed on a given VRM's head.
+    //   • WHY NOT `imageTo3D` with a hair specialty. Three things do not fit and one would mislead:
+    //     the head box and the body have no field there and both are needed for a usable result
+    //     (C5 keeps them out of `metaData`); its `image` is REQUIRED, and the point-cloud source has
+    //     none; and a planner asking "make this picture 3D" would be eligible to receive hair alone —
+    //     the `imageRelight` rule (a request must not be silently answered by a different operation).
+    //     WHY NOT `meshRig`: that rigs geometry the caller already has.
+    //   • `Capability.characterPart` → `CanonicalOutput.mesh`. `CharacterPartRequest {image?,
+    //     subjectBox?, pointCloud?, body?, part?, seed?, springBones?, colors?, mode?, metaData}` →
+    //     `CharacterPartResponse {mesh, part, fittedToBody}`. Exactly ONE source (`input`,
+    //     `shapeProblem`). `subjectBox` is `[x0, y0, x1, y1]` in source pixels — the
+    //     `PromptSegmentRequest.box` convention. `body` is the VRM / rigged GLB itself (read only);
+    //     nil → the part in the model's own frame.
+    //   • DECIDED: the point cloud is a FIELD of the same request, not a `Mode` and not a second
+    //     capability. A mode selects output semantics for the same input artifacts (C4); here the
+    //     input differs and the output is the same item.
+    //   • DECIDED: the body is the FILE, with no typed "few numbers" alternative. Which numbers a
+    //     model needs from a body (HairDeck: face width, an anchor, the head bone's rest transform)
+    //     is that model's business; a second provider would need others. Promote a typed anchor if
+    //     a consumer measures the file round trip as a real cost.
+    //   • `CharacterPartControls` as `SurfaceControls.characterPart` (`characterPartControls`),
+    //     REQUIRED (`CharacterPartContract.descriptor(controls:)`): `parts` (open
+    //     `CharacterPartKind`: hair / garment / accessory; first = default), `inputs`
+    //     (image / pointCloud), `features` (subjectBox, bodyFit, springBones, colors),
+    //     `requiresSubjectBox`; `declarationProblems`; `refusal(for:)`. The engine refuses before
+    //     admission: an undeclared source, box, body or part, a missing required box, a malformed
+    //     box, `springBones` / `colors` asked of a surface that emits none, and any request on a
+    //     surface with no declaration. Only declared parameters are advertised.
+    //   • `PointCloud` artifact (`.ply`, `pointCount?`, `hasNormals`) and
+    //     `ParameterSchema.Kind.pointCloud` — the first point-cloud input.
+    //   • `Specialty.characterHair`.
+    //   • NOT ADDED: `characterPart` in `CancellationConformance.longRunCapabilities`. The first
+    //     provider runs in about a second warm; a package with a long run declares a cadence anyway.
+    //   Additive: one capability, one artifact, one controls case, one parameter kind, one specialty.
+    //     ⚠️ exhaustive switches over `Capability`, `SurfaceControls` and `ParameterSchema.Kind`
+    //     need the new case or `@unknown default` (C12).
+    public static let current = SemanticVersion(major: 1, minor: 63, patch: 0)
 }

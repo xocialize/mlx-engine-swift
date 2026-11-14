@@ -191,6 +191,21 @@ public enum Capability: String, Codable, Sendable, CaseIterable, Hashable {
     /// not `speechEdit`, because the output is a new performance of a SONG, not the same words
     /// re-delivered.)
     case music
+    /// **Character part** — a reference of ONE part of a character (a picture of the character plus
+    /// the box the part is read from, or a point cloud of the part's shape) + optionally the BODY it
+    /// goes on (a VRM / rigged GLB) → that part as an ITEM (`CanonicalOutput.mesh`, GLB bytes): its own
+    /// geometry, skinned to bones named as on the body, placed on the body, with secondary-motion
+    /// physics (`VRMC_springBone`) where the surface declares it. Which parts a surface makes (hair,
+    /// garment, accessory), which sources it reads and which levers it honors are a PACKAGE
+    /// DECLARATION (`CharacterPartControls`, required), and the engine refuses the rest before
+    /// admission. Contract 1.63.0; introduced by HairDeck (`mlx-hairdeck-swift`, AB-A-0277).
+    ///
+    /// (Distinct from `imageTo3D` — that INVENTS a free-standing object from a picture and has no
+    /// body, no box and no rig, so a planner asking "make this picture 3D" must never be handed hair
+    /// alone; and its `image` is required, where a part can come from a point cloud. Distinct from
+    /// `meshRig` — that rigs geometry the caller already has; this GENERATES the geometry and returns
+    /// it already rigged and fitted. Merging the item into the avatar file is the consumer's step.)
+    case characterPart
 }
 
 /// The fixed output artifact kind for a capability. Not negotiable per package (C2).
@@ -209,7 +224,7 @@ public enum CanonicalOutput: String, Codable, Sendable {
     /// consumers don't treat a mask track as a single playable clip.
     case matteSequence
     /// A 3D triangle **mesh** (vertices + faces), serialized as GLB bytes. The canonical output of
-    /// `imageTo3D`. Net-new artifact kind (all others are 2D image / video / audio / text / matte) —
+    /// `imageTo3D`, `meshRig` and `characterPart`. Net-new artifact kind (all others are 2D image / video / audio / text / matte) —
     /// distinct from `.image`/`.video` so generic consumers don't treat geometry as a rendered frame.
     case mesh
 }
@@ -254,6 +269,7 @@ extension Capability {
         case .layerDecompose: return .image
         case .speechEdit: return .audio
         case .music: return .audio
+        case .characterPart: return .mesh
         }
     }
 }

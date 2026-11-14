@@ -68,7 +68,7 @@ private final class DriftingSpecialtyPackage: ModelPackage {
     // Every core constant is registered — the set and the constants can't drift apart silently.
     for specialty in [Specialty.general, .coder, .researcher, .companion, .poseless, .poseDriven,
                       .emotionControl, .durationControl, .voiceClone, .realtimeStreaming, .anime,
-                      .threeDGeneration, .meshRigging, .characterRigging] {
+                      .threeDGeneration, .meshRigging, .characterRigging, .characterHair] {
         #expect(specialty.isRegistered, "\(specialty.rawValue) missing from registeredVocabulary")
     }
     #expect(Specialty("line-art").isRegistered == false)

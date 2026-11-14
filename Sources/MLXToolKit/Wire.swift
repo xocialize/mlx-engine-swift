@@ -221,6 +221,7 @@ public enum CapabilityWire {
         case .layerDecompose: LayerDecomposeRequest.self
         case .speechEdit: SpeechEditRequest.self
         case .music: MusicRequest.self
+        case .characterPart: CharacterPartRequest.self
         }
     }
 
@@ -264,6 +265,7 @@ public enum CapabilityWire {
         case .layerDecompose: LayerDecomposeResponse.self
         case .speechEdit: SpeechEditResponse.self
         case .music: MusicResponse.self
+        case .characterPart: CharacterPartResponse.self
         }
     }
 

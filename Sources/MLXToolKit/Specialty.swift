@@ -52,6 +52,8 @@ extension Specialty {
     public static let meshRigging: Specialty = "mesh-rigging"
     /// Rigging specialized to humanoid characters (e.g. SkinTokens `skinOnly` on a VRM).
     public static let characterRigging: Specialty = "character-rigging"
+    /// Generates hair for a character (e.g. HairDeck on `characterPart`). camelCase, as new terms are.
+    public static let characterHair: Specialty = "characterHair"
 }
 
 // MARK: - Vocabulary governance (C6)
@@ -88,7 +90,7 @@ extension Specialty {
         .poseless, .poseDriven,
         .emotionControl, .durationControl, .voiceClone, .realtimeStreaming,
         .anime,
-        .threeDGeneration, .meshRigging, .characterRigging,
+        .threeDGeneration, .meshRigging, .characterRigging, .characterHair,
     ]
 
     /// Whether this term is in the registered vocabulary.

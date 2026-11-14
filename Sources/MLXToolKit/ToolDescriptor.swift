@@ -23,6 +23,9 @@ public struct ParameterSchema: Sendable, Codable, Equatable {
         /// A 3D mesh input (GLB bytes). First used by `meshRig` (contract 1.19.0) — the first
         /// capability whose INPUT is a mesh (`imageTo3D` only OUTPUTs one, from an image input).
         case mesh
+        /// A point-cloud input (PLY bytes, `PointCloud`). First used by `characterPart` (contract
+        /// 1.63.0).
+        case pointCloud
     }
 
     public let name: String
@@ -182,6 +185,9 @@ public enum SurfaceControls: Sendable, Codable, Equatable {
     case videoUpscale(VideoUpscaleControls)
     /// A target frame rate on a frame-interpolation surface (contract 1.61.0). Optional.
     case frameInterpolate(FrameInterpolateControls)
+    /// The parts a character-part surface makes, the sources it reads and the levers it honors
+    /// (contract 1.63.0, AB-A-0277). Required on every `characterPart` surface.
+    case characterPart(CharacterPartControls)
 }
 
 /// Self-description a package publishes so the registry — and any out-of-process tool client, such
@@ -218,7 +224,7 @@ public struct ToolDescriptor: Sendable, Codable, Equatable {
     /// `ttsControls` / `sttControls` / `t2vControls` / `t2iControls` / `speechEditControls`
     /// accessors below (and, since 1.54.0, `llmControls`; since 1.56.0, `musicControls`; since 1.59.0,
     /// `audioSeparationControls`; since 1.61.0, `videoEditControls` / `videoUpscaleControls` /
-    /// `frameInterpolateControls`).
+    /// `frameInterpolateControls`; since 1.63.0, `characterPartControls`).
     public let controls: SurfaceControls?
     /// The raw `Image` formats this surface reads AND returns in kind, beyond the png/jpeg every image
     /// surface takes (contract 1.52.0, additive). A descriptor-level member, like `quantFloor`, because
@@ -379,6 +385,14 @@ extension ToolDescriptor {
         return nil
     }
 
+    /// The `characterPart` control declaration, or nil when this surface declares none (contract
+    /// 1.63.0). A `CharacterPartRequest` is admitted only for what it declares
+    /// (`CharacterPartControls.refusal(for:)`).
+    public var characterPartControls: CharacterPartControls? {
+        if case .characterPart(let declared) = controls { return declared }
+        return nil
+    }
+
     /// Whether a declared controls block matches this surface's capability. `false` is a package
     /// bug: the block would describe a surface the descriptor does not name.
     public var controlsMatchCapability: Bool {
@@ -395,6 +409,7 @@ extension ToolDescriptor {
         case .videoEdit: return capability == .videoEdit
         case .videoUpscale: return capability == .videoUpscale
         case .frameInterpolate: return capability == .frameInterpolate
+        case .characterPart: return capability == .characterPart
         }
     }
 }

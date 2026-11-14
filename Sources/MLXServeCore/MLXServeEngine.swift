@@ -2463,6 +2463,24 @@ public actor MLXServeEngine {
             }
         }
 
+        // characterPart (contract 1.63.0, AB-A-0277): the declaration is required and everything is
+        // gated on it — the source, the box, the body, the part, the two switches. An ignored body
+        // returns the part off the avatar, an ignored box reads the wrong head, and nothing in the GLB
+        // says so. A surface with no declaration is refused outright: without it the engine cannot
+        // know which source the package reads. The rule lives in MLXToolKit so a directly driven
+        // package refuses identically.
+        if let part = request as? CharacterPartRequest {
+            guard let declared = surface.characterPartControls else {
+                throw PackageError.unsupportedRequestFeature(
+                    "characterPart — \(id) declares no CharacterPartControls "
+                        + "(ToolDescriptor.characterPartControls); build the surface with "
+                        + "CharacterPartContract.descriptor(controls:)")
+            }
+            if let reason = declared.refusal(for: part) {
+                throw PackageError.unsupportedRequestFeature("\(reason) [\(id)]")
+            }
+        }
+
         // BOTH stt entry points, one site (contract 1.39.0). `STTSessionRequest` is a
         // `CapabilityRequest` precisely so this refusal cannot drift between `run()` and
         // `transcribeLive()`: a caller must not get biasing on one door and silence on the other.

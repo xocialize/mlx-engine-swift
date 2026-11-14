@@ -121,6 +121,30 @@ public struct Mesh: Artifact, Sendable, Equatable {
     }
 }
 
+/// Canonical point-cloud artifact (contract 1.63.0) — an unordered set of 3D points, with or without
+/// per-point normals, serialized as **PLY** bytes in `data` (ASCII or binary little-endian; vertex
+/// properties `x y z`, plus `nx ny nz` when `hasNormals`). An INPUT artifact: the first consumer is
+/// `characterPart`, where a cloud of a shape (a hairstyle) is the source the part is generated from.
+///
+/// Not a `Mesh`: a `Mesh` is a triangle surface in a GLB, and a consumer handed one may render it; a
+/// cloud has no faces. `pointCount` is optional descriptive metadata (the PLY header states the true
+/// count). `hasNormals` is a promise the header keeps: a package that needs normals refuses a cloud
+/// without them rather than estimating them silently.
+public struct PointCloud: Artifact, Sendable, Equatable {
+    public enum Format: String, Sendable, Codable { case ply }
+    public let format: Format
+    public let data: Data
+    public let pointCount: Int?
+    public let hasNormals: Bool
+
+    public init(format: Format = .ply, data: Data, pointCount: Int? = nil, hasNormals: Bool = false) {
+        self.format = format
+        self.data = data
+        self.pointCount = pointCount
+        self.hasNormals = hasNormals
+    }
+}
+
 /// Canonical video artifact.
 ///
 /// Every fact beyond `format` and `data` is optional and describes the container's contents, so a
@@ -245,6 +269,27 @@ extension Mesh: Codable {
         try c.encodeIfPresent(vertexCount, forKey: .vertexCount)
         try c.encodeIfPresent(faceCount, forKey: .faceCount)
         try c.encode(hasVertexColors, forKey: .hasVertexColors)
+    }
+}
+
+extension PointCloud: Codable {
+    private enum CodingKeys: String, CodingKey { case format, data, file, pointCount, hasNormals }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        format = try c.decode(Format.self, forKey: .format)
+        data = try ArtifactSpool.decodeBytes(c, data: .data, file: .file, decoder: decoder)
+        pointCount = try c.decodeIfPresent(Int.self, forKey: .pointCount)
+        hasNormals = try c.decode(Bool.self, forKey: .hasNormals)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(format, forKey: .format)
+        try ArtifactSpool.encodeBytes(data, fileExtension: format.rawValue, &c,
+                                      data: .data, file: .file, encoder: encoder)
+        try c.encodeIfPresent(pointCount, forKey: .pointCount)
+        try c.encode(hasNormals, forKey: .hasNormals)
     }
 }
 
