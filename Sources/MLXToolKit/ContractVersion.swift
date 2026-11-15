@@ -1671,5 +1671,34 @@ public enum ContractVersion {
     //     capability. Same shape as Lucida-on-BiRefNet, FireRed-on-QwenImageEdit, Klein base/distilled.
     //   Additive: pre-1.64 request and response JSON decode (all new fields optional).
     //     ⚠️ exhaustive switches over `SurfaceControls` need the new case or `@unknown default` (C12).
-    public static let current = SemanticVersion(major: 1, minor: 64, patch: 0)
+    // 1.65.0 (2026-11-15, additive): SPEECH TIMINGS ON tts, closing AB-A-0289 (mlx-3d, avatar
+    //   lip-sync / AB-T-0490; producers in AB-A-0288, mlx-audio). A VRM head lip-syncs to a cloning TTS
+    //   and needs to know when each word is spoken. Until now `TTSResponse` carried only `audio` and
+    //   `TTSStreamChunk` had no timing field, so no package could return timings through the engine.
+    //   • `TTSTimings {words: [TTSWordTiming], phonemes: [TTSPhonemeTiming]?, phonemeAlphabet?}` on
+    //     `TTSResponse.timings` and `TTSStreamChunk.timings`. `TTSWordTiming(text, start, duration)`
+    //     has the same fields as `STTSegment`. `TTSPhonemeTiming(symbol, start, duration, wordIndex?)`,
+    //     where `wordIndex` indexes the response-wide words. `TTSPhonemeAlphabet` is an open tag
+    //     (.ipa / .misaki / .espeak / .arpabet). Origin: seconds from the first sample of the response
+    //     audio, which on a stream is the first sample of chunk 0, never chunk-relative.
+    //     `shapeProblem` checks for finite, non-negative values in spoken order, and refuses phonemes
+    //     without an alphabet. `concatenating(_:)` joins chunk timings.
+    //   • STREAMING: each timing rides exactly one chunk, the one where it became FINAL. It may
+    //     describe audio from earlier chunks (LACI knows a word's end once the next word starts) or
+    //     from later ones (an aligner run on a sentence before it plays). The chunks concatenate to
+    //     the response's timings exactly. That is the new live validator STR-8,
+    //     `StreamingConformance.checkTimingParity`. The 1.25.0 "no timing field" note referred to
+    //     run-timing OBSERVABILITY, which still rides `RunProgress`; speech timing is data.
+    //   • OPT-IN and DECLARATION-GATED: `TTSRequest.timingDetail: TTSTimingDetail?` (.words /
+    //     .phonemes) asks for timings, because a forced-aligner pass costs latency. The surface
+    //     declares `TTSControls.timings: TTSTimingDeclaration? {source: .native | .aligned,
+    //     phonemeAlphabet?, wordResolution?, streamed}`, and callers route on the derived
+    //     `providesWordTimings` / `providesPhonemeTimings`. The engine refuses, before admission,
+    //     `timingDetail` on a surface that declares no timings, and `.phonemes` on one without an
+    //     alphabet (the `targetDuration` rule). When asked, a declaring package MUST fill
+    //     `TTSResponse.timings`. When not asked, it MAY return free timings, but a caller cannot rely
+    //     on that. `TTSContract.descriptor` advertises `timingDetail` only when declared.
+    //   Additive and source-compatible: every new member is optional or defaulted, and pre-1.65
+    //     request, response, chunk and descriptor JSON decodes. No new enum case on an existing type.
+    public static let current = SemanticVersion(major: 1, minor: 65, patch: 0)
 }

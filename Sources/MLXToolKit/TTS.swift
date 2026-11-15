@@ -125,6 +125,18 @@ public struct TTSRequest: CapabilityRequest, Codable {
     /// decision the flag exists to make routable. **Not a hard guarantee**: a package fits as
     /// closely as its native duration control allows, and the returned `.wav` is the truth.
     public let targetDuration: TimeInterval?
+    /// Ask for word (or word + phoneme) timings with the audio (contract 1.65.0, AB-A-0289). Nil
+    /// means none were asked for. Every pre-1.65 request is nil.
+    ///
+    /// The field is opt-in rather than always-on because some producers have a real cost: a forced
+    /// aligner run after synthesis (`TTSTimingDeclaration.Source.aligned`) adds latency to every
+    /// sentence. DECLARATION-GATED: `MLXServeEngine.run` / `stream` refuse it before admission with
+    /// `PackageError.unsupportedRequestFeature` on a surface whose `ttsControls?.timings` is nil,
+    /// and refuse `.phonemes` on one that declares no `phonemeAlphabet`. When the field is set on a
+    /// declaring surface, the package MUST return `TTSResponse.timings` at the asked detail. When
+    /// the field is nil, a package MAY still return timings it gets for free, but a caller cannot
+    /// rely on that.
+    public let timingDetail: TTSTimingDetail?
     public let mode: Mode?
     public let metaData: MetaData
 
@@ -134,6 +146,7 @@ public struct TTSRequest: CapabilityRequest, Codable {
                 additionalSpeakers: [TTSSpeakerVoice]? = nil,
                 emotion: TTSEmotion? = nil,
                 targetDuration: TimeInterval? = nil,
+                timingDetail: TTSTimingDetail? = nil,
                 mode: Mode? = nil,
                 metaData: MetaData = [:]) {
         self.text = text
@@ -142,6 +155,7 @@ public struct TTSRequest: CapabilityRequest, Codable {
         self.additionalSpeakers = additionalSpeakers
         self.emotion = emotion
         self.targetDuration = targetDuration
+        self.timingDetail = timingDetail
         self.mode = mode
         self.metaData = metaData
     }
@@ -153,6 +167,7 @@ public struct TTSRequest: CapabilityRequest, Codable {
                 speakers: [TTSSpeakerVoice],
                 emotion: TTSEmotion? = nil,
                 targetDuration: TimeInterval? = nil,
+                timingDetail: TTSTimingDetail? = nil,
                 mode: Mode? = nil,
                 metaData: MetaData = [:]) {
         let first = speakers.first ?? TTSSpeakerVoice()
@@ -162,6 +177,7 @@ public struct TTSRequest: CapabilityRequest, Codable {
                   additionalSpeakers: speakers.count > 1 ? Array(speakers.dropFirst()) : nil,
                   emotion: emotion,
                   targetDuration: targetDuration,
+                  timingDetail: timingDetail,
                   mode: mode,
                   metaData: metaData)
     }
@@ -177,15 +193,25 @@ public struct TTSRequest: CapabilityRequest, Codable {
 /// Canonical TTS response. Always returns `.wav` audio in serialized round-trip form.
 public struct TTSResponse: CapabilityResponse, Codable {
     public let audio: Audio
-    public init(audio: Audio) { self.audio = audio }
+    /// When each word (and phoneme) is spoken in `audio`, in seconds from its first sample
+    /// (contract 1.65.0, AB-A-0289). Nil means not reported, which is every pre-1.65 package. It is
+    /// non-nil whenever the request set `timingDetail` on a surface that declares
+    /// `TTSControls.timings`. It may also be non-nil unasked, when the package gets timings for free.
+    /// For a streamed run, this is the concatenation of every chunk's `timings` (STR-8).
+    public let timings: TTSTimings?
+    public init(audio: Audio, timings: TTSTimings? = nil) {
+        self.audio = audio
+        self.timings = timings
+    }
 }
 
 /// One PCM slice of an in-flight TTS synthesis (contract 1.25.0, ENGINE-NEEDS N2).
 ///
 /// Deliberately NOT an `Audio` artifact: a per-chunk .wav container would be waste and a lie
 /// (no valid standalone header semantics). The canonical artifact contract is untouched — the
-/// aggregated response a streaming run also returns is still always `.wav`. No timing field:
-/// timing is observability and rides `RunProgress` (the observability plane), not the data plane.
+/// aggregated response a streaming run also returns is still always `.wav`. Run-timing
+/// OBSERVABILITY (latency, real-time factor) still rides `RunProgress`, not this type. Speech
+/// timing, meaning when each word is spoken, is DATA, and since 1.65.0 it rides `timings` below.
 public struct TTSStreamChunk: Sendable, Codable, Equatable {
     /// Mono PCM samples, normalized to [-1, 1].
     public let samples: [Float]
@@ -194,12 +220,221 @@ public struct TTSStreamChunk: Sendable, Codable, Equatable {
     public let index: Int
     /// Exactly one chunk carries `true`, and it is the last.
     public let isFinal: Bool
+    /// The word (and phoneme) timings that became FINAL with this chunk (contract 1.65.0,
+    /// AB-A-0289). Nil or empty means none did. Times are measured from the first sample of chunk 0,
+    /// the same origin as `TTSResponse.timings`, and never from this chunk's start.
+    ///
+    /// Each timing rides exactly one chunk. It may describe audio that went out in an EARLIER
+    /// chunk: a reading-position tracker (ZONOS3's LACI) knows a word's end only once the next word
+    /// starts. It may also describe audio that a LATER chunk will carry: an aligner that runs on a
+    /// sentence before its audio goes out. A consumer schedules timings against its own playback
+    /// clock, not against chunk boundaries. Concatenating every chunk's `words` (and `phonemes`)
+    /// in order gives the aggregated response's `timings` exactly (STR-8). The final chunk may
+    /// carry the trailing words. `phonemeAlphabet` is repeated on every chunk that carries phonemes.
+    public let timings: TTSTimings?
 
-    public init(samples: [Float], sampleRate: Int, index: Int, isFinal: Bool) {
+    public init(samples: [Float], sampleRate: Int, index: Int, isFinal: Bool,
+                timings: TTSTimings? = nil) {
         self.samples = samples
         self.sampleRate = sampleRate
         self.index = index
         self.isFinal = isFinal
+        self.timings = timings
+    }
+}
+
+// MARK: - Speech timings (contract 1.65.0, AB-A-0289)
+
+/// When one word is spoken in a TTS response (contract 1.65.0).
+///
+/// It uses the same three fields as `STTSegment`, so a forced aligner's output and a TTS
+/// package's native timings are the same shape on both sides of the contract.
+public struct TTSWordTiming: Sendable, Codable, Equatable {
+    /// The word as the package aligned it. This may be the normalised spoken form, for example
+    /// "twenty" for "20". It need not be a substring of `TTSRequest.text`.
+    public let text: String
+    /// Seconds from the first sample of the response audio. For a stream, that is the first sample
+    /// of chunk 0.
+    public let start: TimeInterval
+    /// Seconds. A producer that knows only starts (Dia2) uses the next word's start minus this
+    /// one's, and the last word runs to the end of speech.
+    public let duration: TimeInterval
+
+    public init(text: String, start: TimeInterval, duration: TimeInterval) {
+        self.text = text
+        self.start = start
+        self.duration = duration
+    }
+
+    /// `start + duration`.
+    public var end: TimeInterval { start + duration }
+}
+
+/// When one phoneme is spoken in a TTS response (contract 1.65.0). Its `symbol` is written in
+/// the `TTSTimings.phonemeAlphabet` it travels with.
+public struct TTSPhonemeTiming: Sendable, Codable, Equatable {
+    public let symbol: String
+    /// Seconds, from the same origin as `TTSWordTiming.start`.
+    public let start: TimeInterval
+    public let duration: TimeInterval
+    /// The word this phoneme belongs to: an index into the RESPONSE-WIDE `words` array, which on a
+    /// stream is the concatenation of every chunk's words, not this chunk's. Nil means not
+    /// attributed (punctuation pauses, or a producer that does not track it).
+    public let wordIndex: Int?
+
+    public init(symbol: String, start: TimeInterval, duration: TimeInterval,
+                wordIndex: Int? = nil) {
+        self.symbol = symbol
+        self.start = start
+        self.duration = duration
+        self.wordIndex = wordIndex
+    }
+
+    /// `start + duration`.
+    public var end: TimeInterval { start + duration }
+}
+
+/// The phoneme inventory a `TTSPhonemeTiming.symbol` is written in (contract 1.65.0).
+///
+/// It is an OPEN tag, for the reason `Mode` is one: the alphabets belong to the G2P front-ends
+/// (misaki, espeak-ng, CMUdict). A closed enum would make the next front-end wait for a contract
+/// revision. A consumer that maps phonemes to visemes needs the tag to choose its table.
+public struct TTSPhonemeAlphabet: RawRepresentable, Sendable, Codable, Equatable, Hashable,
+                                  ExpressibleByStringLiteral {
+    public let rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public init(stringLiteral value: String) { self.rawValue = value }
+
+    /// The International Phonetic Alphabet, one IPA segment per symbol.
+    public static let ipa: TTSPhonemeAlphabet = "ipa"
+    /// misaki's phoneme set (Kokoro's G2P): IPA-based, with misaki's own diphthong letters.
+    public static let misaki: TTSPhonemeAlphabet = "misaki"
+    /// espeak-ng phoneme mnemonics.
+    public static let espeak: TTSPhonemeAlphabet = "espeak"
+    /// ARPAbet (CMUdict), stress digits allowed.
+    public static let arpabet: TTSPhonemeAlphabet = "arpabet"
+}
+
+/// The speech timings of a TTS response, or of one stream chunk (contract 1.65.0, AB-A-0289).
+///
+/// It is grouped rather than spread across two optional arrays, because the phonemes are
+/// meaningless without the alphabet they are written in. Keeping the three together means a
+/// response carries all of them or none.
+public struct TTSTimings: Sendable, Codable, Equatable {
+    /// In spoken order. `start` never decreases.
+    public let words: [TTSWordTiming]
+    /// In spoken order. Nil means no phonemes: they were not asked for, or the surface provides none.
+    public let phonemes: [TTSPhonemeTiming]?
+    /// The alphabet `phonemes` are written in. It is required whenever `phonemes` is non-nil
+    /// (`shapeProblem` refuses phonemes without one).
+    public let phonemeAlphabet: TTSPhonemeAlphabet?
+
+    public init(words: [TTSWordTiming], phonemes: [TTSPhonemeTiming]? = nil,
+                phonemeAlphabet: TTSPhonemeAlphabet? = nil) {
+        self.words = words
+        self.phonemes = phonemes
+        self.phonemeAlphabet = phonemeAlphabet
+    }
+
+    /// Nil when the timings are well-formed, otherwise the first problem found, in words. Checks:
+    /// every number is finite, starts are ≥ 0, durations are ≥ 0, starts never decrease, phonemes
+    /// carry an alphabet, and `wordIndex` is ≥ 0.
+    ///
+    /// `wordIndex` is not checked against `words.count`, because on a chunk it indexes the
+    /// response-wide list. `StreamingConformance.checkTimingParity` (STR-8) checks that on the
+    /// aggregate, and so does a package's suite on a batch response.
+    public var shapeProblem: String? {
+        func spanProblem(_ what: String, _ i: Int, _ start: TimeInterval,
+                         _ duration: TimeInterval) -> String? {
+            guard start.isFinite, duration.isFinite else { return "\(what)[\(i)]: non-finite time" }
+            guard start >= 0 else { return "\(what)[\(i)]: negative start \(start)" }
+            guard duration >= 0 else { return "\(what)[\(i)]: negative duration \(duration)" }
+            return nil
+        }
+        var last = -TimeInterval.infinity
+        for (i, w) in words.enumerated() {
+            if let p = spanProblem("words", i, w.start, w.duration) { return p }
+            guard w.start >= last else { return "words[\(i)]: start \(w.start) before the previous word's" }
+            last = w.start
+        }
+        guard let phonemes else { return nil }
+        guard phonemeAlphabet != nil else { return "phonemes without a phonemeAlphabet" }
+        last = -TimeInterval.infinity
+        for (i, p) in phonemes.enumerated() {
+            if let problem = spanProblem("phonemes", i, p.start, p.duration) { return problem }
+            guard p.start >= last else {
+                return "phonemes[\(i)]: start \(p.start) before the previous phoneme's"
+            }
+            last = p.start
+            if let w = p.wordIndex, w < 0 { return "phonemes[\(i)]: negative wordIndex \(w)" }
+        }
+        return nil
+    }
+
+    /// Joins chunk timings in stream order into the response-wide timings: the words and phonemes
+    /// concatenated, and the alphabet taken from the first chunk that names one. Returns nil when
+    /// no chunk carried any timing. A package aggregating its own stream can build
+    /// `TTSResponse.timings` with this.
+    public static func concatenating(_ parts: [TTSTimings?]) -> TTSTimings? {
+        let present = parts.compactMap { $0 }
+        guard !present.isEmpty else { return nil }
+        let words = present.flatMap(\.words)
+        let phonemeParts = present.compactMap(\.phonemes)
+        return TTSTimings(words: words,
+                          phonemes: phonemeParts.isEmpty ? nil : phonemeParts.flatMap { $0 },
+                          phonemeAlphabet: present.lazy.compactMap(\.phonemeAlphabet).first)
+    }
+}
+
+/// How much timing a `TTSRequest` asks for (contract 1.65.0).
+public enum TTSTimingDetail: String, Sendable, Codable, Equatable {
+    /// Word timings.
+    case words
+    /// Word timings AND phoneme timings. Needs a surface that declares a `phonemeAlphabet`.
+    case phonemes
+}
+
+/// What a TTS surface declares about the timings it returns (contract 1.65.0, AB-A-0289).
+/// Read it as `ToolDescriptor.ttsControls?.timings`. Non-nil means word timings are provided.
+public struct TTSTimingDeclaration: Sendable, Codable, Equatable {
+    /// Where the timings come from. A router weighs latency and accuracy on this.
+    public enum Source: String, Sendable, Codable, Equatable {
+        /// From the model's own decode at no extra pass: a duration predictor (Kokoro), native word
+        /// starts (Dia2), or an attention reading-position probe (ZONOS3 LACI).
+        case native
+        /// From a forced aligner run on the synthesized audio against the known text (Qwen3-
+        /// ForcedAligner, FuseAlign). This costs added latency per sentence.
+        case aligned
+    }
+
+    public let source: Source
+    /// The alphabet phoneme timings are written in. Nil means this surface provides words only, and
+    /// the engine refuses `TTSTimingDetail.phonemes` on it.
+    public let phonemeAlphabet: TTSPhonemeAlphabet?
+    /// The time grid word boundaries fall on, in seconds, when the producer has one (LACI 0.067
+    /// at 15 Hz frames, Dia2 0.08, FuseAlign 0.001). This is the grid, NOT a measured accuracy
+    /// against real onsets. Accuracy belongs in the package's receipts. Nil means not stated.
+    public let wordResolution: TimeInterval?
+    /// Timings arrive on stream chunks as they become final (`TTSStreamChunk.timings`). False means
+    /// only the aggregated response carries them, which a lip-sync consumer that needs them during
+    /// playback has to route around. This has no meaning on a surface that does not stream.
+    public let streamed: Bool
+
+    public init(source: Source, phonemeAlphabet: TTSPhonemeAlphabet? = nil,
+                wordResolution: TimeInterval? = nil, streamed: Bool = false) {
+        self.source = source
+        self.phonemeAlphabet = phonemeAlphabet
+        self.wordResolution = wordResolution
+        self.streamed = streamed
+    }
+
+    /// Whether this declaration covers a requested detail. `.words` is always covered, and
+    /// `.phonemes` only with an alphabet.
+    public func covers(_ detail: TTSTimingDetail) -> Bool {
+        switch detail {
+        case .words: true
+        case .phonemes: phonemeAlphabet != nil
+        }
     }
 }
 
@@ -231,6 +466,14 @@ public enum TTSContract {
             parameters.append(ParameterSchema(
                 name: "targetDuration", kind: .number, required: false,
                 summary: "Target output length in seconds (native duration control)."))
+        }
+        // Contract 1.65.0: the timing knob appears only on a surface that declares timings.
+        if let timings = controls?.timings {
+            parameters.append(ParameterSchema(
+                name: "timingDetail", kind: .string, required: false,
+                summary: "Return speech timings with the audio: "
+                    + (timings.phonemeAlphabet.map { "words / phonemes (\($0.rawValue))" } ?? "words")
+                    + "; seconds from the start of the response audio."))
         }
         // Contract 1.49.0: only a multi-speaker surface is offered the extra voices, and the
         // planner is told the exact turn tags to write.

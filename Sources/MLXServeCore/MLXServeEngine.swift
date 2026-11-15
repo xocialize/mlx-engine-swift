@@ -2352,6 +2352,22 @@ public actor MLXServeEngine {
                             + "\(declared) speakers (TTSControls.speakerTags)")
                 }
             }
+            // Speech timings (contract 1.65.0, AB-A-0289): refused like `targetDuration`. The
+            // caller asked for timings in order to route on them, so silently returning audio
+            // without them is a contract violation, not a degraded result.
+            if let detail = tts.timingDetail {
+                guard let declared = surface.ttsControls?.timings else {
+                    throw PackageError.unsupportedRequestFeature(
+                        "timingDetail(.\(detail.rawValue)) — \(id) declares no speech timings "
+                            + "(TTSControls.timings); choose a package where "
+                            + "ttsControls.providesWordTimings, or align the audio afterwards")
+                }
+                if !declared.covers(detail) {
+                    throw PackageError.unsupportedRequestFeature(
+                        "timingDetail(.phonemes) — \(id) declares word timings only (no "
+                            + "TTSTimingDeclaration.phonemeAlphabet); ask for .words")
+                }
+            }
         }
 
         // a2v (contract 1.40.0, AB-A-0023 / AB-A-0066): declaration-gated, unlike `initImage` /

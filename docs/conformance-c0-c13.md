@@ -150,6 +150,21 @@ failure *class* rather than the known mechanism — statistic drift, live `Dropo
 training-mode-sensitive not yet met — and is what would have caught BiRefNet without anyone knowing
 `BatchNorm` was the mechanism.
 
+**C2 / C5 on `tts` speech timings** (added 2026-11-15, contract 1.65.0, AB-A-0289). A TTS package that
+can say when each word is spoken declares `TTSControls(timings: TTSTimingDeclaration(source:
+phonemeAlphabet:wordResolution:streamed:))` through `TTSContract.descriptor(…, controls:)`. `source` is
+`.native` (duration predictor, native word starts, an attention reading-position probe) or `.aligned` (a
+forced aligner after synthesis). `wordResolution` is the grid, not a measured accuracy; accuracy against
+real onsets belongs in the package's receipts. When the request sets `timingDetail`, the package returns
+`TTSResponse.timings`: `TTSWordTiming(text, start, duration)` in seconds from the first sample of the
+response audio, in spoken order, plus phonemes in the declared alphabet when `.phonemes` was asked. Word
+or phoneme timings in `metaData` fail C5. A package that declares `streamed: true` puts each timing on the
+chunk where it became final, using the same origin, never chunk-relative. Its live CLI lane runs **STR-8**
+(`StreamingConformance.checkTimingParity(chunks:aggregated:asked:)`): the chunk timings concatenate to the
+response's timings exactly, every timing passes `TTSTimings.shapeProblem`, and asked timings are present.
+The engine refuses `timingDetail` on an undeclared surface before admission, so a package with no
+declaration never sees it. Timings a package gets for free may come back unasked.
+
 **C2 / C5 on `imageTo3D` cameras** (added 2026-11-14, contract 1.64.0, AB-A-0284). A package that
 reconstructs through the camera each view was taken with (Pixal3D first) reads
 `ImageTo3DRequest.cameras` — one `ImageTo3DCamera {fovXDegrees?, cameraToWorld?}` per view, aligned with

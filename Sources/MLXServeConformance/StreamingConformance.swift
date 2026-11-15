@@ -13,6 +13,7 @@
 //  Live validators (pure functions over chunks a CLI lane collected from a real GPU run):
 //    STR-4 chunk-sequence integrity
 //    STR-5 aggregation parity vs the returned response
+//    STR-8 speech-timing parity + shape (contract 1.65.0) — `checkTimingParity`
 //  STR-6 (task-context emission canary — `withEmissionCanary`) and STR-7 (mid-stream cancel)
 //  run in the package's live CLI lane; STR-7 reuses `checkSequence` on the truncated chunks.
 //  Latency (TTFA / cadence) is a bench (`MLXEngineTestKit.StreamingBench`), not a gate.
@@ -225,6 +226,65 @@ public enum StreamingConformance {
             name: "STR-5 aggregation parity", passed: pass,
             note: String(format: "max|Δ| %.3g over %d samples (tolerance %.3g)",
                          maxDelta, streamed.count, tolerance))])
+    }
+
+    // MARK: - STR-8 — speech-timing parity + shape (live validator, contract 1.65.0)
+
+    /// The chunks' timings, concatenated in stream order, must EQUAL the aggregated response's
+    /// `timings`, so each word rides exactly one chunk and none is dropped or repeated. Every
+    /// chunk's timings and the aggregate must also pass `TTSTimings.shapeProblem`, and each
+    /// phoneme's `wordIndex` must fall inside the aggregate's `words`. When `asked` is non-nil
+    /// (the run set `TTSRequest.timingDetail`), the aggregate must be present at that detail.
+    ///
+    /// A run with no timings anywhere passes vacuously when nothing was asked. Starts are NOT
+    /// checked against the audio length here: the response's `.wav` is the package's to measure.
+    public static func checkTimingParity(chunks: [TTSStreamChunk],
+                                         aggregated: TTSTimings?,
+                                         asked: TTSTimingDetail? = nil) -> Report {
+        var checks: [Check] = []
+        let joined = TTSTimings.concatenating(chunks.map(\.timings))
+        // Empty chunk timings and nil chunk timings both mean "nothing became final here", so
+        // compare the content, not whether the optionals are present.
+        let joinedWords = joined?.words ?? []
+        let aggWords = aggregated?.words ?? []
+        let joinedPh = joined?.phonemes ?? []
+        let aggPh = aggregated?.phonemes ?? []
+        let parity = joinedWords == aggWords && joinedPh == aggPh
+            && (aggPh.isEmpty || joined?.phonemeAlphabet == aggregated?.phonemeAlphabet)
+        checks.append(Check(
+            name: "STR-8 timing parity", passed: parity,
+            note: parity
+                ? "\(aggWords.count) words, \(aggPh.count) phonemes — chunks concatenate to the response"
+                : "chunks carry \(joinedWords.count) words / \(joinedPh.count) phonemes, response "
+                    + "\(aggWords.count) / \(aggPh.count)\(joined?.phonemeAlphabet != aggregated?.phonemeAlphabet ? " (alphabet differs)" : "")"))
+
+        var shape: String? = nil
+        for chunk in chunks {
+            if let p = chunk.timings?.shapeProblem { shape = "chunk \(chunk.index): \(p)"; break }
+        }
+        if shape == nil, let aggregated {
+            if let p = aggregated.shapeProblem {
+                shape = "response: \(p)"
+            } else if let bad = aggregated.phonemes?.firstIndex(where: {
+                ($0.wordIndex ?? 0) >= aggregated.words.count }) {
+                shape = "response: phonemes[\(bad)].wordIndex outside the \(aggregated.words.count) words"
+            }
+        }
+        checks.append(Check(name: "STR-8 timing shape", passed: shape == nil,
+                            note: shape ?? "finite, non-negative, in spoken order"))
+
+        if let asked {
+            let present: Bool
+            switch asked {
+            case .words: present = aggregated != nil
+            case .phonemes: present = aggregated?.phonemes != nil && aggregated?.phonemeAlphabet != nil
+            }
+            checks.append(Check(
+                name: "STR-8 asked timings returned", passed: present,
+                note: present ? "timingDetail .\(asked.rawValue) honoured"
+                              : "timingDetail .\(asked.rawValue) asked, response timings missing"))
+        }
+        return Report(checks: checks)
     }
 
     // MARK: - STR-6 — task-context emission canary (live lane utility)

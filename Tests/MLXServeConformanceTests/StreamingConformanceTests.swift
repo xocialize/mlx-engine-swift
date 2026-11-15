@@ -203,3 +203,70 @@ private func chunk(_ index: Int, samples: [Float], final: Bool = false,
     #expect(!StreamingConformance.checkAggregationParity(
         chunks: chunks, aggregated: [0.1, 0.2]).passed)   // length mismatch
 }
+
+// MARK: - STR-8 — speech-timing parity + shape (contract 1.65.0)
+
+private let w0 = TTSWordTiming(text: "one", start: 0.0, duration: 0.3)
+private let w1 = TTSWordTiming(text: "two", start: 0.35, duration: 0.3)
+private let w2 = TTSWordTiming(text: "three", start: 0.7, duration: 0.4)
+
+private func timedChunk(_ i: Int, last: Bool, _ timings: TTSTimings?) -> TTSStreamChunk {
+    TTSStreamChunk(samples: [0], sampleRate: 24_000, index: i, isFinal: last, timings: timings)
+}
+
+@Test func str8PassesWhenChunkTimingsConcatenateToTheResponse() {
+    let chunks = [timedChunk(0, last: false, nil),
+                  timedChunk(1, last: false, TTSTimings(words: [w0])),
+                  timedChunk(2, last: false, TTSTimings(words: [])),   // empty == nothing final
+                  timedChunk(3, last: true, TTSTimings(words: [w1, w2]))]
+    let report = StreamingConformance.checkTimingParity(
+        chunks: chunks, aggregated: TTSTimings(words: [w0, w1, w2]), asked: .words)
+    #expect(report.passed, "\(report.summary)")
+}
+
+@Test func str8PassesVacuouslyWithNoTimingsAndNothingAsked() {
+    let report = StreamingConformance.checkTimingParity(
+        chunks: [timedChunk(0, last: true, nil)], aggregated: nil)
+    #expect(report.passed)
+}
+
+@Test func str8CatchesADroppedOrRepeatedWord() {
+    let dropped = StreamingConformance.checkTimingParity(
+        chunks: [timedChunk(0, last: true, TTSTimings(words: [w0, w2]))],
+        aggregated: TTSTimings(words: [w0, w1, w2]))
+    #expect(!dropped.passed)
+    let repeated = StreamingConformance.checkTimingParity(
+        chunks: [timedChunk(0, last: false, TTSTimings(words: [w0, w1])),
+                 timedChunk(1, last: true, TTSTimings(words: [w1, w2]))],
+        aggregated: TTSTimings(words: [w0, w1, w2]))
+    #expect(!repeated.passed)
+}
+
+@Test func str8CatchesChunkRelativeTimesAndAMissingAskedAggregate() {
+    // A chunk whose times restart at 0 (chunk-relative) breaks spoken order on the aggregate.
+    let relative = TTSWordTiming(text: "two", start: 0.05, duration: 0.3)
+    let report = StreamingConformance.checkTimingParity(
+        chunks: [timedChunk(0, last: false, TTSTimings(words: [w0, w1])),
+                 timedChunk(1, last: true, TTSTimings(words: [relative]))],
+        aggregated: TTSTimings(words: [w0, w1, relative]))
+    #expect(report.checks.first { $0.name == "STR-8 timing shape" }?.passed == false)
+
+    let missing = StreamingConformance.checkTimingParity(
+        chunks: [timedChunk(0, last: true, nil)], aggregated: nil, asked: .words)
+    #expect(missing.checks.first { $0.name == "STR-8 asked timings returned" }?.passed == false)
+
+    let noPhonemes = StreamingConformance.checkTimingParity(
+        chunks: [timedChunk(0, last: true, TTSTimings(words: [w0]))],
+        aggregated: TTSTimings(words: [w0]), asked: .phonemes)
+    #expect(!noPhonemes.passed)
+}
+
+@Test func str8CatchesAPhonemeWordIndexOutsideTheWords() {
+    let timings = TTSTimings(
+        words: [w0],
+        phonemes: [TTSPhonemeTiming(symbol: "w", start: 0, duration: 0.1, wordIndex: 3)],
+        phonemeAlphabet: .ipa)
+    let report = StreamingConformance.checkTimingParity(
+        chunks: [timedChunk(0, last: true, timings)], aggregated: timings)
+    #expect(report.checks.first { $0.name == "STR-8 timing shape" }?.passed == false)
+}

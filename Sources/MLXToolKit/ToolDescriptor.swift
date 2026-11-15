@@ -98,12 +98,30 @@ public struct TTSControls: Sendable, Codable, Equatable {
     /// The most voices one request can carry on this surface: one per declared tag, at least 1.
     /// `MLXServeEngine.run` refuses a `TTSRequest` whose `speakers` outnumber it.
     public var maxSpeakers: Int { max(1, speakerTags?.count ?? 0) }
+    /// What this surface tells a caller about WHEN its words (and phonemes) are spoken (contract
+    /// 1.65.0, AB-A-0289). Nil means it provides no timings, which is every pre-1.65 conformer.
+    /// Non-nil means a `TTSRequest.timingDetail` it covers is honoured: `TTSResponse.timings` is
+    /// filled, and so are the chunks' timings when `streamed` is true. The engine refuses
+    /// `timingDetail` on a surface that declares none. Optional, so 1.38–1.64 descriptor JSON
+    /// decodes unchanged.
+    ///
+    /// It is a declaration rather than something a caller can find out from a response, because the
+    /// routing question ("which cloning voice can drive a lip-synced avatar?") has to be answered
+    /// before the run. A forced-aligner pass also costs latency that a caller must be able to
+    /// decline.
+    public let timings: TTSTimingDeclaration?
+
+    /// This surface returns word timings when asked (`timings != nil`). This is what a caller filters on.
+    public var providesWordTimings: Bool { timings != nil }
+    /// This surface also returns phoneme timings, in its declared `timings.phonemeAlphabet`.
+    public var providesPhonemeTimings: Bool { timings?.phonemeAlphabet != nil }
 
     public init(emotionModes: [EmotionMode] = [], supportsTargetDuration: Bool = false,
-                speakerTags: [String]? = nil) {
+                speakerTags: [String]? = nil, timings: TTSTimingDeclaration? = nil) {
         self.emotionModes = emotionModes
         self.supportsTargetDuration = supportsTargetDuration
         self.speakerTags = speakerTags
+        self.timings = timings
     }
 }
 
@@ -228,7 +246,7 @@ public struct ToolDescriptor: Sendable, Codable, Equatable {
     /// accessors below (and, since 1.54.0, `llmControls`; since 1.56.0, `musicControls`; since 1.59.0,
     /// `audioSeparationControls`; since 1.61.0, `videoEditControls` / `videoUpscaleControls` /
     /// `frameInterpolateControls`; since 1.63.0, `characterPartControls`; since 1.64.0,
-    /// `imageTo3DControls`).
+    /// `imageTo3DControls`). Since 1.65.0, `TTSControls.timings` declares word / phoneme timings.
     public let controls: SurfaceControls?
     /// The raw `Image` formats this surface reads AND returns in kind, beyond the png/jpeg every image
     /// surface takes (contract 1.52.0, additive). A descriptor-level member, like `quantFloor`, because
