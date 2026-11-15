@@ -2,10 +2,12 @@
 
 > ## Status — usable, evolving
 >
-> MLXEngine is **published and consumable**: tagged **v0.80.0** (capability contract **1.65.0**),
-> and already serving **69 published model packages** (89 tracked, incl. WIP + research — see
-> [the model registry](docs/model-registry.md)) that back **all 38 of the contract's capabilities**,
-> the newest being **character parts** (`characterPart`: a picture or point cloud and a body → a rigged,
+> MLXEngine is **published and consumable**: tagged **v0.81.0** (capability contract **1.66.0**),
+> and already serving **70 published model packages** (90 tracked, incl. WIP + research — see
+> [the model registry](docs/model-registry.md)) that back **all 39 of the contract's capabilities**
+> except the newest, **image locate** (`imageLocate`: a picture and a phrase → typed boxes, for MES
+> `image.locate`; mlx-locate-swift serves it through `imageAnalysis` until it adopts the surface),
+> with **character parts** (`characterPart`: a picture or point cloud and a body → a rigged,
 > fitted part; hair first, HairDeck published),
 > including **music (lyrics-to-song)**, with two published packages (ACE-Step 1.5, YuE2-3B) and
 > MiniMax Music 3 in flight —
@@ -16,7 +18,7 @@
 > decomposition**, image→3D (with **posed cameras**), text embedding (dense +
 > **late-interaction multi-vector**), audio separation / codec / polish,
 > sound effects, speech emotion, image quality / restore / upscale / colorize / inpaint /
-> relight, **defect detection**, matting & promptable segmentation, video upscale, frame
+> relight, **defect detection**, matting & promptable segmentation, **locating things by phrase**, video upscale, frame
 > interpolation, optical flow, character animation, talking-head, mesh rigging, and more.
 > The contract is **additive**: capabilities and conformance levels grow at minor versions, and a
 > breaking change is a major bump with a deprecation window — so **pin a tag** for production use.
