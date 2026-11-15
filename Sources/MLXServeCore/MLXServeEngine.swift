@@ -2481,6 +2481,17 @@ public actor MLXServeEngine {
             }
         }
 
+        // imageTo3D cameras and frame (contract 1.64.0, AB-A-0284): declaration-gated, unlike
+        // `additionalViews`. An ignored field of view reconstructs the subject at the wrong scale and
+        // depth, ignored poses back-project the views into the wrong places, and an ignored `.world`
+        // returns the mesh in the object frame — a scene placing it lands it in the wrong spot. Nothing
+        // in the GLB says so. A surface with no declaration refuses them and runs every other request
+        // as before. The rule lives in MLXToolKit so a directly driven package refuses identically.
+        if let reconstruction = request as? ImageTo3DRequest,
+           let reason = ImageTo3DControls.refusal(for: reconstruction, declared: surface.imageTo3DControls) {
+            throw PackageError.unsupportedRequestFeature("\(reason) [\(id)]")
+        }
+
         // BOTH stt entry points, one site (contract 1.39.0). `STTSessionRequest` is a
         // `CapabilityRequest` precisely so this refusal cannot drift between `run()` and
         // `transcribeLive()`: a caller must not get biasing on one door and silence on the other.

@@ -1638,5 +1638,38 @@ public enum ContractVersion {
     //   Additive: one capability, one artifact, one controls case, one parameter kind, one specialty.
     //     ⚠️ exhaustive switches over `Capability`, `SurfaceControls` and `ParameterSchema.Kind`
     //     need the new case or `@unknown default` (C12).
-    public static let current = SemanticVersion(major: 1, minor: 63, patch: 0)
+    // 1.64.0 (2026-11-14, additive): CAMERAS ON imageTo3D, closing AB-A-0284 (mlx-3d, Pixal3D mode
+    //   in mlx-trellis2-swift v0.13.0 / AB-T-0485). Pixal3D is TRELLIS.2 with projection-conditioned
+    //   flows: it back-projects image features through the camera each view was taken with. v0.13.0
+    //   carried the cameras in package metaData (`pixal3dFovDegrees`, `pixal3dCameras`, `pixal3dFrame`).
+    //   • DECIDED: typed, not metaData. A camera is not one package's lever — any pose-conditioned
+    //     reconstructor takes one, and a host building a turnaround knows its cameras — so under C5 it
+    //     is a should-be-canonical parameter. `ImageTo3DRequest.cameras: [ImageTo3DCamera]?` (one per
+    //     view, aligned with `[image] + additionalViews`, exactly `viewCount` entries; pose every view
+    //     or none) and `.frame: ImageTo3DFrame?` (open tag: `.front` = the object frame, every
+    //     package's output and never gated; `.world` = the cameras' frame, needs every view posed).
+    //     `ImageTo3DCamera {fovXDegrees?, cameraToWorld?}`: horizontal FOV in (0, 180); a 4×4
+    //     camera-to-world, 16 numbers ROW-MAJOR, Z-up world, camera looking down its own −Z with +Y up
+    //     (Blender / NeRF / OpenGL camera), bottom row 0 0 0 1, orthonormal rotation with det +1 — a
+    //     transposed or reflected matrix is refused by `shapeProblem` rather than reconstructed wrong.
+    //   • DECLARATION-GATED, unlike `additionalViews` (which a package may ignore): an ignored camera is
+    //     wrong output — the subject at the wrong scale or depth, views back-projected into the wrong
+    //     places, a mesh in the object frame where the caller asked for the world frame — and nothing in
+    //     the GLB says so. `ImageTo3DControls` as `SurfaceControls.imageTo3D` (`imageTo3DControls`),
+    //     OPTIONAL: `features` (fov, pose, worldFrame, cameraReport), `fovXDegreesRange`;
+    //     `declarationProblems`; `refusal(for:declared:)`. The engine refuses before admission a
+    //     malformed camera list, a field of view, a pose or `.world` the surface does not declare, and
+    //     a field of view outside the declared range. A surface with no declaration refuses `cameras`
+    //     and `.world` and runs every other request exactly as before.
+    //     `ImageTo3DContract.descriptor(…, controls:)` advertises `cameras` / `frame` only when declared.
+    //   • `ImageTo3DResponse.camera: ImageTo3DCamera?` — view 0's camera in the RETURNED mesh's frame
+    //     (render through it and the mesh lines up with the input) — and `.frame: ImageTo3DFrame?`.
+    //     Nil = not reported, every pre-1.64 package; `.cameraReport` declares that a surface fills it.
+    //   • DECIDED (no contract change): selecting Pixal3D vs stock TRELLIS.2 is a separate PackageID
+    //     lane — its own configuration, manifest provenance and `FootprintConfigured` numbers,
+    //     registered with an explicit `id:` — not a `Mode` (modes are resolution tiers, C4) and not a
+    //     capability. Same shape as Lucida-on-BiRefNet, FireRed-on-QwenImageEdit, Klein base/distilled.
+    //   Additive: pre-1.64 request and response JSON decode (all new fields optional).
+    //     ⚠️ exhaustive switches over `SurfaceControls` need the new case or `@unknown default` (C12).
+    public static let current = SemanticVersion(major: 1, minor: 64, patch: 0)
 }

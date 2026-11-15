@@ -188,6 +188,9 @@ public enum SurfaceControls: Sendable, Codable, Equatable {
     /// The parts a character-part surface makes, the sources it reads and the levers it honors
     /// (contract 1.63.0, AB-A-0277). Required on every `characterPart` surface.
     case characterPart(CharacterPartControls)
+    /// The camera levers an image→3D surface honors: field of view, posed views, the world frame, a
+    /// camera report (contract 1.64.0, AB-A-0284). Optional.
+    case imageTo3D(ImageTo3DControls)
 }
 
 /// Self-description a package publishes so the registry — and any out-of-process tool client, such
@@ -224,7 +227,8 @@ public struct ToolDescriptor: Sendable, Codable, Equatable {
     /// `ttsControls` / `sttControls` / `t2vControls` / `t2iControls` / `speechEditControls`
     /// accessors below (and, since 1.54.0, `llmControls`; since 1.56.0, `musicControls`; since 1.59.0,
     /// `audioSeparationControls`; since 1.61.0, `videoEditControls` / `videoUpscaleControls` /
-    /// `frameInterpolateControls`; since 1.63.0, `characterPartControls`).
+    /// `frameInterpolateControls`; since 1.63.0, `characterPartControls`; since 1.64.0,
+    /// `imageTo3DControls`).
     public let controls: SurfaceControls?
     /// The raw `Image` formats this surface reads AND returns in kind, beyond the png/jpeg every image
     /// surface takes (contract 1.52.0, additive). A descriptor-level member, like `quantFloor`, because
@@ -393,6 +397,14 @@ extension ToolDescriptor {
         return nil
     }
 
+    /// The `imageTo3D` control declaration, or nil when this surface declares none (contract 1.64.0).
+    /// `ImageTo3DRequest.cameras` and a non-front `frame` are admitted only for what it declares
+    /// (`ImageTo3DControls.refusal(for:declared:)`).
+    public var imageTo3DControls: ImageTo3DControls? {
+        if case .imageTo3D(let declared) = controls { return declared }
+        return nil
+    }
+
     /// Whether a declared controls block matches this surface's capability. `false` is a package
     /// bug: the block would describe a surface the descriptor does not name.
     public var controlsMatchCapability: Bool {
@@ -410,6 +422,7 @@ extension ToolDescriptor {
         case .videoUpscale: return capability == .videoUpscale
         case .frameInterpolate: return capability == .frameInterpolate
         case .characterPart: return capability == .characterPart
+        case .imageTo3D: return capability == .imageTo3D
         }
     }
 }

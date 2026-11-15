@@ -150,6 +150,22 @@ failure *class* rather than the known mechanism — statistic drift, live `Dropo
 training-mode-sensitive not yet met — and is what would have caught BiRefNet without anyone knowing
 `BatchNorm` was the mechanism.
 
+**C2 / C5 on `imageTo3D` cameras** (added 2026-11-14, contract 1.64.0, AB-A-0284). A package that
+reconstructs through the camera each view was taken with (Pixal3D first) reads
+`ImageTo3DRequest.cameras` — one `ImageTo3DCamera {fovXDegrees?, cameraToWorld?}` per view, aligned with
+`[image] + additionalViews`; 4×4 camera-to-world ROW-MAJOR, Z-up world, camera looking down its own −Z
+with +Y up — and `.frame` (`front` = its own object frame, `world` = the cameras' frame). A field of
+view, a pose or an output frame in `metaData` fails C5; package-private `metaData` keys from before
+1.64 may stay as a fallback for older hosts, but the typed fields win when both are present. The surface
+declares `ImageTo3DControls` through `ImageTo3DContract.descriptor(…, controls:)` and a manifest test
+asserts `declarationProblems` is empty; the engine refuses, before admission, a malformed camera list,
+a field of view, a pose or `world` the surface does not declare, and a field of view outside the declared
+range. A surface with no declaration runs every other request as before. C2: when the surface declares
+`cameraReport`, `ImageTo3DResponse.camera` is view 0's camera in the RETURNED mesh's frame and `.frame`
+names that frame. Selecting a projection-conditioned variant of an existing model is a separate
+PackageID lane with its own manifest and footprint — not a `Mode` (C4: modes on imageTo3D are
+resolution tiers).
+
 **C2 / C5 on `characterPart`** (added 2026-11-13, contract 1.63.0, AB-A-0277). A package that makes a
 body-fitted part of a character (hair, a garment, an accessory) registers under `characterPart`, not
 `imageTo3D` with a specialty: the box the part is read from and the body it goes on are typed fields

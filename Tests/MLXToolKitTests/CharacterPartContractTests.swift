@@ -26,7 +26,7 @@ final class CharacterPartContractTests: XCTestCase {
     func testCharacterPartIsACapabilityWithMeshOutput() {
         XCTAssertEqual(Capability.characterPart.canonicalOutput, .mesh)
         XCTAssertEqual(CharacterPartRequest.capability, .characterPart)
-        XCTAssertEqual(ContractVersion.current, SemanticVersion(major: 1, minor: 63, patch: 0))
+        XCTAssertGreaterThanOrEqual(ContractVersion.current, SemanticVersion(major: 1, minor: 63, patch: 0))
         XCTAssertTrue(Specialty.characterHair.isRegistered)
     }
 
