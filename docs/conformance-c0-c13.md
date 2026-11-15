@@ -150,6 +150,19 @@ failure *class* rather than the known mechanism — statistic drift, live `Dropo
 training-mode-sensitive not yet met — and is what would have caught BiRefNet without anyone knowing
 `BatchNorm` was the mechanism.
 
+**C2 / C5 on `imageLocate`** (added 2026-11-15, contract 1.66.0, AB-A-0295). A package that finds
+where the things a phrase names are in a picture registers under `imageLocate`, not `imageAnalysis`
+with boxes as JSON in the answer text: the boxes are `ImageLocateResponse.boxes` (`ImageLocateBox`,
+shares of the upright image from its top-left corner, optional `label` and `score`), and the cap is
+`ImageLocateRequest.count` — putting it in `metaData` fails C5. The surface is built with
+`ImageLocateContract.descriptor(controls:)`; the declaration (`maxCount`, `scores`, `seeded`) is
+required, and a manifest test asserts `declarationProblems` is empty. The engine refuses, before
+admission, a surface with no declaration, an empty prompt, and a count below 1 or above `maxCount`
+(never silently cut). C2 for a result is `ImageLocateControls.responseProblems(_:for:)` empty: every
+box inside the image with some area, at most `count`, scores on every box or on none as declared,
+descending score. **An empty list is a success** — a package must not return a box it does not
+believe in to avoid one. `ImageLocateBox.served(_:count:)` applies MES's clip / order / cut rule.
+
 **C2 / C5 on `tts` speech timings** (added 2026-11-15, contract 1.65.0, AB-A-0289). A TTS package that
 can say when each word is spoken declares `TTSControls(timings: TTSTimingDeclaration(source:
 phonemeAlphabet:wordResolution:streamed:))` through `TTSContract.descriptor(…, controls:)`. `source` is

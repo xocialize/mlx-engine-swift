@@ -222,6 +222,7 @@ public enum CapabilityWire {
         case .speechEdit: SpeechEditRequest.self
         case .music: MusicRequest.self
         case .characterPart: CharacterPartRequest.self
+        case .imageLocate: ImageLocateRequest.self
         }
     }
 
@@ -266,6 +267,7 @@ public enum CapabilityWire {
         case .speechEdit: SpeechEditResponse.self
         case .music: MusicResponse.self
         case .characterPart: CharacterPartResponse.self
+        case .imageLocate: ImageLocateResponse.self
         }
     }
 

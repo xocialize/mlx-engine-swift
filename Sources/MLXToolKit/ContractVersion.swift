@@ -1700,5 +1700,32 @@ public enum ContractVersion {
     //     on that. `TTSContract.descriptor` advertises `timingDetail` only when declared.
     //   Additive and source-compatible: every new member is optional or defaulted, and pre-1.65
     //     request, response, chunk and descriptor JSON decodes. No new enum case on an existing type.
-    public static let current = SemanticVersion(major: 1, minor: 65, patch: 0)
+    // 1.66.0 (2026-11-15, additive): THE imageLocate CAPABILITY, closing AB-A-0295 (gaea, for MES
+    //   `image.locate`, media-engine-spec RFC 0010). A picture + a phrase → where the things it names
+    //   are. The first provider, `mlx-locate-swift` v0.1.0 (Qwen3-VL-4B, mlx-image), served
+    //   `imageAnalysis` with the boxes as JSON in `text` and the cap in `metaData["count"]`: untyped
+    //   output, a C5 lever.
+    //   • `Capability.imageLocate` → `CanonicalOutput.structuredText` (ImageLocate.swift).
+    //     `ImageLocateRequest {image, prompt, count?, seed?, mode?, metaData}` (count nil → 1;
+    //     `shapeProblem`: empty prompt, count < 1) → `ImageLocateResponse {boxes: [ImageLocateBox]}`,
+    //     best first, at most count; an EMPTY LIST IS A SUCCESS. `ImageLocateBox {x, y, width,
+    //     height, label?, score?}` in SHARES of the upright image from its top-left corner (MES Image
+    //     §1.11, MESKit `LocatedBox`), not the pixel corners of `PromptSegmentRequest.box` /
+    //     `CharacterPartRequest.subjectBox` — `pixelCorners(width:height:)` converts, so a located
+    //     head feeds HairDeck. `shapeProblem`, `clipped`, `overlap` (IoU), `served(_:count:)` (MES's
+    //     clip / descending score / cut rule, for packages).
+    //   • `ImageLocateControls {maxCount, scores, seeded}` as `SurfaceControls.imageLocate`
+    //     (`imageLocateControls`), REQUIRED — MES's `limits.max_count`, `supports.scores`,
+    //     `supports.seed`. `declarationProblems`; `refusal(for:)`; `responseProblems(_:for:)` is the
+    //     C2 check of a result (shapes, at most count, scores on all boxes or none as declared,
+    //     descending score). `ImageLocateContract.descriptor(controls:)` advertises count only when
+    //     maxCount > 1 and seed only when seeded.
+    //   • Engine-enforced in `checkDeclaredControls` before admission: a surface with no declaration,
+    //     an empty prompt, a count below 1 or above maxCount (never silently cut).
+    //   • Not added: `imageLocate` in `CancellationConformance.longRunCapabilities` (one image, one
+    //     short generation — the `imageAnalysis` reasoning); a Specialty term; a new CanonicalOutput.
+    //   Additive. ⚠️ exhaustive switches over `Capability` and `SurfaceControls` need the new case
+    //     (C12). Named `ImageLocateBox`, not `LocatedBox`, so `mlx-locate-swift`'s own core type
+    //     does not collide in a file importing both.
+    public static let current = SemanticVersion(major: 1, minor: 66, patch: 0)
 }

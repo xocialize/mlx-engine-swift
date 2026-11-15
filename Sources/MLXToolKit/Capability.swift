@@ -206,6 +206,18 @@ public enum Capability: String, Codable, Sendable, CaseIterable, Hashable {
     /// `meshRig` — that rigs geometry the caller already has; this GENERATES the geometry and returns
     /// it already rigged and fitted. Merging the item into the avatar file is the consumer's step.)
     case characterPart
+    /// **Image locate** — a picture + a phrase naming what to find (+ how many) → WHERE those things
+    /// are, as typed boxes best first (`ImageLocateResponse.boxes`; `CanonicalOutput.structuredText`):
+    /// shares of the upright image from its top-left corner, an optional label and score each. An
+    /// empty list is a success ("not there"). How many boxes a surface returns and whether it scores
+    /// them are a PACKAGE DECLARATION (`ImageLocateControls`, required). Contract 1.66.0; introduced
+    /// for MES `image.locate` (RFC 0010) and `mlx-locate-swift` (AB-A-0295).
+    ///
+    /// (Distinct from `imageAnalysis` — that answers in free text, whatever the model chose to say;
+    /// boxes as JSON in that text are untyped and a cap in `metaData` is a C5 lever. Distinct from
+    /// `promptSegment` — that takes the place (points / a box) as INPUT and returns a mask; this
+    /// FINDS the place from words and returns a box a client can pass on.)
+    case imageLocate
 }
 
 /// The fixed output artifact kind for a capability. Not negotiable per package (C2).
@@ -270,6 +282,7 @@ extension Capability {
         case .speechEdit: return .audio
         case .music: return .audio
         case .characterPart: return .mesh
+        case .imageLocate: return .structuredText
         }
     }
 }

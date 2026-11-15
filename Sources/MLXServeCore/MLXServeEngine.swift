@@ -2497,6 +2497,22 @@ public actor MLXServeEngine {
             }
         }
 
+        // imageLocate (contract 1.66.0, AB-A-0295): the declaration is required, and a count above
+        // the surface's maxCount is refused rather than silently cut (MES: 422 out_of_limits) — a
+        // caller asking for every window must not mistake "the model returns one" for "there is
+        // one". An empty prompt and a count below 1 are refused on any surface.
+        if let locate = request as? ImageLocateRequest {
+            guard let declared = surface.imageLocateControls else {
+                throw PackageError.unsupportedRequestFeature(
+                    "imageLocate — \(id) declares no ImageLocateControls "
+                        + "(ToolDescriptor.imageLocateControls); build the surface with "
+                        + "ImageLocateContract.descriptor(controls:)")
+            }
+            if let reason = declared.refusal(for: locate) {
+                throw PackageError.unsupportedRequestFeature("\(reason) [\(id)]")
+            }
+        }
+
         // imageTo3D cameras and frame (contract 1.64.0, AB-A-0284): declaration-gated, unlike
         // `additionalViews`. An ignored field of view reconstructs the subject at the wrong scale and
         // depth, ignored poses back-project the views into the wrong places, and an ignored `.world`

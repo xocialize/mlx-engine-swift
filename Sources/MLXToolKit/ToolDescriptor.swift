@@ -209,6 +209,9 @@ public enum SurfaceControls: Sendable, Codable, Equatable {
     /// The camera levers an image→3D surface honors: field of view, posed views, the world frame, a
     /// camera report (contract 1.64.0, AB-A-0284). Optional.
     case imageTo3D(ImageTo3DControls)
+    /// How many boxes an image-locate surface returns and whether it scores them (contract 1.66.0,
+    /// AB-A-0295). Required on every `imageLocate` surface.
+    case imageLocate(ImageLocateControls)
 }
 
 /// Self-description a package publishes so the registry — and any out-of-process tool client, such
@@ -246,7 +249,8 @@ public struct ToolDescriptor: Sendable, Codable, Equatable {
     /// accessors below (and, since 1.54.0, `llmControls`; since 1.56.0, `musicControls`; since 1.59.0,
     /// `audioSeparationControls`; since 1.61.0, `videoEditControls` / `videoUpscaleControls` /
     /// `frameInterpolateControls`; since 1.63.0, `characterPartControls`; since 1.64.0,
-    /// `imageTo3DControls`). Since 1.65.0, `TTSControls.timings` declares word / phoneme timings.
+    /// `imageTo3DControls`; since 1.66.0, `imageLocateControls`). Since 1.65.0, `TTSControls.timings`
+    /// declares word / phoneme timings.
     public let controls: SurfaceControls?
     /// The raw `Image` formats this surface reads AND returns in kind, beyond the png/jpeg every image
     /// surface takes (contract 1.52.0, additive). A descriptor-level member, like `quantFloor`, because
@@ -423,6 +427,13 @@ extension ToolDescriptor {
         return nil
     }
 
+    /// The `imageLocate` control declaration, or nil when this surface declares none (contract
+    /// 1.66.0). An `ImageLocateRequest` is admitted only within it (`ImageLocateControls.refusal(for:)`).
+    public var imageLocateControls: ImageLocateControls? {
+        if case .imageLocate(let declared) = controls { return declared }
+        return nil
+    }
+
     /// Whether a declared controls block matches this surface's capability. `false` is a package
     /// bug: the block would describe a surface the descriptor does not name.
     public var controlsMatchCapability: Bool {
@@ -441,6 +452,7 @@ extension ToolDescriptor {
         case .frameInterpolate: return capability == .frameInterpolate
         case .characterPart: return capability == .characterPart
         case .imageTo3D: return capability == .imageTo3D
+        case .imageLocate: return capability == .imageLocate
         }
     }
 }
