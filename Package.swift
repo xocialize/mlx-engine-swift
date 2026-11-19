@@ -48,10 +48,16 @@ let package = Package(
         // quantized layer — fatal for a worker that reloads a model per run (LTX after ~379 runs).
         // Upstream fixed it in #501, shipped in 0.33.0. v0.74.1–v0.81.0 took it from the fleet's
         // fork (xocialize/mlx-swift 0.32.4 = 0.32.3 + #501) because mlx-swift-lm 3.32.3 capped
-        // mlx-swift <0.33.0; mlx-swift-lm 3.33.0 moved to 0.33, so from v0.82.0 this is upstream
-        // again. A graph that still caps mlx-swift <0.33 resolves mlx-engine-swift ≤0.81.0 —
-        // require ≥0.82.0 to make that an error.
-        .package(url: "https://github.com/ml-explore/mlx-swift", from: "0.33.0"),
+        // mlx-swift <0.33.0; v0.82.0 took upstream 0.33.0.
+        //
+        // The SECOND floor is the M5 attention fix (AB-R-1009, AB-D-0264): upstream 0.33.0's MLX
+        // v0.32.4 aborts on M5 for head-256 masked prefills ≥1024 tokens (Gemma 3/4, Qwen 3.5),
+        // and its pending fix (ml-explore/mlx#4903) gives wrong attention for LTX's Gemma 3.
+        // xocialize/mlx-swift 0.33.1 is upstream 0.33.0 with those head-dim-split routes off
+        // (submodule → xocialize/mlx 9456e8f) and nothing else. Same package identity as
+        // ml-explore's; a ROOT declaration wins over this one, so a host that names ml-explore's
+        // URL at its root gets unpatched 0.33.0. Back to upstream once a release gates clean.
+        .package(url: "https://github.com/xocialize/mlx-swift", from: "0.33.1"),
         // The fleet's design vocabulary (AB-D-0042). UI-target-only (see MLXEngineUI's deps);
         // zero-dependency SwiftUI leaf, MIT — the "one runtime dependency" note above still
         // holds for the engine core: this never reaches MLXToolKit or MLXServeCore.

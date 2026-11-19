@@ -277,10 +277,15 @@ offline contract builds are unaffected.
 
 #### Where mlx-swift comes from: the leak-fix floor (v0.74.1, AB-A-0249)
 
-> **Retired in v0.82.0 (2026-11-19).** mlx-swift-lm 3.33.0 requires mlx-swift 0.33, so the fleet
-> can take upstream's fix. The engine is back on `https://github.com/ml-explore/mlx-swift`
-> `from: "0.33.0"`, and consumers drop their root `xocialize/mlx-swift` line. A graph that still caps
-> mlx-swift < 0.33 resolves v0.81.0 or older. The history below explains why the fork existed.
+> **The 0.32.4 fork is retired; a 0.33.1 fork replaced it (v0.82.1, 2026-11-19, AB-D-0264).**
+> mlx-swift-lm 3.33.0 requires mlx-swift 0.33, which carries the leak fix, and v0.82.0 took upstream
+> 0.33.0. But upstream 0.33.0's MLX aborts on M5 for head-256 masked prefills ≥ 1024 tokens, and its
+> pending fix gives wrong attention for LTX's Gemma 3 (AB-R-1009). So from **v0.82.1** the engine
+> takes `https://github.com/xocialize/mlx-swift` `from: "0.33.1"`: upstream 0.33.0 with the
+> head-dim-split SDPA routes disabled in the vendored MLX, nothing else. The identity rules below
+> still apply: a host whose root names `ml-explore/mlx-swift` gets unpatched 0.33.0, so a host that
+> runs Gemma or Qwen 3.5 class models declares the fork URL at its root instead. A graph that still
+> caps mlx-swift < 0.33 resolves v0.81.0 or older. The history below explains the first fork.
 
 Decision: AB-D-0208.
 
