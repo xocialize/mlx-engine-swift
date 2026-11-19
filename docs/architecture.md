@@ -277,6 +277,11 @@ offline contract builds are unaffected.
 
 #### Where mlx-swift comes from: the leak-fix floor (v0.74.1, AB-A-0249)
 
+> **Retired in v0.82.0 (2026-11-19).** mlx-swift-lm 3.33.0 requires mlx-swift 0.33, so the fleet
+> can take upstream's fix. The engine is back on `https://github.com/ml-explore/mlx-swift`
+> `from: "0.33.0"`, and consumers drop their root `xocialize/mlx-swift` line. A graph that still caps
+> mlx-swift < 0.33 resolves v0.81.0 or older. The history below explains why the fork existed.
+
 Decision: AB-D-0208.
 
 - **The leak.** mlx-swift ≤ 0.32.3's `MLXArray._updateInternal` assigns over the old array

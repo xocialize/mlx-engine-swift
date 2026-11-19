@@ -46,14 +46,12 @@ let package = Package(
         // `MLXArray._updateInternal` never frees a replaced output of a multi-output op, so every
         // quantized load through `Module.update(parameters:)` leaks 4 scalar Metal buffers per
         // quantized layer — fatal for a worker that reloads a model per run (LTX after ~379 runs).
-        // Upstream fixed it in #501, shipped in 0.33.0, but mlx-swift-lm 3.32.3 (the newest
-        // release) caps mlx-swift <0.33.0. So the URL is the fleet's fork, whose 0.32.4 tag is
-        // upstream 0.32.3 + #501 and nothing else. Any version this range admits carries the fix:
-        // the fork's 0.32.4, or upstream ≥0.33.0 when a consumer's root names ml-explore's URL
-        // (same package identity; a ROOT declaration wins over this one). A graph that can
-        // satisfy neither resolves an older mlx-engine-swift instead — require ≥0.74.1 to make
-        // that an error. Back to ml-explore's URL once mlx-swift-lm releases on 0.33.
-        .package(url: "https://github.com/xocialize/mlx-swift", from: "0.32.4"),
+        // Upstream fixed it in #501, shipped in 0.33.0. v0.74.1–v0.81.0 took it from the fleet's
+        // fork (xocialize/mlx-swift 0.32.4 = 0.32.3 + #501) because mlx-swift-lm 3.32.3 capped
+        // mlx-swift <0.33.0; mlx-swift-lm 3.33.0 moved to 0.33, so from v0.82.0 this is upstream
+        // again. A graph that still caps mlx-swift <0.33 resolves mlx-engine-swift ≤0.81.0 —
+        // require ≥0.82.0 to make that an error.
+        .package(url: "https://github.com/ml-explore/mlx-swift", from: "0.33.0"),
         // The fleet's design vocabulary (AB-D-0042). UI-target-only (see MLXEngineUI's deps);
         // zero-dependency SwiftUI leaf, MIT — the "one runtime dependency" note above still
         // holds for the engine core: this never reaches MLXToolKit or MLXServeCore.

@@ -11,10 +11,10 @@ MLXEngine is consumed via **Swift Package Manager only**.
 The contract is pre-1.0 and additive; **pin a tag** for production use (there is no `1.0.0` to
 resolve against yet).
 
-**mlx-swift (v0.74.1+).** The engine takes mlx-swift from `https://github.com/xocialize/mlx-swift`
-`from: "0.32.4"`. That's upstream 0.32.3 plus the `_updateInternal` leak fix, which upstream ships
-in 0.33.0. If something you depend on caps mlx-swift < 0.33 (mlx-swift-lm 3.32.x), and you declare
-mlx-swift yourself, declare that fork URL at your root instead of ml-explore's. See
+**mlx-swift (v0.82.0+).** The engine takes mlx-swift from `https://github.com/ml-explore/mlx-swift`
+`from: "0.33.0"`, the first upstream release with the `_updateInternal` leak fix. v0.74.1–v0.81.0
+took it from the fleet's fork (`xocialize/mlx-swift` 0.32.4) while mlx-swift-lm capped mlx-swift
+< 0.33; mlx-swift-lm 3.33.0 lifted that, so drop any root fork line when you move to v0.82.0. See
 [architecture: where mlx-swift comes from](architecture.md#where-mlx-swift-comes-from-the-leak-fix-floor-v0741-ab-a-0249).
 
 Conform a package against the **contract** product; you do not need the runtime to build a
