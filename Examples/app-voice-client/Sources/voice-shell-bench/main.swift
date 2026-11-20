@@ -47,6 +47,14 @@ let t0 = now()
 try await client.prepare(llm: llmModel, sttRightContext: sttRight)
 print("[MEM] prepared tts+stt+llm (\(llmModel.displayName), stt acs=[56,\(sttRight)]) in \(String(format: "%.1f", now() - t0))s phys=\(gb(HostMemory.physFootprint()))GB")
 
+if let only = option("--tts-only") {
+    _ = try await client.speak("Warm up.")
+    let s = now()
+    let l = try await client.speak(only)
+    print("[TTS-ONLY] chars=\(only.count) words=\(only.split(separator: " ").count) timedWords=\(l.words.count) audio=\(String(format: "%.2f", l.duration))s wall=\(ms(now() - s))ms lastWord=\(l.words.last?.text ?? "-")")
+    exit(0)
+}
+
 // MARK: TTS — a 10-word line with word timings
 
 let line10 = "Stay close, the bridge ahead is not safe after dark."

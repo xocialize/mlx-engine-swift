@@ -58,6 +58,8 @@ Resident memory with all three: 4.0 GB after `prepare`, 5.1 GB steady after use,
 A live session left running during a line, a verdict and a TTS line changes STT word latency by
 < 10 ms and adds < 50 ms to the other calls. Raw logs and method: [MEASUREMENTS.md](MEASUREMENTS.md).
 
+**Line length:** one `speak` call is at most 510 phoneme tokens, about 450–500 characters. 436 characters (23.7 s of audio) took 436 ms, and 573 characters throws `invalidInput`. Split longer lines at sentence ends and offset the word timings.
+
 **Known gap (AB-A-0321, mlx-audio):** every `prepare(.tts)` also fetches Kokoro's ~9 MB G2P model
 (`beshkenadze/kitten-tts-g2p`) into the HF cache, outside the model store and `needsDownload`. Until it
 is fixed, the first `prepare` after each launch needs the network-client entitlement and a network.

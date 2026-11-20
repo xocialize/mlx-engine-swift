@@ -59,3 +59,5 @@ On every `prepare(.tts)`, Kokoro's `MisakiTextProcessor` downloads `beshkenadze/
 (~9 MB) into `HubCache.default/mlx-audio/`. The repo ships no `config.json`, so
 `ModelUtils.resolveOrDownloadModel` never takes the cached copy. That download is outside engine
 materialization; reported to mlx-audio as AB-A-0321. The timings above are warm and exclude it.
+
+Line-length probe (`--tts-only`): 398 characters → 79 words timed, 22.25 s of audio, 403 ms; 436 characters → 86 words timed, 23.73 s, 436 ms; 573 characters → `AudioGenerationError.invalidInput("Input too long: 553 tokens exceeds max 510")`.

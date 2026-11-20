@@ -59,6 +59,10 @@ public struct AppVoiceClient: Sendable {
 
     /// Kokoro voices are named (`af_heart`, `am_adam`, …: `KokoroVoice.allCases`). Speed is not
     /// a contract field and Kokoro runs at 1.0 through the engine.
+    ///
+    /// One call synthesizes at most 510 phoneme tokens (about 450–500 English characters); past that,
+    /// Kokoro throws `invalidInput("Input too long…")`. Split longer lines at sentence ends and
+    /// offset each piece's word starts by the durations before it.
     public func speak(_ text: String, voice: String = "af_heart") async throws -> SpokenLine {
         let request = TTSRequest(text: text, voice: VoiceSelector(.named(voice)), timingDetail: .words)
         guard let response = try await engine.run(request) as? TTSResponse else {
