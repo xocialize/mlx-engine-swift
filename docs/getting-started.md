@@ -88,4 +88,8 @@ On a toolchain whose SwiftPM still defaults to the deprecated `native` build sys
 colocated `default.metallib`, so the first MLX allocator call in the test process aborts it. CI
 pins `swiftbuild` for the same reason; see the README build section.
 
+For a complete app-side client (TTS with word timings, an LLM line plus a JSON verdict, live STT, all
+in one process, with sandbox notes and measured latency), see
+[`Examples/app-voice-client`](../Examples/app-voice-client/README.md).
+
 See [Contributing a package](contributing-a-package.md) for the conformance workflow.
