@@ -1727,5 +1727,25 @@ public enum ContractVersion {
     //   Additive. ⚠️ exhaustive switches over `Capability` and `SurfaceControls` need the new case
     //     (C12). Named `ImageLocateBox`, not `LocatedBox`, so `mlx-locate-swift`'s own core type
     //     does not collide in a file importing both.
-    public static let current = SemanticVersion(major: 1, minor: 66, patch: 0)
+    // 1.67.0 (2026-11-25, additive): TWO APPLE LICENCES NAMED, closing AB-A-0309 (mlx-video, for
+    //   mlx-fastframes-swift, the first package loading Apple research weights). Both were string
+    //   literals in that package; the raw values are unchanged, so its manifest JSON is too.
+    //   • `SPDXLicense.appleAMLR` (`LicenseRef-Apple-AMLR`), EVAL-ACKNOWLEDGED (AB-D-0259): the
+    //     Apple Machine Learning Research Model licence. Research purposes only, non-commercial,
+    //     revocable, binds Model Derivatives, no patent grant, deletion on termination. On
+    //     `evalAcknowledgedAllowlist` beside `circleStoneNonCommercial`: admitted under
+    //     `.permissiveOrAcknowledged`, refused by a `.blocking` `.permissiveOnly` host.
+    //   • `SPDXLicense.appleSampleCode` (`LicenseRef-Apple-Sample-Code`), ALLOWLISTED and a
+    //     STANDARD CODE LICENCE: Apple's sample-code notice, word for word SPDX's `AML`. Use,
+    //     modify and redistribute in source or binary; the notice is owed only on unmodified
+    //     redistribution; no endorsement by Apple's name; no patent grant. DECIDED: it joins
+    //     `standardCodeLicenses`, so a package whose port code is under it owes no port-code notice
+    //     (`portCodeLicenseLackingNotice` is nil), unlike `sam`, whose same-agreement and AUP
+    //     clauses a host must be told about.
+    //   • BEHAVIOUR CHANGE for one declaration shape: weights `[.apache2, .appleAMLR]` with port
+    //     code `.appleSampleCode` was rejected on BOTH layers under `.permissiveOnly` and on both
+    //     under `.permissiveOrAcknowledged` (unknown identifiers). It is now rejected on the weight
+    //     layer only under `.permissiveOnly` and admitted under `.permissiveOrAcknowledged`.
+    //   Additive: two constants, one entry on each of three sets.
+    public static let current = SemanticVersion(major: 1, minor: 67, patch: 0)
 }

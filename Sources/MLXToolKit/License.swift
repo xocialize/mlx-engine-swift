@@ -285,13 +285,55 @@ extension SPDXLicense {
     /// The pass is CONDITIONAL on §1b-v, §5b and §8.
     public static let sam: SPDXLicense = "LicenseRef-SAM"
 
+    /// Apple Machine Learning Research Model License Agreement ("AMLR";
+    /// huggingface.co/apple/FastFrames-S/blob/main/LICENSE, read 2026-11-25; operator acceptance for
+    /// opt-in research plugins only in AB-D-0259). Non-SPDX, referenced via `LicenseRef-`.
+    /// **NON-permissive**:
+    /// - **License Scope.** A personal, non-transferable, **revocable** licence to use, copy, modify,
+    ///   distribute and create Model Derivatives "exclusively for Research Purposes", defined as
+    ///   non-commercial scientific research: no "commercial exploitation, product development or use
+    ///   in any commercial product or service". Model Derivatives are bound to the same purpose.
+    /// - **Distribution.** Pass a copy of the Agreement and the attribution "Apple Machine Learning
+    ///   Research Model is licensed under the Apple Machine Learning Research Model License
+    ///   Agreement."; identify every Model Derivative as one and disclose what changed; Apple's name
+    ///   may not promote a derivative.
+    /// - **No Other License.** No patent or trademark grant.
+    /// - **Termination.** Apple may terminate on breach; on termination every copy of the model and
+    ///   its derivatives is deleted.
+    ///
+    /// Classification: **eval-acknowledged** (`evalAcknowledgedAllowlist`), the
+    /// `circleStoneNonCommercial` posture. NOT on `permissiveAllowlist`: admitted only under
+    /// `.permissiveOrAcknowledged`, never a shipping clearance. A package declaring it carries the
+    /// attribution sentence in an `.informational` `LicenseNotice` naming this licence. First used
+    /// by mlx-fastframes-swift (the FastFrames-S KV refiner and pixel decoder, AB-A-0309).
+    public static let appleAMLR: SPDXLicense = "LicenseRef-Apple-AMLR"
+
+    /// Apple's sample-code licence, the notice Apple puts on research code it releases
+    /// (github.com/apple-aiml-research/ml-fastframes/blob/main/LICENSE, read 2026-11-25). Its text is
+    /// SPDX's `AML` ("Apple MIT License") word for word apart from the company name and year; the
+    /// `LicenseRef-` identifier is kept because published manifests already carry it (AB-A-0309).
+    /// A CODE licence:
+    /// - **Grant.** "use, reproduce, modify and redistribute the Apple Software, with or without
+    ///   modifications, in source and/or binary forms", under Apple's copyrights. No field-of-use,
+    ///   non-commercial or scale clause.
+    /// - **Notice.** Retained only when the software is redistributed "in its entirety and without
+    ///   modifications". A port owes attribution, as under MIT.
+    /// - **No endorsement.** Apple's name and marks may not promote derived products (BSD-3's clause).
+    /// - **No patent grant** (as MIT and the BSDs have none).
+    ///
+    /// Classification: **allowlisted** (`permissiveAllowlist`) and a **standard code licence**
+    /// (`standardCodeLicenses`): a host links port code under it on attribution alone, so it owes no
+    /// `portCodeLicenseLackingNotice` notice. First used as mlx-fastframes-swift's port-code licence.
+    public static let appleSampleCode: SPDXLicense = "LicenseRef-Apple-Sample-Code"
+
     /// The licences a host can link port code under and owe nothing but attribution: the standard
     /// permissive open-source code licences. Every fleet package's port code was one of these until
     /// SAM-Audio (contract 1.62.0, AB-A-0268), whose Swift code translates code Meta released under
     /// the SAM License and so ships under it. `permissiveAllowlist` cannot say this: it mixes code
     /// licences with reviewed MODEL licences, which were only ever judged as terms on weights.
+    /// `appleSampleCode` joined in contract 1.67.0: its text is SPDX's `AML`, an MIT-shaped grant.
     public static let standardCodeLicenses: Set<SPDXLicense> = [
-        .mit, .apache2, .bsd2, .bsd3, .isc, .unlicense,
+        .mit, .apache2, .bsd2, .bsd3, .isc, .unlicense, .appleSampleCode,
     ]
 
     /// Whether port code under this licence can be linked on attribution alone.
@@ -314,7 +356,7 @@ extension SPDXLicense {
     public static let permissiveAllowlist: Set<SPDXLicense> = [
         .mit, .apache2, .bsd2, .bsd3, .isc, .unlicense, .funasrModel, .ccBy4, .ltx2Community, .dinov3,
         .gemmaTerms, .nvidiaOpenModel, .openMDW1_1, .lfmOpen1, .bilibiliModelUse,
-        .neteaseYoudaoModelUse, .minimaxMusic3Community, .hi3dOpen1_0, .sam,
+        .neteaseYoudaoModelUse, .minimaxMusic3Community, .hi3dOpen1_0, .sam, .appleSampleCode,
     ]
 
     /// Non-permissive licenses explicitly acknowledged for **eval/research** use only. These are
@@ -323,10 +365,11 @@ extension SPDXLicense {
     /// deliberate, auditable opt-in — extend only when a port is gated to evaluation, never for
     /// shippable capabilities.
     /// - `circleStoneNonCommercial`: the Anima anime-T2I weights (personal/research use only).
+    /// - `appleAMLR`: Apple research models (FastFrames-S; research purposes only, AB-D-0259).
     /// (`indexTTS2Model` — the IndexTTS-2.0 non-commercial terms — left this list 2026-09-02 when
     /// the port moved to IndexTTS-2.5 under the allowlisted `bilibiliModelUse`.)
     public static let evalAcknowledgedAllowlist: Set<SPDXLicense> = [
-        .circleStoneNonCommercial,
+        .circleStoneNonCommercial, .appleAMLR,
     ]
 
     public var isPermissive: Bool { SPDXLicense.permissiveAllowlist.contains(self) }

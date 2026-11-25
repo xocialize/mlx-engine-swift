@@ -60,7 +60,8 @@ Declare that licence in `portCodeLicense`; the same policy judges it as judges t
 port-code licence binds whoever LINKS the package (the terms are compiled into the host's binary), the
 manifest also carries a `LicenseNotice` whose `license` is the port-code licence, saying what a host
 owes — for the SAM License: redistribution only under the same agreement with a copy of it, and the
-prohibited end uses. `SPDXLicense.standardCodeLicenses` (MIT, Apache-2.0, BSD-2/3, ISC, Unlicense) is
+prohibited end uses. `SPDXLicense.standardCodeLicenses` (MIT, Apache-2.0, BSD-2/3, ISC, Unlicense and, since contract
+1.67.0, Apple's sample-code licence `LicenseRef-Apple-Sample-Code`) is
 the set that needs no such notice, and `LicenseDeclaration.portCodeLicenseLackingNotice` is nil for a
 conformant declaration (assert it in the manifest test). The engine logs a `[License]` line when it is
 not and still registers the package. A fact about the OUTPUT rather than a licence — "every output
