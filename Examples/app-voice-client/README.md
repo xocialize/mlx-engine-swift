@@ -16,7 +16,7 @@ The engine at v0.82.1 implements contract 1.66.0, which covers all four rows. Wr
 
 Copy `Package.swift`'s dependency block. Link `MLXServeCore`, `MLXToolKit`, `MLXKokoroTTS`,
 `MLXNemotronSTT` and `MLXQwenLLM`. If your root declares mlx-swift, it must name the fleet's fork
-`https://github.com/xocialize/mlx-swift` (from 0.33.1, AB-D-0264); otherwise your root wins and you
+`https://github.com/xocialize/mlx-swift` (from 0.33.2, AB-D-0264); otherwise your root wins and you
 get the build that aborts on M5. Build with Xcode or `swift build --build-system swiftbuild`,
 because the `native` build system ships no `default.metallib`.
 

@@ -286,6 +286,11 @@ offline contract builds are unaffected.
 > still apply: a host whose root names `ml-explore/mlx-swift` gets unpatched 0.33.0, so a host that
 > runs Gemma or Qwen 3.5 class models declares the fork URL at its root instead. A graph that still
 > caps mlx-swift < 0.33 resolves v0.81.0 or older. The history below explains the first fork.
+>
+> **v0.82.2 (2026-11-25, AB-A-0332) raises the floor to `from: "0.33.2"`:** 0.33.1 plus upstream's
+> GPU pad fix (ml-explore/mlx#4744, in no upstream release yet). Without it, a pad whose output
+> passes 2^31 elements loses every value past that offset; a padded conv over more than 262,144
+> Qwen-VL patches read its later rows as noise.
 
 Decision: AB-D-0208.
 

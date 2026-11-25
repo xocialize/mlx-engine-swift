@@ -25,7 +25,7 @@ let package = Package(
         .package(url: "https://github.com/xocialize/mlx-qwen-llm-swift", from: "0.7.0"),
         // ROOT declaration of mlx-swift: the fleet fork (AB-D-0264). A consumer that declares
         // mlx-swift itself must name this URL, or the root wins with the unpatched M5 build.
-        .package(url: "https://github.com/xocialize/mlx-swift", from: "0.33.1"),
+        .package(url: "https://github.com/xocialize/mlx-swift", from: "0.33.2"),
         // Bench only: count generated tokens (mlx-qwen-llm-swift 0.7.0 returns no LLMUsage, AB-A-0217).
         .package(url: "https://github.com/huggingface/swift-transformers", from: "1.2.1"),
     ],

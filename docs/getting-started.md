@@ -11,10 +11,11 @@ MLXEngine is consumed via **Swift Package Manager only**.
 The contract is pre-1.0 and additive; **pin a tag** for production use (there is no `1.0.0` to
 resolve against yet).
 
-**mlx-swift (v0.82.1+).** The engine takes mlx-swift from `https://github.com/xocialize/mlx-swift`
-`from: "0.33.1"`: upstream 0.33.0 (the first release with the `_updateInternal` leak fix) with the
+**mlx-swift (v0.82.2+).** The engine takes mlx-swift from `https://github.com/xocialize/mlx-swift`
+`from: "0.33.2"`: upstream 0.33.0 (the first release with the `_updateInternal` leak fix) with the
 vendored MLX's head-dim-split attention routes disabled, because upstream 0.33.0 aborts on M5 for
-head-256 masked prefills of 1024+ tokens (AB-R-1009). If you declare mlx-swift yourself, declare that
+head-256 masked prefills of 1024+ tokens (AB-R-1009), plus upstream's fix for GPU pads past 2^31
+elements (ml-explore/mlx#4744, AB-A-0332). If you declare mlx-swift yourself, declare that
 fork URL at your root, not ml-explore's, or your root wins and you get the unpatched build. See
 [architecture: where mlx-swift comes from](architecture.md#where-mlx-swift-comes-from-the-leak-fix-floor-v0741-ab-a-0249).
 

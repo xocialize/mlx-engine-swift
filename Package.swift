@@ -57,7 +57,12 @@ let package = Package(
         // (submodule → xocialize/mlx 9456e8f) and nothing else. Same package identity as
         // ml-explore's; a ROOT declaration wins over this one, so a host that names ml-explore's
         // URL at its root gets unpatched 0.33.0. Back to upstream once a release gates clean.
-        .package(url: "https://github.com/xocialize/mlx-swift", from: "0.33.1"),
+        //
+        // The THIRD floor is the GPU pad fix (AB-A-0332): on MLX v0.32.4, pad_gpu loses every
+        // value past a 2^31-element destination offset (ml-explore/mlx#4735), so a padded conv
+        // over more than 2^18 Qwen-VL patches returns garbage for the later rows. 0.33.2 is
+        // 0.33.1 plus upstream's fix (ml-explore/mlx#4744, submodule → xocialize/mlx 9198282).
+        .package(url: "https://github.com/xocialize/mlx-swift", from: "0.33.2"),
         // The fleet's design vocabulary (AB-D-0042). UI-target-only (see MLXEngineUI's deps);
         // zero-dependency SwiftUI leaf, MIT — the "one runtime dependency" note above still
         // holds for the engine core: this never reaches MLXToolKit or MLXServeCore.
