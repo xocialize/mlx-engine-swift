@@ -21,13 +21,20 @@ public enum Quant: String, Sendable, Codable, Hashable, CaseIterable {
     case mxfp8
     /// NVIDIA-style 4-bit float (e2m1, group 16) — added at 1.60.0 (AB-A-0204). Ranks with `int4`.
     case nvfp4
+    /// 2-bit storage (MLX affine `bits: 2`), which is also how ternary checkpoints are packed —
+    /// added at 1.68.0 (AB-A-0334) for Ternary Bonsai 2.5. Ranks BELOW `int4`: the rank is the
+    /// storage class, not a claim about one checkpoint (a quantization-aware-trained ternary model
+    /// is not what a post-hoc 2-bit quant would be). Nominal 0.25 bytes per weight.
+    case int2
 
     /// Precision ordering, lowest first — the axis a per-surface `quantFloor` is compared on
     /// (contract 1.23.0). Deliberately NOT `Comparable`: `fp16` and `bf16` are both 16-bit and
     /// share a rank, so `<` would be a strict-weak-ordering violation on a Comparable conformance.
     /// `mxfp4` and `nvfp4` rank with `int4`, and `mxfp8` with `int8` (same bit width, richer per-block scaling — not a precision tier above it).
+    /// `int2` is -1 so the ranks published before 1.68.0 keep their values.
     public var precisionRank: Int {
         switch self {
+        case .int2: -1
         case .int4, .mxfp4, .nvfp4: 0
         case .int5: 1
         case .int6: 2

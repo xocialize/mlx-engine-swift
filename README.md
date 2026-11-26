@@ -2,7 +2,7 @@
 
 > ## Status — usable, evolving
 >
-> MLXEngine is **published and consumable**: tagged **v0.83.0** (capability contract **1.67.0**),
+> MLXEngine is **published and consumable**: tagged **v0.84.0** (capability contract **1.68.0**),
 > and already serving **70 published model packages** (90 tracked, incl. WIP + research — see
 > [the model registry](docs/model-registry.md)) that back **all 39 of the contract's capabilities**
 > except the newest, **image locate** (`imageLocate`: a picture and a phrase → typed boxes, for MES

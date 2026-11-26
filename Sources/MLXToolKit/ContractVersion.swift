@@ -1747,5 +1747,15 @@ public enum ContractVersion {
     //     under `.permissiveOrAcknowledged` (unknown identifiers). It is now rejected on the weight
     //     layer only under `.permissiveOnly` and admitted under `.permissiveOrAcknowledged`.
     //   Additive: two constants, one entry on each of three sets.
-    public static let current = SemanticVersion(major: 1, minor: 67, patch: 0)
+    // 1.68.0 (2026-11-25, additive): `Quant.int2`, closing AB-A-0334 (mlx-think, for
+    //   mlx-bonsai-llm-swift: Ternary Bonsai 2.5 27B, ternary weights in MLX affine 2-bit slots).
+    //   No existing case described it; `int4` misreports its size and class.
+    //   • Ranks BELOW `int4` (`precisionRank` -1; every earlier rank keeps its value). So an `int2`
+    //     configuration fails a surface whose `quantFloor` is `.int4` or higher, and passes a
+    //     surface with no floor or an `.int2` floor. The rank is the storage class: it says
+    //     nothing about one checkpoint's quality.
+    //   • No engine behaviour beyond the rank. Footprints stay measured (`residentBytes`); the
+    //     engine derives nothing from a quant's bit width.
+    //   Additive: one enum case. ⚠️ an exhaustive switch over `Quant` needs it (the 1.60.0 note).
+    public static let current = SemanticVersion(major: 1, minor: 68, patch: 0)
 }
